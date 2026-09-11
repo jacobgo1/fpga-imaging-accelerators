@@ -1,0 +1,42 @@
+
+Project Background:
+
+This project is part of the larger research effort “Hyperspectral Imaging in Small Satellites.” Hyperspectral imaging systems produce highly dimensional data, resulting in computationally demanding analysis algorithms. Modern imaging AI methods—especially neural networks—rely heavily on intensive matrix and tensor operations.
+Due to their reconfigurability, low power consumption, compact size, and high computational performance, Field-Programmable Gate Arrays (FPGAs) are well-suited for accelerating such algorithms in resource‑constrained satellite environments.
+
+Project Description:
+
+A significant trend in digital system design is raising the level of abstraction to accelerate the development process. High-Level Synthesis (HLS) enables designers to describe hardware functionality using high-level programming languages such as C/C++, which are then automatically transformed into Register Transfer Level (RTL) implementations and synthesized down to gate level.
+The objective of this project is to design and implement high-throughput FPGA accelerators for core matrix operations and neural network components used in imaging AI applications, using HLS-based design methodologies.
+In addition to research contributions, this work will support the development of HLS-based laboratory teaching materials for a future specialization course.
+The master project serves as an introduction to a master’s thesis, during which more advanced implementation and experimental validation can be performed on an actual SmallSat payload.
+
+Project Tasks
+
+Study and understanding of High-Level Synthesis (HLS) concepts, tools, and design flow
+Efficient FPGA implementation and testing (using HLS) of selected imaging AI components, including:
+
+1-D, 2-D, and 3-D Convolutional Neural Networks (CNNs)
+Binary Neural Networks (BNNs)
+Matrix multiplication
+
+
+
+Expected Learning Outcomes
+
+Practical experience with FPGA acceleration for imaging AI
+Hands-on knowledge of HLS-based hardware design
+Understanding of performance trade-offs under hardware and power constraints
+Exposure to real-world challenges in satellite onboard processing
+
+Requirements
+
+Programming skills in C/C++
+Interest in digital design, embedded systems, or AI acceleration
+Experience with or willingness to learn:
+
+Vivado HLS
+
+
+Why Choose This Project?
+This project offers a unique opportunity to work at the intersection of FPGA design, imaging AI, and space technology, contributing to real-world hyperspectral satellite systems while building skills highly relevant to both research and industry.

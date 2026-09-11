@@ -1,0 +1,9 @@
+{
+  "part": null,
+  "clock_ns": 10.0,
+  "jobs": 4,
+  "default_kernel": "matmul",
+  "board_script": null,
+  "export_xsa": false,
+  "kernels": {}
+}
