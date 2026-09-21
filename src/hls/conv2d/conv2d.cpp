@@ -1,84 +1,112 @@
 #include "conv2d.hpp"
 
-void conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
-                 const data_t weight[CONV_OC][CONV_IC][CONV_KH][CONV_KW],
-                 result_t     out   [CONV_OC][CONV_OH][CONV_OW])
+void conv2d(const data_t input_image  [CONV_IN_CHANNELS][CONV_IN_HEIGHT][CONV_IN_WIDTH],
+            const data_t kernel_weights[CONV_OUT_CHANNELS][CONV_IN_CHANNELS]
+                                       [CONV_KERNEL_HEIGHT][CONV_KERNEL_WIDTH],
+            result_t     output_image[CONV_OUT_CHANNELS][CONV_OUT_HEIGHT][CONV_OUT_WIDTH])
 {
-    #pragma HLS INTERFACE mode=bram port=in
-    #pragma HLS INTERFACE mode=bram port=weight
-    #pragma HLS INTERFACE mode=bram port=out
+    #pragma HLS INTERFACE mode=bram port=input_image
+    #pragma HLS INTERFACE mode=bram port=kernel_weights
+    #pragma HLS INTERFACE mode=bram port=output_image
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
 
     // ---- local buffers -------------------------------------------------
-    data_t w_buf[CONV_OC][CONV_IC][CONV_KH][CONV_KW];
-    #pragma HLS ARRAY_PARTITION variable=w_buf complete dim=0
+    // On-chip copies of the interface arrays, partitioned so every value
+    // a single cycle's math needs is in its own memory bank/register --
+    // otherwise a BRAM's 1-2 read ports would force everything to wait in
+    // line and II=1 would be impossible.
+    data_t weight_buffer[CONV_OUT_CHANNELS][CONV_IN_CHANNELS]
+                        [CONV_KERNEL_HEIGHT][CONV_KERNEL_WIDTH];
+    #pragma HLS ARRAY_PARTITION variable=weight_buffer complete dim=0
 
-    data_t in_buf[CONV_IC][CONV_IH][CONV_IW];
-    #pragma HLS ARRAY_PARTITION variable=in_buf cyclic factor=CONV_IC_PAR dim=1
-    #pragma HLS ARRAY_PARTITION variable=in_buf cyclic factor=CONV_ROW_BANKS dim=2
-    #pragma HLS ARRAY_PARTITION variable=in_buf cyclic factor=CONV_COL_BANKS dim=3
+    data_t input_buffer[CONV_IN_CHANNELS][CONV_IN_HEIGHT][CONV_IN_WIDTH];
+    #pragma HLS ARRAY_PARTITION variable=input_buffer cyclic factor=CONV_CHANNELS_PER_PASS dim=1
+    #pragma HLS ARRAY_PARTITION variable=input_buffer cyclic factor=CONV_IN_ROW_BANKS dim=2
+    #pragma HLS ARRAY_PARTITION variable=input_buffer cyclic factor=CONV_IN_COL_BANKS dim=3
 
     // ---- copy interface BRAMs into the partitioned local buffers -------
-    load_w_oc:
-    for (int oc = 0; oc < CONV_OC; oc++)
-        load_w_ic:
-        for (int ic = 0; ic < CONV_IC; ic++)
-            load_w_kh:
-            for (int kh = 0; kh < CONV_KH; kh++)
-                load_w_kw:
-                for (int kw = 0; kw < CONV_KW; kw++) {
+    // Plain, one-element-per-cycle copies. Nothing clever here -- this is
+    // just getting the data from the caller's memory into the layout the
+    // math below needs.
+    load_weights_out_channel:
+    for (int out_channel = 0; out_channel < CONV_OUT_CHANNELS; out_channel++)
+        load_weights_in_channel:
+        for (int in_channel = 0; in_channel < CONV_IN_CHANNELS; in_channel++)
+            load_weights_row:
+            for (int kernel_row = 0; kernel_row < CONV_KERNEL_HEIGHT; kernel_row++)
+                load_weights_col:
+                for (int kernel_col = 0; kernel_col < CONV_KERNEL_WIDTH; kernel_col++) {
                     #pragma HLS PIPELINE II=1
-                    w_buf[oc][ic][kh][kw] = weight[oc][ic][kh][kw];
+                    weight_buffer[out_channel][in_channel][kernel_row][kernel_col] =
+                        kernel_weights[out_channel][in_channel][kernel_row][kernel_col];
                 }
 
-    load_in_ic:
-    for (int ic = 0; ic < CONV_IC; ic++)
-        load_in_h:
-        for (int h = 0; h < CONV_IH; h++)
-            load_in_w:
-            for (int w = 0; w < CONV_IW; w++) {
+    load_input_channel:
+    for (int in_channel = 0; in_channel < CONV_IN_CHANNELS; in_channel++)
+        load_input_row:
+        for (int in_row = 0; in_row < CONV_IN_HEIGHT; in_row++)
+            load_input_col:
+            for (int in_col = 0; in_col < CONV_IN_WIDTH; in_col++) {
                 #pragma HLS PIPELINE II=1
-                in_buf[ic][h][w] = in[ic][h][w];
+                input_buffer[in_channel][in_row][in_col] = input_image[in_channel][in_row][in_col];
             }
 
     // ---- convolution ---------------------------------------------------
-    result_t acc[CONV_OW];
-    #pragma HLS DEPENDENCE variable=acc type=inter false
+    // One entry per output column, holding the running total for that
+    // column across passes over CONV_CHANNELS_PER_PASS-sized chunks of
+    // input channels (see part 6 of conv2d.hpp).
+    result_t row_partial_sums[CONV_OUT_WIDTH];
+    #pragma HLS DEPENDENCE variable=row_partial_sums type=inter false
 
-    oc_loop:
-    for (int oc = 0; oc < CONV_OC; oc++) {
-        oh_loop:
-        for (int oh = 0; oh < CONV_OH; oh++) {
-            ict_loop:
-            for (int ic0 = 0; ic0 < CONV_IC; ic0 += CONV_IC_PAR) {
-                ow_loop:
-                for (int ow = 0; ow < CONV_OW; ow++) {
+    output_channel_loop:
+    for (int out_channel = 0; out_channel < CONV_OUT_CHANNELS; out_channel++) {
+        output_row_loop:
+        for (int out_row = 0; out_row < CONV_OUT_HEIGHT; out_row++) {
+            // One pass = summing CONV_CHANNELS_PER_PASS input channels, for every
+            // output column in this row, into row_partial_sums. Runs
+            // CONV_IN_CHANNELS / CONV_CHANNELS_PER_PASS times so every input
+            // channel gets included exactly once.
+            channel_pass_loop:
+            for (int channel_pass_start = 0; channel_pass_start < CONV_IN_CHANNELS;
+                 channel_pass_start += CONV_CHANNELS_PER_PASS) {
+                output_col_loop:
+                for (int out_col = 0; out_col < CONV_OUT_WIDTH; out_col++) {
                     #pragma HLS PIPELINE II=1
-                    const int ih0 = oh * CONV_STRIDE;
-                    const int iw0 = ow * CONV_STRIDE;
+                    // Top-left corner of the KERNEL_HEIGHT x KERNEL_WIDTH window
+                    // in input_buffer that this output pixel is computed from.
+                    const int in_row_start = out_row * CONV_STRIDE;
+                    const int in_col_start = out_col * CONV_STRIDE;
 
-                    result_t sum = (ic0 == 0) ? result_t(0) : acc[ow];
+                    // First pass starts a fresh sum; later passes pick up the
+                    // running total this output column already has.
+                    result_t pixel_sum = (channel_pass_start == 0) ? result_t(0)
+                                                                    : row_partial_sums[out_col];
 
-                    for (int icp = 0; icp < CONV_IC_PAR; icp++) {
+                    // Every (channel, kernel row, kernel col) triple in this pass
+                    // is a separate multiply-add, all done in the same cycle.
+                    for (int channel_in_pass = 0; channel_in_pass < CONV_CHANNELS_PER_PASS;
+                         channel_in_pass++) {
                         #pragma HLS UNROLL
-                        for (int kh = 0; kh < CONV_KH; kh++) {
+                        for (int kernel_row = 0; kernel_row < CONV_KERNEL_HEIGHT; kernel_row++) {
                             #pragma HLS UNROLL
-                            for (int kw = 0; kw < CONV_KW; kw++) {
+                            for (int kernel_col = 0; kernel_col < CONV_KERNEL_WIDTH; kernel_col++) {
                                 #pragma HLS UNROLL
                                 // Multiply at 16x16 and widen afterwards. Casting both
                                 // operands to result_t first asks for a 64x64 multiplier
                                 // (~16 DSPs each, 27 of them here); the int promotion of
                                 // two int16_t operands is exact -- |product| <= 2^30.
-                                sum += static_cast<result_t>(
-                                           in_buf[ic0 + icp][ih0 + kh][iw0 + kw]
-                                         * w_buf[oc][ic0 + icp][kh][kw]);
+                                const int in_channel = channel_pass_start + channel_in_pass;
+                                pixel_sum += static_cast<result_t>(
+                                    input_buffer[in_channel][in_row_start + kernel_row]
+                                                [in_col_start + kernel_col]
+                                  * weight_buffer[out_channel][in_channel][kernel_row][kernel_col]);
                             }
                         }
                     }
 
-                    acc[ow] = sum;
-                    if (ic0 + CONV_IC_PAR >= CONV_IC)
-                        out[oc][oh][ow] = sum;
+                    row_partial_sums[out_col] = pixel_sum;
+                    if (channel_pass_start + CONV_CHANNELS_PER_PASS >= CONV_IN_CHANNELS)
+                        output_image[out_channel][out_row][out_col] = pixel_sum;
                 }
             }
         }
