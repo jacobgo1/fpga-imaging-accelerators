@@ -75,7 +75,7 @@ constexpr int OH = CONV_OH,  OW = CONV_OW;
 constexpr int STRIDE = CONV_STRIDE;
 }
 
-void test_conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
+void conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
                  const data_t weight[CONV_OC][CONV_IC][CONV_KH][CONV_KW],
                  result_t     out   [CONV_OC][CONV_OH][CONV_OW]);
 

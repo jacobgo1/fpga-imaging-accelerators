@@ -1,4 +1,4 @@
-// test_conv2d_tb.cpp  --  add as a TESTBENCH file, not a synthesis source
+// conv2d_tb.cpp  --  testbench for the conv2d kernel, not a synthesis source
 #include "conv2d.hpp"
 #include <cstdio>
 #include <random>
@@ -42,7 +42,7 @@ int main()
                     weight[oc][ic][kh][kw] = data_t(dist(rng));
 
     conv2d_ref();
-    test_conv2d(in, weight, out);
+    conv2d(in, weight, out);
 
     int errors = 0;
     for (int oc = 0; oc < conv::OC; oc++)

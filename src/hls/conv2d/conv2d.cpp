@@ -1,6 +1,6 @@
 #include "conv2d.hpp"
 
-void test_conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
+void conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
                  const data_t weight[CONV_OC][CONV_IC][CONV_KH][CONV_KW],
                  result_t     out   [CONV_OC][CONV_OH][CONV_OW])
 {
@@ -65,8 +65,13 @@ void test_conv2d(const data_t in    [CONV_IC][CONV_IH][CONV_IW],
                             #pragma HLS UNROLL
                             for (int kw = 0; kw < CONV_KW; kw++) {
                                 #pragma HLS UNROLL
-                                sum += static_cast<result_t>(in_buf[ic0 + icp][ih0 + kh][iw0 + kw])
-                                     * static_cast<result_t>(w_buf[oc][ic0 + icp][kh][kw]);
+                                // Multiply at 16x16 and widen afterwards. Casting both
+                                // operands to result_t first asks for a 64x64 multiplier
+                                // (~16 DSPs each, 27 of them here); the int promotion of
+                                // two int16_t operands is exact -- |product| <= 2^30.
+                                sum += static_cast<result_t>(
+                                           in_buf[ic0 + icp][ih0 + kh][iw0 + kw]
+                                         * w_buf[oc][ic0 + icp][kh][kw]);
                             }
                         }
                     }

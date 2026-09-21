@@ -47,7 +47,7 @@ Two files, no configuration:
 
 ```text
 src/hls/conv2d/conv2d.cpp      synthesizable C++, top function named conv2d
-tb/conv2d/test_conv2d.cpp      main() that returns nonzero on mismatch
+tb/conv2d/conv2d_tb.cpp        main() that returns nonzero on mismatch
 ```
 
 ```powershell
@@ -202,15 +202,37 @@ docs/                   Project description and experiment notes
 build/<kernel>/<run>/   Tool projects, RTL, waveforms, logs
 reports/<kernel>/<run>/ Collected reports and manifest
 artifacts/<kernel>/<run>/ IP ZIP, checkpoints, bitstream, XSA
+<kernel>/latest         Symlink to the newest run, in build/ and reports/
 tests/                  Runner tests (no AMD tools needed)
 ```
 
-Every run gets its own timestamped directory. `build/` holds everything the
-tools produced, `reports/` collects the logs and reports (including for failed
-runs), and `artifacts/` receives deliverables from successful runs only. Each
-run writes a `manifest.json` with the resolved config, commands, platform, Git
-commit and status, and SHA-256 of every source file. All three directories are
-git-ignored, so record conclusions worth keeping in `docs/experiments/`.
+Every run gets its own directory, named `<local date>_<local time>-<stage>`,
+for example `build/conv2d/2026-09-21_11-42-07-csynth/`. A second run in the same
+second gets a `-2` suffix, so the names still sort in the order the runs
+happened, and a `latest` symlink next to them always points at the newest run.
+
+`build/` holds everything the tools produced, `reports/` collects the logs and
+reports (including for failed runs), and `artifacts/` receives deliverables from
+successful runs only. Each run writes a `manifest.json` with the resolved
+config, commands, platform, Git commit and status, and SHA-256 of every source
+file. All three directories are git-ignored, so record conclusions worth keeping
+in `docs/experiments/`.
+
+### Where the reports are
+
+Every run ends by printing the paths. The ones you normally want:
+
+```text
+reports/<kernel>/latest/hls-console.log                             what the tool said
+reports/<kernel>/latest/hls/solution/syn/report/<top>_csynth.rpt    area and timing
+reports/<kernel>/latest/hls/solution/sim/report/<top>_cosim.rpt     co-simulation
+reports/<kernel>/latest/manifest.json                               config + parsed estimates
+build/<kernel>/latest/hls/solution/syn/verilog/                     the generated RTL
+```
+
+`reports/` gets a copy of every `.rpt`, `.log`, `.jou` and `.xml` the run
+produced, keeping the directory structure, and it is written even when the run
+fails -- so a failed `csynth` still leaves its console log there to read.
 
 ## Board integration
 
