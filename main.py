@@ -15,7 +15,6 @@ import re
 import shutil
 import subprocess
 import sys
-import uuid
 import xml.etree.ElementTree as ElementTree
 
 ROOT = Path(__file__).resolve().parent
@@ -199,6 +198,38 @@ def write_settings(run, config, kernel, stage):
     (run / 'settings.tcl').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
+def run_directory(kernel, stage):
+    """A run name you can read: build/<kernel>/2026-09-21_11-42-07-csynth/.
+
+    Local time, because the point is finding today's run in a directory
+    listing. Two runs in the same second get -2, -3, ... rather than a random
+    suffix, so the names still sort in the order the runs happened.
+    """
+    stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    base = Path(kernel) / f'{stamp}-{stage}'
+    relative, attempt = base, 2
+    while (ROOT / 'build' / relative).exists():
+        relative = base.with_name(f'{base.name}-{attempt}')
+        attempt += 1
+    return relative
+
+
+def point_at_latest(directory):
+    """Put a 'latest' symlink beside the run directories, best effort.
+
+    Gives every run a stable path -- reports/conv2d/latest/ -- to tail or open
+    without looking up the timestamp. Windows needs developer mode for this, so
+    a failure here is not worth failing a run over.
+    """
+    link = directory.parent / 'latest'
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(directory.name, target_is_directory=True)
+    except OSError:
+        pass
+
+
 def collect(run, relative, success):
     reports = ROOT / 'reports' / relative
     reports.mkdir(parents=True, exist_ok=True)
@@ -208,6 +239,7 @@ def collect(run, relative, success):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(file, destination)
     shutil.copy2(run / 'manifest.json', reports / 'manifest.json')
+    point_at_latest(reports)
     if success and (run / 'deliverables').exists():
         artifacts = ROOT / 'artifacts' / relative
         shutil.copytree(run / 'deliverables', artifacts)
@@ -403,14 +435,15 @@ def main():
                   'RTL co-simulation for cosim/export/synth/impl/bitstream; '
                   'IP export for export/synth/impl/bitstream.')
         return 0
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    relative = Path(args.kernel) / f'{stamp}-{args.stage}-{uuid.uuid4().hex[:8]}'
+    relative = run_directory(args.kernel, args.stage)
     run = ROOT / 'build' / relative
     run.mkdir(parents=True)
+    point_at_latest(run)
     manifest = {'stage': args.stage, 'config': config, 'kernel': args.kernel,
                 'kernel_files': kernel, 'commands': commands,
                 'platform': platform.platform(), 'python': sys.version,
-                'status': 'running', 'run': str(relative)}
+                'started': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
+                'status': 'running', 'run': relative.as_posix()}
     if shutil.which('git'):
         for label, argv in [('git_commit', ['rev-parse', 'HEAD']),
                             ('git_status', ['status', '--porcelain'])]:
@@ -453,7 +486,17 @@ def main():
         manifest['status'] = 'passed' if status == 0 else 'failed'
         (run / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
         collect(run, relative, status == 0)
-        print(f'Build: {run}\nReports: {ROOT / "reports" / relative}')
+        reports = ROOT / 'reports' / relative
+        print(f'Build:   {run}')
+        print(f'Reports: {reports}   (also reports/{args.kernel}/latest)')
+        named = {'console': reports / f'{commands[-1][0]}-console.log',
+                 'synthesis': (reports / 'hls' / 'solution' / 'syn' / 'report'
+                               / f'{kernel["top"]}_csynth.rpt'),
+                 'cosim': (reports / 'hls' / 'solution' / 'sim' / 'report'
+                           / f'{kernel["top"]}_cosim.rpt')}
+        for label, file in named.items():
+            if file.is_file():
+                print(f'  {label:<10} {file.relative_to(ROOT).as_posix()}')
         if status == 0 and (run / 'deliverables').exists():
             print(f'Artifacts: {ROOT / "artifacts" / relative}')
     return status
