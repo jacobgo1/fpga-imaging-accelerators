@@ -130,7 +130,10 @@ def resolve_kernel(name, config):
     kernel.setdefault('top', name)
     kernel.setdefault('sources', cpp_files(source_dir) if source_dir.is_dir() else [])
     kernel.setdefault('testbench', cpp_files(testbench_dir) if testbench_dir.is_dir() else [])
-    kernel.setdefault('include_dirs', [f'src/hls/{name}'] if source_dir.is_dir() else [])
+    default_includes = [f'src/hls/{name}'] if source_dir.is_dir() else []
+    if (ROOT / 'src' / 'common').is_dir() and 'src/common' not in default_includes:
+        default_includes.append('src/common')
+    kernel.setdefault('include_dirs', default_includes)
     if 'directives' not in kernel and (ROOT / 'config' / f'{name}.tcl').is_file():
         kernel['directives'] = f'config/{name}.tcl'
     if not kernel['sources']:
