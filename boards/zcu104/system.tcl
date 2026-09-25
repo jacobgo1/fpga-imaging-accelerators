@@ -84,6 +84,37 @@ add_files -norecurse [make_wrapper -files $bd_file -top]
 set_property top ${bd}_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
+# ---------------------------------------------------------------- JTAG handoff
+# Everything software/jtag/board.tcl needs besides the .bit: the PS init
+# script, the kernel's register map, and the address the PS sees it at.
+# Warnings, not errors: a missing piece only matters for JTAG testing.
+set handoff [file join $cfg(run_dir) deliverables board]
+file mkdir $handoff
+
+set psu_init [lindex [get_files -all -quiet */psu_init.tcl] 0]
+if {$psu_init ne ""} {
+    file copy -force $psu_init $handoff
+} else {
+    puts "WARNING: no psu_init.tcl among the PS output products; set export_xsa and take it from the XSA"
+}
+
+set headers [glob -nocomplain -directory $ip_repo drivers/*/src/*_hw.h]
+foreach header $headers { file copy -force $header $handoff }
+if {![llength $headers]} { puts "WARNING: HLS IP in $ip_repo has no *_hw.h register map" }
+
+set kernel_base ""
+foreach seg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces ps/Data]] {
+    if {[string match *kernel* $seg]} { set kernel_base [get_property OFFSET $seg] }
+}
+if {$kernel_base ne ""} {
+    set f [open [file join $handoff address.tcl] w]
+    puts $f "set kernel_base $kernel_base"
+    close $f
+    puts "INFO: kernel s_axi_control at $kernel_base"
+} else {
+    puts "WARNING: kernel address not found; read it from the Address Editor"
+}
+
 # ---------------------------------------------------------------- Constraints
 # pl_clk0 is constrained by the PS IP itself. This design has no PL pins, so
 # no XDC is needed. If you add external ports (LEDs, PMOD), add them here:

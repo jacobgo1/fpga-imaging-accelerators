@@ -239,10 +239,10 @@ fails -- so a failed `csynth` still leaves its console log there to read.
 Kernel synthesis gives resource and timing estimates, not a working system. To
 build a bitstream you supply clocks, reset, memory access, a top-level wrapper
 and real pin constraints — see [boards/README.md](boards/README.md) for the
-contract, then set `board_script` in the config. The kernel exposes BRAM data
-ports and AXI-Lite control: something must load its inputs, start it, wait for
-completion and read the results. It is a correctness baseline, not an optimized
-accelerator.
+contract, then set `board_script` in the config. `matmul` keeps its matrices in
+AXI-Lite registers, so it can be driven over JTAG with no embedded software —
+see [software/README.md](software/README.md). It is a correctness baseline, not
+an optimized accelerator.
 
 ## How this is built, and what is unverified
 
