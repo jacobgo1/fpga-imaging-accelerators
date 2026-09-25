@@ -1,0 +1,38 @@
+# Fill in the TODOs below from your own build, then save as
+# justoliunet_regs.tcl (not committed -- these addresses are specific to
+# your synthesis run and block-design address map).
+#
+# Register offsets: after csynth/export, Vitis HLS writes the real ones to
+# a generated header -- find yours with:
+#
+#   grep -E '^#define XJUSTOLIUNET_CONTROL_ADDR' \
+#       build/justoliunet/<run>/hls/solution/impl/ip/drivers/justoliunet_v1_0/src/xjustoliunet_hw.h
+#
+# ap_ctrl is the one exception: Vitis HLS always puts the control register
+# (ap_start = bit 0, ap_done = bit 1) at offset 0x00, so that value below is
+# real, not a placeholder.
+dict set regs ap_ctrl 0x00
+dict set regs din  TODO   ;# XJUSTOLIUNET_CONTROL_ADDR_DIN_DATA (or similar) from the grep above
+dict set regs w1   TODO
+dict set regs b1   TODO
+dict set regs w2   TODO
+dict set regs b2   TODO
+dict set regs w3   TODO
+dict set regs b3   TODO
+dict set regs w4   TODO
+dict set regs b4   TODO
+dict set regs w5   TODO
+dict set regs b5   TODO
+dict set regs dout TODO
+
+# kernel_base: the AXI-Lite address Vivado's Address Editor assigned the
+# kernel's control bundle in boards/zcu104/system.tcl's block design.
+# Check it with, in a Vivado Tcl console on your open block design:
+#   report_property [get_bd_addr_segs -of_objects [get_bd_cells justoliunet_0]]
+set kernel_base TODO
+
+# data_base: any DDR address with >=20176 bytes free after it (the total
+# pack_data_bin.py prints) that psu_init has actually brought up. 0x20000000
+# is a common scratch choice on Zynq UltraScale+ boards, but confirm it's
+# inside your platform's real DDR range in the .xsa before trusting it.
+set data_base 0x20000000

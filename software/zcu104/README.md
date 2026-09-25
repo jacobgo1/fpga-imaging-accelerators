@@ -2,19 +2,25 @@
 
 Headless bring-up, A53 benchmarking, and running the PL kernel, all driven
 from the command line -- no Etcher, no serial-terminal GUI, no manual
-copying. Five scripts:
+copying.
 
 ```text
-flash-sdcard.sh     write an image (Ubuntu or PYNQ) to the SD card (dd/bmaptool)
-make-boot-seed.sh   preload cloud-init for headless SSH -- Ubuntu image only, see below
-deploy-and-run.sh   rsync this repo to the board and run a main.py stage there (A53 track)
-export_weights.py   dev machine: PyTorch checkpoint -> the .npz run_justoliunet.py expects
-run_justoliunet.py  on the board (PYNQ): load a bitstream, feed an image, read the result
+flash-sdcard.sh          write an image (Ubuntu or PYNQ) to the SD card (dd/bmaptool)
+make-boot-seed.sh        preload cloud-init for headless SSH -- Ubuntu image only, see below
+deploy-and-run.sh        rsync this repo to a remote host and run a main.py stage there
+export_weights.py        dev machine: PyTorch checkpoint -> the .npz the board-side scripts expect
+run_justoliunet.py       on the board (PYNQ, has network/OS): load a bitstream, feed an image, read the result
+program-jtag.sh          program just the PL bitstream over JTAG (no OS needed on the board)
+pack_data_bin.py         dev machine: weights.npz + an input tile -> one raw binary blob for JTAG download
+jtag_run.tcl             xsct: push that blob into DDR and run the kernel with no OS on the board at all
+unpack_result.py         decode jtag_run.tcl's dout.bin into numbers
 ```
 
 Sections 1-4 below are the **A53 software baseline** (plain Ubuntu image).
-Section 5 is **running the actual FPGA kernel**, which needs a PYNQ image
-instead -- skip straight there if that's what you're after.
+Section 5 is **running the actual FPGA kernel with network/ssh access to
+the board's own Linux** (PYNQ). Section 5b is the same, but for a board
+reachable **only over JTAG** -- no OS, no network, a different and more
+experimental recipe. Pick whichever matches your actual setup.
 
 ## 1. Get an image
 
@@ -125,3 +131,49 @@ If register names come back wrong (`find_register` in `run_justoliunet.py`
 lists what the IP actually has), that's `boards/zcu104/system.tcl` or the
 HLS-generated names differing from what this script guesses -- both are
 easy one-line fixes once you can see the real names.
+
+## 5b. Build server with a JTAG cable straight to the board, no OS on it
+
+Different situation, different recipe: no SD card, no Linux, no network to
+the board at all -- the server's Vivado/Vitis talks to it purely over JTAG.
+That means no filesystem or Python on the board either, so weights and the
+input image have to go in as raw memory writes, and DDR itself isn't even
+usable until something runs `psu_init` (normally the FSBL's job on an
+SD-card boot; there is no FSBL here).
+
+```text
+program-jtag.sh      program just the PL bitstream over JTAG (Vivado Hardware Manager)
+pack_data_bin.py      dev machine: weights.npz + an input tile -> one raw binary blob
+jtag_run.tcl          xsct: psu_init, push the blob into DDR, poke registers, read dout back
+unpack_result.py       decode jtag_run.tcl's dout.bin into numbers
+```
+
+```bash
+# 1. Program the PL (server, Vivado's settings64.sh sourced):
+./program-jtag.sh artifacts/justoliunet/<run>/deliverables/bitstream/system.bit
+
+# 2. Pack weights + image into one blob (dev machine, needs the weights.npz
+#    from export_weights.py):
+python3 pack_data_bin.py weights.npz --input your_tile.npy -o data.bin
+
+# 3. Fill in the register/address TODOs (see the file itself for exactly
+#    where each value comes from -- most need your real csynth/export
+#    output, they cannot be guessed):
+cp justoliunet_regs.tcl.example justoliunet_regs.tcl
+$EDITOR justoliunet_regs.tcl
+
+# 4. Run it (server, Vitis' settings64.sh sourced, so `xsct` is on PATH):
+xsct jtag_run.tcl data.bin path/to/psu_init.tcl justoliunet_regs.tcl
+python3 unpack_result.py dout.bin
+```
+
+**Be aware this path is a first draft, more so than anything else here.**
+`jtag_run.tcl` was written without a real board or Vitis install to check
+`xsct`'s exact command syntax against -- the DDR byte offsets inside it are
+verified (they come straight out of `pack_data_bin.py`'s own math, tested
+above), but `kernel_base` and every register offset in
+`justoliunet_regs.tcl` are placeholders you fill in from your real build,
+and commands like `dow -data`/`mrd -bin`/`psu_init` may need adjusting
+against `xsct`'s own `help <command>` for your installed version. Send me
+the actual error and we'll fix it -- that's the expected next step here,
+not a sign something was done wrong.

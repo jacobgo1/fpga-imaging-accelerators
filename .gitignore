@@ -4,6 +4,7 @@
 /artifacts/*
 !/artifacts/README.md
 /config/*.local.json
+/software/zcu104/justoliunet_regs.tcl
 __pycache__/
 *.py[cod]
 .venv/
