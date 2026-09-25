@@ -3,7 +3,7 @@
 
     1. python tools/justoliunet_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy \\
            --crop 200 300 32 32 --out img
-    2. xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run> \\
+    2. xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/RUN_DIRECTORY \\
            -pixels img/pixels.txt img/fpga_logits.txt            (board machine)
     3. python tools/justoliunet_image.py compare img
 
@@ -24,6 +24,7 @@ milliseconds, so use --crop or --step to keep to a few thousand pixels.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import struct
@@ -119,7 +120,32 @@ def write_png(path, rgb, scale=1):
 
 
 def display_scale(shape):
-    return max(1, 256 // max(shape))
+    """Whole-number enlargement so small maps come out around 800 pixels wide."""
+    return max(1, 800 // max(shape))
+
+
+def outline(img, row, col, height, width, color=(255, 0, 0), thickness=2):
+    """Draw the processed region's border into an RGB image, in place."""
+    h, w, _ = img.shape
+    r0, r1 = max(row, 0), min(row + height, h)
+    c0, c1 = max(col, 0), min(col + width, w)
+    img[r0:min(r0 + thickness, r1), c0:c1] = color
+    img[max(r1 - thickness, r0):r1, c0:c1] = color
+    img[r0:r1, c0:min(c0 + thickness, c1)] = color
+    img[r0:r1, max(c1 - thickness, c0):c1] = color
+
+
+def side_by_side(panels, gap=8):
+    """Equal-height RGB images left to right on a white background."""
+    height = max(p.shape[0] for p in panels)
+    width = sum(p.shape[1] for p in panels) + gap * (len(panels) - 1)
+    canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+    x = 0
+    for p in panels:
+        canvas[:p.shape[0], x:x + p.shape[1]] = p
+        outline(canvas, 0, x, p.shape[0], p.shape[1], color=(160, 160, 160), thickness=1)
+        x += p.shape[1] + gap
+    return canvas
 
 
 def class_image(classes, known=None):
@@ -147,6 +173,7 @@ def prepare(args):
                   + ', '.join(f'{r}->{c}' for r, c in RAW_LABEL_TO_CLASS.items())
                   + ' (0 cloud, 1 land, 2 sea)')
 
+    full, full_labels = cube, labels
     row, col, height, width = args.crop or (0, 0, cube.shape[0], cube.shape[1])
     region = (slice(row, row + height, args.step), slice(col, col + width, args.step))
     cube = cube[region]
@@ -166,10 +193,22 @@ def prepare(args):
     if labels is not None:
         np.save(out / 'labels.npy', labels[region])
     rgb_bands = args.rgb or rgb_default or DEFAULT_RGB
-    rgb = cube[:, :, rgb_bands].astype(np.float64)
-    lo, hi = np.percentile(rgb, [2, 98])
-    write_png(out / 'rgb.png', np.clip((rgb - lo) / max(hi - lo, 1e-12) * 255, 0, 255),
-              display_scale(cube.shape[:2]))
+    full_rgb = full[:, :, rgb_bands].astype(np.float64)
+    lo, hi = np.percentile(full_rgb, [2, 98])  # one stretch for the capture and the grid
+
+    def stretch(x):
+        return np.clip((x - lo) / max(hi - lo, 1e-12) * 255, 0, 255).astype(np.uint8)
+
+    capture_rgb_img = stretch(full_rgb)
+    if args.crop:
+        outline(capture_rgb_img, row, col, height, width)
+    write_png(out / 'capture_rgb.png', capture_rgb_img)
+    if full_labels is not None:
+        known = (full_labels >= 0) & (full_labels < len(CLASS_NAMES))
+        write_png(out / 'capture_labels.png', class_image(full_labels.astype(int), known))
+    rgb = stretch(cube[:, :, rgb_bands].astype(np.float64))
+    np.save(out / 'rgb.npy', rgb)
+    write_png(out / 'rgb.png', rgb, display_scale(cube.shape[:2]))
     (out / 'meta.json').write_text(json.dumps({
         'cube': str(args.cube), 'checkpoint': checkpoint.as_posix(), 'shape': list(cube.shape[:2]),
         'crop': [row, col, height, width], 'step': args.step, 'rgb_bands': rgb_bands,
@@ -184,9 +223,21 @@ def prepare(args):
     estimate = f'{seconds / 60:.0f} min' if seconds >= 120 else f'{seconds:.0f} s'
     print(f'Over JTAG expect very roughly {estimate}; the board script reports the real rate.')
     print('Next, on the board machine:')
-    print(f'  xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run> '
-          f'-pixels {(out / "pixels.txt").as_posix()} {(out / "fpga_logits.txt").as_posix()}')
+    print(f'  {board_command(out)}')
     print(f'Then: python tools/justoliunet_image.py compare {out.as_posix()}')
+
+
+def newest_bitstream_run():
+    """artifacts/justoliunet/<run> of the latest bitstream build, if this machine has one."""
+    runs = sorted(p.parents[1] for p in (ROOT / 'artifacts/justoliunet').glob('*/bitstream/*.bit'))
+    return runs[-1] if runs else None
+
+
+def board_command(out):
+    run = newest_bitstream_run()
+    run_arg = Path(os.path.relpath(run)).as_posix() if run else 'artifacts/justoliunet/RUN_DIRECTORY'
+    return (f'xsdb software/jtag/justoliunet.tcl {run_arg} '
+            f'-pixels {(out / "pixels.txt").as_posix()} {(out / "fpga_logits.txt").as_posix()}')
 
 
 def class_name(c):
@@ -207,6 +258,9 @@ def compare(args):
     meta = json.loads((out / 'meta.json').read_text())
     shape = tuple(meta['shape'])
     reference = np.load(out / 'reference_logits.npy')
+    if not (out / 'fpga_logits.txt').exists():
+        raise SystemExit(f'no FPGA results in {out.as_posix()}/fpga_logits.txt yet; run the board step first:\n'
+                         f'  {board_command(out)}')
     rows = [l.split() for l in (out / 'fpga_logits.txt').read_text().splitlines() if l.strip()]
     fpga = np.array(rows, dtype=np.float64).reshape(len(rows), reference.shape[1])
     n, total = len(fpga), len(reference)
@@ -230,18 +284,27 @@ def compare(args):
     full_fpga = np.zeros(total, dtype=int)
     full_fpga[:n] = fpga_cls
     scale = display_scale(shape)
-    write_png(out / 'fpga_classes.png', class_image(full_fpga, done).reshape(*shape, 3), scale)
-    write_png(out / 'reference_classes.png', class_image(reference.argmax(axis=1)).reshape(*shape, 3), scale)
+    fpga_map = class_image(full_fpga, done).reshape(*shape, 3)
     mismatch = np.full((total, 3), 255, dtype=np.uint8)
     mismatch[:n][~(agree & close)] = [214, 39, 40]
     mismatch[~done] = NO_DATA
-    write_png(out / 'mismatch.png', mismatch.reshape(*shape, 3), scale)
+    mismatch_map = mismatch.reshape(*shape, 3)
+    write_png(out / 'fpga_classes.png', fpga_map, scale)
+    write_png(out / 'reference_classes.png', class_image(reference.argmax(axis=1)).reshape(*shape, 3), scale)
+    write_png(out / 'mismatch.png', mismatch_map, scale)
 
+    panels, names = [], []
+    if (out / 'rgb.npy').exists():
+        panels.append(np.load(out / 'rgb.npy'))
+        names.append('picture')
     labels_path = out / 'labels.npy'
     if labels_path.exists():
         all_labels = np.load(labels_path).reshape(-1).astype(int)
         all_known = (all_labels >= 0) & (all_labels < classes)
-        write_png(out / 'labels.png', class_image(all_labels, all_known).reshape(*shape, 3), scale)
+        labels_map = class_image(all_labels, all_known).reshape(*shape, 3)
+        write_png(out / 'labels.png', labels_map, scale)
+        panels.append(labels_map)
+        names.append('labels')
         labels, known = all_labels[:n], all_known[:n]
         if known.any():
             for name, predicted in (('FPGA', fpga_cls), ('reference', ref_cls)):
@@ -253,10 +316,14 @@ def compare(args):
                       + f', mIoU {np.nanmean(ious):.3f} ({int(known.sum())} labeled pixels)')
     if not meta.get('meaningful_classes', True):
         print('  (placeholder normalization on raw input: the scores against labels are not meaningful)')
+    panels += [fpga_map, mismatch_map]
+    names += ['FPGA classes', 'mismatch vs reference']
+    write_png(out / 'overview.png',
+              side_by_side([np.repeat(np.repeat(p, scale, 0), scale, 1) for p in panels]))
 
-    print(f'Maps in {out.as_posix()}/: rgb, fpga_classes, reference_classes, mismatch (red = differs from reference)'
-          + (', labels' if labels_path.exists() else '')
-          + '. Colors: cloud white, land green, sea blue; gray = no data.')
+    print(f'Pictures in {out.as_posix()}/: overview.png (left to right: {", ".join(names)}), '
+          'capture_rgb.png (whole capture, full resolution), and each map on its own. '
+          'Colors: cloud white, land green, sea blue, gray = no data; mismatch red = FPGA differs.')
     ok = close.all() and agree.all() and n == total
     print('MATCH: the FPGA reproduces the reference on every pixel' if ok else 'MISMATCH: see above')
     return 0 if ok else 1

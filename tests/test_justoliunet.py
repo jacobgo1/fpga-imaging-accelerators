@@ -226,7 +226,8 @@ class ImageToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('MATCH', result.stdout)
         self.assertIn('vs labels', result.stdout)
-        for name in ('rgb', 'fpga_classes', 'reference_classes', 'mismatch', 'labels'):
+        for name in ('rgb', 'capture_rgb', 'capture_labels', 'overview', 'fpga_classes',
+                     'reference_classes', 'mismatch', 'labels'):
             self.assertEqual((img / f'{name}.png').read_bytes()[:4], b'\x89PNG')
 
     def test_wrong_or_missing_pixels_fail(self):
@@ -265,6 +266,14 @@ class ImageToolTests(unittest.TestCase):
         numpy.testing.assert_array_equal(numpy.load(img / 'labels.npy'), raw_labels.astype(int) - 1)
         self.assertEqual(json.loads((img / 'meta.json').read_text())['rgb_bands'], [56, 67, 86])
         self.assertIn('remapped', stdout)
+
+    def test_compare_before_the_board_step_says_what_to_run(self):
+        img, _, _ = self.prepare()
+        result = self.tool('compare', img)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('run the board step first', result.stderr)
+        self.assertIn('xsdb software/jtag/justoliunet.tcl', result.stderr)
+        self.assertNotIn('Traceback', result.stderr)
 
     def test_cube_with_wrong_band_count_is_rejected(self):
         numpy.save(self.dir / 'bad.npy', numpy.zeros((4, 4, 100), dtype=numpy.float32))
