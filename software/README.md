@@ -62,3 +62,39 @@ from the HLS `*_hw.h` header that `boards/zcu104/system.tcl` copies into
 `artifacts/<kernel>/<run>/board/`, next to `psu_init.tcl` and `address.tcl`
 (the kernel's base address). If `address.tcl` is missing, pass the base from
 the Vivado Address Editor: `board_open <dir> 0xA0000000`.
+
+## A trained network: `justoliunet`
+
+`src/hls/justoliunet/` is 1D-Justo-LiuNet, the per-pixel sea/land/cloud
+classifier, with the weights from `weights/fp32/justoliunet/`. It takes one
+pixel's min-max normalized spectrum (110 bands) and returns 3 logits; the
+highest one is the class. It works in float32, so it should reproduce the
+trained model.
+
+The weights get into the kernel through a generated header:
+
+```bash
+python tools/export_justoliunet.py [checkpoint.pt]   # needs numpy, not torch
+```
+
+That writes `justoliunet_weights.hpp`, plus test pixels and their expected
+logits (from a numpy forward pass of the same checkpoint) for the testbench
+and for the board. The `justoliunet_bn` checkpoint also works: its BatchNorm
+is folded into the first convolution.
+
+```bash
+python3 main.py native --kernel justoliunet          # C++ vs reference
+python3 main.py bitstream --kernel justoliunet --config config/project.local.json
+xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run>
+```
+
+The board test runs every pixel in `tb/data/justoliunet_vectors.txt` on the
+FPGA and prints PASS or FAIL per pixel. Live, from the `xsdb` prompt:
+
+```tcl
+source software/jtag/justoliunet.tcl
+board_open artifacts/justoliunet/<run>
+jl_vector 4                     ;# one test pixel: FPGA vs reference logits
+jl_classify_file my_pixel.txt   ;# 110 numbers, any separators
+jl_classify {0.1 0.12 ...}
+```
