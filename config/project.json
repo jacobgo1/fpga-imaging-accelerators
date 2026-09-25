@@ -1,9 +1,9 @@
 {
   "part": null,
   "clock_ns": 10.0,
-  "jobs": 4,
+  "jobs": 10,
   "default_kernel": "conv2d",
-  "board_script": null,
-  "export_xsa": false,
+  "board_script": "boards/zcu104/system.tcl",
+  "export_xsa": true,
   "kernels": {}
 }
