@@ -45,7 +45,7 @@ def signed(value, bits):
 class FakeBoard:
     def __init__(self, tcl, broken=False):
         self.tcl, self.broken = tcl, broken
-        self.words, self.calls, self.done = {}, [], False
+        self.words, self.calls, self.done, self.starts = {}, [], False, 0
         for name in ('connect', 'targets', 'rst', 'fpga', 'mwr', 'mrd'):
             tcl.createcommand(name, lambda *args, name=name: self.command(name, args))
 
@@ -82,6 +82,7 @@ class FakeBoard:
         return values
 
     def run(self):
+        self.starts += 1
         a, b = self.int16s(0x080), self.int16s(0x100)
         for i in range(8):
             for j in range(8):
@@ -156,6 +157,33 @@ class JtagTests(unittest.TestCase):
         tcl.eval('source ' + tcl_path(ROOT / 'software/jtag/board.tcl'))
         with self.assertRaisesRegex(tkinter.TclError, 'packing assumption'):
             tcl.call('board_load_map', self.run_dir.as_posix())
+
+    def live_session(self, text, broken=False):
+        tcl, board = self.open_board(broken)
+        session = self.run_dir / 'session.txt'
+        session.write_text(text)
+        failed = int(tcl.eval(f'set ch [open {tcl_path(session)}]; set r [mm_live $ch]; close $ch; set r'))
+        return failed, board.starts
+
+    def test_live_mode_runs_every_way_of_entering_a_matrix(self):
+        matrix_file = self.run_dir / 'b.txt'
+        matrix_file.write_text('\n'.join(', '.join(str(r * 8 + c - 32) for c in range(8)) for r in range(8)))
+        typed_rows = '\n'.join(' '.join(str((r + 1) * (c - 3)) for c in range(8)) for r in range(8))
+        session = [
+            'random', 'identity',                     # run 1
+            typed_rows, 'same',                       # run 2: typed A, previous B
+            '1 2 x', '40000 ' + '0 ' * 63,            # rejected entries, re-prompted
+            'random -1000 1000',
+            f'file {matrix_file.as_posix()}',         # run 3
+            'quit',
+        ]
+        self.assertEqual(self.live_session('\n'.join(session) + '\n'), (0, 3))
+
+    def test_live_mode_reports_a_wrong_result(self):
+        self.assertEqual(self.live_session('random\nrandom\nquit\n', broken=True), (1, 1))
+
+    def test_live_mode_ends_cleanly_at_end_of_input(self):
+        self.assertEqual(self.live_session('random\n'), (0, 0))
 
     def test_scripts_have_complete_tcl_syntax(self):
         tcl = tkinter.Tcl()

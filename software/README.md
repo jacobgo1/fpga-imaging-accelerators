@@ -27,14 +27,31 @@ ports), and runs a self-test against a software reference. No separate Vivado
 Hardware Manager step is needed; the script resets the board and programs it
 itself.
 
-Live, from the `xsdb` prompt:
+To type in your own matrices, add `-live`. The board is programmed once, then
+you are asked for A and B repeatedly; each pair runs on the FPGA and the
+result is printed with MATCH or MISMATCH against a software reference:
+
+```bash
+xsdb software/jtag/matmul.tcl artifacts/matmul/<run> -live
+```
+
+```text
+A> random -1000 1000          random values in a range (default -16..16)
+B> 1 2 3 4 5 6 7 8            64 numbers, row by row, over one or more lines
+  8/64> 0 1 0 0 0 0 0 0
+  ...
+A> same                       reuse the previous A (also: identity, zero)
+B> file my_b.txt              64 numbers from a text file
+A> quit
+```
+
+From the `xsdb` prompt the same pieces are procs:
 
 ```tcl
 source software/jtag/matmul.tcl
 board_open artifacts/matmul/<run>
-set a {{1 2 0 0 0 0 0 0} {0 1 0 0 0 0 0 0} ...}      ;# 8 rows of 8
-mm_print [mm_multiply $a [mm_identity]]
-mm_print [mm_multiply [mm_random] [mm_random]]
+mm_check [mm_load my_a.txt] [mm_random]     ;# run, print, compare
+mm_live                                     ;# the prompt above
 mm_selftest 20
 kernel_write a {...64 values...}; kernel_run; kernel_read c -signed   ;# raw access
 kernel_status
