@@ -35,6 +35,18 @@ class FlowTests(unittest.TestCase):
         self.assertIn('hls.tcl', result.stdout)
         self.assertIn('cosim', result.stdout)
 
+    def test_skip_cosim_is_announced_for_export(self):
+        result = self.cli('export', '--dry-run', '--part', 'xc7z020clg400-1', '--skip-cosim')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('co-simulation skipped', result.stdout)
+
+    def test_skip_cosim_is_rejected_where_it_means_nothing(self):
+        for stage in ('csynth', 'cosim'):
+            with self.subTest(stage=stage):
+                result = self.cli(stage, '--dry-run', '--part', 'xc7z020clg400-1', '--skip-cosim')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('--skip-cosim', result.stderr)
+
     def test_bitstream_requires_board(self):
         result = self.cli('bitstream', '--dry-run', '--part', 'xc7z020clg400-1')
         self.assertNotEqual(result.returncode, 0)

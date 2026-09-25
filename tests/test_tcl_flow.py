@@ -21,11 +21,12 @@ spec.loader.exec_module(flow)
 
 @unittest.skipIf(tkinter is None, 'Optional Tcl tests require Python tkinter; no display needed')
 class TclFlowTests(unittest.TestCase):
-    def execute_hls(self, stage, fail_at=''):
+    def execute_hls(self, stage, fail_at='', skip_cosim=False):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
             config = json.loads((ROOT / 'config/project.json').read_text())
             config['part'] = 'xc7z020clg400-1'
+            config['skip_cosim'] = skip_cosim
             flow.write_settings(run, config, flow.resolve_kernel('matmul', config), stage)
             tcl = tkinter.Tcl()
             tcl.eval('set calls {}; set exit_code -1')
@@ -57,6 +58,14 @@ class TclFlowTests(unittest.TestCase):
                 code, calls = self.execute_hls(stage)
                 self.assertEqual(code, 0)
                 self.assertEqual([c for c in calls if c.endswith('_design')], stages)
+
+    def test_skip_cosim_still_exports(self):
+        for stage in ('export', 'bitstream'):
+            with self.subTest(stage=stage):
+                code, calls = self.execute_hls(stage, skip_cosim=True)
+                self.assertEqual(code, 0)
+                self.assertEqual([c for c in calls if c.endswith('_design')],
+                                 ['csim_design', 'csynth_design', 'export_design'])
 
     def test_simulation_failure_stops_export(self):
         code, calls = self.execute_hls('export', fail_at='csim_design')

@@ -110,7 +110,9 @@ you want to compare variants; keep a baseline result before tuning
 
 Each command rebuilds its prerequisites in a fresh run directory, so a result
 can never come from stale RTL. Useful flags: `--kernel`, `--part`, `--clock-ns`,
-`--dry-run` (print the commands without running anything), `--config`, `--cxx`.
+`--dry-run` (print the commands without running anything), `--config`, `--cxx`,
+and `--skip-cosim` (leave out C/RTL co-simulation before export and later
+stages, when csim already passed and cosim is too slow to repeat every build).
 
 `csynth` and later stages print the numbers you actually want:
 

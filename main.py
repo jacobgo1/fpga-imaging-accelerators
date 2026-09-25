@@ -165,6 +165,10 @@ def load_config(args):
         config['part'] = args.part
     if args.clock_ns is not None:
         config['clock_ns'] = args.clock_ns
+    if args.skip_cosim:
+        if args.stage in ('native', 'csim', 'csynth', 'cosim'):
+            raise ValueError(f'--skip-cosim only applies to export/synth/impl/bitstream, not {args.stage}')
+        config['skip_cosim'] = True
     config['part_requested'] = config.get('part')
     config['part'] = resolve_part(config.get('part'))
     if config['part'] and not str(config['part']).lower().startswith('xc'):
@@ -190,6 +194,7 @@ def write_settings(run, config, kernel, stage):
                   part=config['part'], clock_ns=config['clock_ns'],
                   jobs=config['jobs'], top=kernel['top'],
                   export_xsa=int(bool(config.get('export_xsa'))),
+                  skip_cosim=int(bool(config.get('skip_cosim'))),
                   board_script=(repository_path(config['board_script']).as_posix()
                                 if config.get('board_script') else ''),
                   directives=(repository_path(kernel['directives']).as_posix()
@@ -390,6 +395,8 @@ def build_parser():
     parser.add_argument('--hls-tool', help='vitis-run or vitis_hls executable/path')
     parser.add_argument('--vivado-tool', default='vivado')
     parser.add_argument('--cxx', help='GCC/Clang C++ executable/path (or CXX environment variable)')
+    parser.add_argument('--skip-cosim', action='store_true',
+                        help='Skip C/RTL co-simulation before export/synth/impl/bitstream')
     parser.add_argument('--dry-run', action='store_true', help='Show plan without tools or writes')
     return parser
 
@@ -434,8 +441,10 @@ def main():
         if args.stage == 'native':
             print('Then execute the compiled testbench.')
         else:
+            cosim = ('skipped (--skip-cosim)' if config.get('skip_cosim')
+                     else 'for cosim/export/synth/impl/bitstream')
             print('HLS prerequisites: C simulation; synthesis unless csim; '
-                  'RTL co-simulation for cosim/export/synth/impl/bitstream; '
+                  f'RTL co-simulation {cosim}; '
                   'IP export for export/synth/impl/bitstream.')
         return 0
     relative = run_directory(args.kernel, args.stage)
