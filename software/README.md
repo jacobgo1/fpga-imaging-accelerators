@@ -65,22 +65,30 @@ the Vivado Address Editor: `board_open <dir> 0xA0000000`.
 
 ## A trained network: `justoliunet`
 
-`src/hls/justoliunet/` is 1D-Justo-LiuNet, the per-pixel sea/land/cloud
-classifier, with the weights from `weights/fp32/justoliunet/`. It takes one
-pixel's min-max normalized spectrum (110 bands) and returns 3 logits; the
-highest one is the class. It works in float32, so it should reproduce the
-trained model.
+`src/hls/justoliunet/` classifies one HYPSO-2 pixel as cloud (0), land (1) or
+sea (2) from its **raw L1a spectrum** (120 bands). It does the whole chain
+that training used (hypso-onboard-segmentation):
 
-The weights get into the kernel through a generated header:
+1. **preprocess**: keep 110 bands (drop 0-7 and 118-119), then z-score each
+   with the training set's mean and std;
+2. **1D-Justo-LiuNet** with the weights from `weights/fp32/justoliunet/`:
+   4 x [Conv1D k=6 -> ReLU -> MaxPool 2], flatten, Dense -> 3 logits.
+
+It works in float32, so it should reproduce the trained model. Band
+selection, statistics and weights all come from one generated header:
 
 ```bash
-python tools/export_justoliunet.py [checkpoint.pt]   # needs numpy, not torch
+python tools/export_justoliunet.py --mu-sd <prepared dataset>/mu_sd.txt   # numpy, not torch
+python tools/export_justoliunet.py --placeholder-normalization            # until you have it
 ```
 
-That writes `justoliunet_weights.hpp`, plus test pixels and their expected
-logits (from a numpy forward pass of the same checkpoint) for the testbench
-and for the board. The `justoliunet_bn` checkpoint also works: its BatchNorm
-is folded into the first convolution.
+`mu_sd.txt` is what `dataset_processing/prepare_hypso_dataset.py` wrote into
+the prepared dataset folder the checkpoints were trained on. With
+`--placeholder-normalization` (mean 0, std 1; what is committed now) the
+hardware is complete and passes every test, but raw captures come out
+wrongly classified: re-export with `--mu-sd` and rebuild before judging real
+data. The exporter also writes raw test spectra and their expected logits for
+the testbench and the board. The `justoliunet_bn` checkpoint works too.
 
 ```bash
 python3 main.py native --kernel justoliunet          # C++ vs reference
@@ -95,6 +103,31 @@ FPGA and prints PASS or FAIL per pixel. Live, from the `xsdb` prompt:
 source software/jtag/justoliunet.tcl
 board_open artifacts/justoliunet/<run>
 jl_vector 4                     ;# one test pixel: FPGA vs reference logits
-jl_classify_file my_pixel.txt   ;# 110 numbers, any separators
-jl_classify {0.1 0.12 ...}
+jl_classify_file my_pixel.txt   ;# 120 raw band values, any separators
 ```
+
+### Classifying an image
+
+An image is classified pixel by pixel. `tools/justoliunet_image.py` (numpy)
+sends raw pixels to the board and scores what comes back:
+
+```bash
+python3 tools/justoliunet_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy \
+    --step 8 --out img
+xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run> \
+    -pixels img/pixels.txt img/fpga_logits.txt
+python3 tools/justoliunet_image.py compare img
+```
+
+The image can be a raw HYPSO-2 capture `.nc` (read like training does; needs
+`pip install hypso`, and its labels are remapped as in training), a raw
+`(H, W, 120)` `.npy`, or a prepared training image `data<i>.npy` (110 bands,
+already z-scored) with `label<i>.npy`. A prepared image is turned back into
+raw with the kernel's own statistics, so it classifies correctly even with
+placeholder normalization.
+
+`compare` checks every pixel against a numpy reference of the exact kernel,
+reports accuracy and IoU per class against the labels, and writes `rgb.png`,
+`fpga_classes.png`, `reference_classes.png`, `mismatch.png` and `labels.png`
+into `img/`. Over JTAG a pixel takes tens of milliseconds: `--crop ROW COL H W`
+a region, or `--step N` for a subsampled view of the whole scene.

@@ -5,6 +5,9 @@
 # runs every pixel in tb/data/justoliunet_vectors.txt on the FPGA and compares
 # the logits with the reference computed from the same checkpoint.
 #
+#   xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run> -pixels img/pixels.txt img/fpga_logits.txt
+# classifies an image prepared by tools/justoliunet_image.py.
+#
 # Live, from the xsdb prompt:
 #   xsdb% source software/jtag/justoliunet.tcl
 #   xsdb% board_open artifacts/justoliunet/<run>
@@ -70,6 +73,35 @@ proc jl_classify_file {path} {
     return [jl_classify [regexp -all -inline {[^\s,;]+} $text]]
 }
 
+# Classifies every spectrum in in_path (one pixel per line, as written by
+# tools/justoliunet_image.py prepare) and writes one line of logits per pixel,
+# in the same order, to out_path.
+proc jl_classify_pixels {in_path out_path} {
+    set f [open $in_path]
+    set pixels {}
+    while {[gets $f line] >= 0} {
+        if {[string match #* $line] || [string trim $line] eq ""} continue
+        lappend pixels [regexp -all -inline {[^\s,;]+} $line]
+    }
+    close $f
+    set total [llength $pixels]
+    set out [open $out_path w]
+    set start [clock milliseconds]
+    set done 0
+    foreach spectrum $pixels {
+        puts $out [join [jl_run $spectrum] " "]
+        incr done
+        if {$done % 64 == 0 || $done == $total} {
+            flush $out
+            set elapsed [expr {([clock milliseconds] - $start) / 1000.0}]
+            set left [expr {$elapsed / $done * ($total - $done)}]
+            puts [format "  %d/%d pixels, %.0f s elapsed, ~%.0f s left" $done $total $elapsed $left]
+        }
+    }
+    close $out
+    puts "Wrote $total pixels of logits to $out_path"
+}
+
 # Each vector: {inputs expected_logits}
 proc jl_load_vectors {{path ""}} {
     if {$path eq ""} { set path $::jl_vectors_file }
@@ -128,6 +160,14 @@ proc jl_selftest {{path ""}} {
 }
 
 if {[info exists argv] && [llength $argv] > 0} {
+    set i [lsearch -exact $argv -pixels]
+    if {$i >= 0} {
+        lassign [lrange $argv $i+1 $i+2] pixels_in logits_out
+        if {$logits_out eq ""} { error "usage: justoliunet.tcl <artifact_dir> -pixels <pixels.txt> <logits.txt>" }
+        board_open {*}[lreplace $argv $i $i+2]
+        jl_classify_pixels $pixels_in $logits_out
+        exit 0
+    }
     board_open {*}$argv
     exit [jl_selftest]
 }

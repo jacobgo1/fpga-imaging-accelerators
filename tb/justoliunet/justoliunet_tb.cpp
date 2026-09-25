@@ -44,5 +44,8 @@ int main() {
                 failures ? "FAIL" : "PASS", JL_VECTORS - failures, JL_VECTORS, worst);
     for (int c = 0; c < jl::CLASSES; c++) std::printf(" %d", per_class[c]);
     std::printf("\n");
+    if (jl::PLACEHOLDER_NORMALIZATION)
+        std::printf("NOTE: built with placeholder normalization (mean 0, std 1); "
+                    "re-export with --mu-sd before judging real captures\n");
     return failures ? 1 : 0;
 }

@@ -6,8 +6,11 @@ each script names at the top of its own file.
 
 ```text
 pt_reader.py            Read PyTorch .pt checkpoints with numpy only (no torch)
-export_justoliunet.py   Checkpoint -> justoliunet kernel weights + test vectors
-                        (numpy). Re-run after changing the checkpoint.
+export_justoliunet.py   Checkpoint + training mu_sd.txt -> justoliunet kernel
+                        (band selection, z-score, weights) + test vectors
+                        (numpy). Re-run after changing either.
+justoliunet_image.py    Image cube -> pixels for the board, then FPGA result
+                        vs reference and labels, with PNG class maps (numpy)
 hypso_dims.py   Spatial/spectral dimensions of HYPSO .nc captures
                 (pip install hypso). Answers what real capture sizes look
                 like before setting CONV_IC/CONV_IH/CONV_IW in a kernel.

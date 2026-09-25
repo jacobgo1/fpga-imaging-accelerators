@@ -33,9 +33,18 @@ void conv_relu_pool(const float in[IN_CH][IN_LEN],
     }
 }
 
+// What training did to each L1a spectrum before the network saw it: keep
+// BANDS of the RAW_BANDS bands, then z-score each with the training set's
+// statistics. 1/std is precomputed so the hardware multiplies, not divides.
+void preprocess(const float raw[jl::RAW_BANDS], float out[1][jl::BANDS]) {
+    select_band:
+    for (int b = 0; b < jl::BANDS; b++)
+        out[0][b] = (raw[jl::KEPT_BANDS[b]] - jl::BAND_MEAN[b]) * jl::BAND_INV_STD[b];
+}
+
 }  // namespace
 
-void justoliunet(const float spectrum[jl::BANDS], float logits[jl::CLASSES]) {
+void justoliunet(const float spectrum[jl::RAW_BANDS], float logits[jl::CLASSES]) {
     // Spectrum in and logits out are AXI-Lite registers, like matmul, so the
     // PS can drive the kernel over JTAG without a DMA.
     #pragma HLS INTERFACE mode=s_axilite port=spectrum bundle=control
@@ -48,9 +57,7 @@ void justoliunet(const float spectrum[jl::BANDS], float logits[jl::CLASSES]) {
     float x3[jl::C3][jl::L3];
     float x4[jl::C4][jl::L4];
 
-    load_spectrum:
-    for (int b = 0; b < jl::BANDS; b++) x0[0][b] = spectrum[b];
-
+    preprocess(spectrum, x0);
     conv_relu_pool<1, jl::BANDS, jl::C1>(x0, jl::conv1_w, jl::conv1_b, x1);
     conv_relu_pool<jl::C1, jl::L1, jl::C2>(x1, jl::conv2_w, jl::conv2_b, x2);
     conv_relu_pool<jl::C2, jl::L2, jl::C3>(x2, jl::conv3_w, jl::conv3_b, x3);

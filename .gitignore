@@ -19,3 +19,7 @@ __pycache__/
 *.ip_user_files/
 .DS_Store
 Thumbs.db
+
+# HYPSO captures (100+ MB; GitHub rejects files over 100 MB)
+*.nc/
+*.nc
