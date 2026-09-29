@@ -98,6 +98,15 @@ if {$psu_init ne ""} {
     puts "WARNING: no psu_init.tcl among the PS output products; set export_xsa and take it from the XSA"
 }
 
+# Block-design description, which PYNQ needs to load the bitstream from Linux
+# (software/board/fpga_runner.py load).
+set hwh [lindex [get_files -all -quiet */hw_handoff/${bd}.hwh] 0]
+if {$hwh ne ""} {
+    file copy -force $hwh [file join $handoff system.hwh]
+} else {
+    puts "WARNING: no ${bd}.hwh among the block design outputs; loading from Linux with PYNQ needs it"
+}
+
 set headers [glob -nocomplain -directory $ip_repo drivers/*/src/*_hw.h]
 foreach header $headers { file copy -force $header $handoff }
 if {![llength $headers]} { puts "WARNING: HLS IP in $ip_repo has no *_hw.h register map" }

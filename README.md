@@ -6,6 +6,13 @@ C++ and built with AMD Vitis HLS and Vivado from the command line. The point of
 the setup is that adding a kernel means writing C++, not wiring up a build.
 See [the project description](docs/project-description.txt).
 
+**On the lab server with the ZCU104:** `source fpga.sh`, then `fpga_help`. It
+has one command per step: test, build, package for PYNQ, prepare an image,
+score the results, view the pictures. The board itself is driven from a
+Jupyter notebook under PYNQ; every bitstream build brings its own. How the
+pieces fit together, from a HYPSO capture to a class map, is in
+[docs/framework.md](docs/framework.md).
+
 ## Quickstart
 
 Needs **Python 3.10+** and **GCC or Clang**; no Python packages. HLS and FPGA
@@ -106,7 +113,8 @@ you want to compare variants; keep a baseline result before tuning
 | `export` | ... then a packaged IP ZIP for the Vivado IP catalog |
 | `synth` | ... then Vivado synthesis (kernel out of context by default) |
 | `impl` | ... then placement and routing; needs a board script |
-| `bitstream` | ... then a `.bit`, and optionally an `.xsa` |
+| `bitstream` | ... then a `.bit`, and optionally an `.xsa`; plus a PYNQ package |
+| `pynq` | Package an existing build for PYNQ: `artifacts/<kernel>/<run>/pynq/` and a zip (`--run` picks the build) |
 
 Each command rebuilds its prerequisites in a fresh run directory, so a result
 can never come from stale RTL. Useful flags: `--kernel`, `--part`, `--clock-ns`,

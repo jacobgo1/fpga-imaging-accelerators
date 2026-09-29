@@ -48,7 +48,9 @@ class FlowTests(unittest.TestCase):
                 self.assertIn('--skip-cosim', result.stderr)
 
     def test_bitstream_requires_board(self):
-        result = self.cli('bitstream', '--dry-run', '--part', 'xc7z020clg400-1')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.config_file(tmp, board_script=None)
+            result = self.cli('bitstream', '--config', str(path), '--dry-run', '--part', 'xc7z020clg400-1')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('board', result.stderr.lower())
 

@@ -4,10 +4,42 @@ Host utilities, bare-metal applications and embedded Linux components, once a
 board and software stack are chosen. Take AXI-Lite register offsets from the
 driver headers generated inside the exported HLS IP rather than hardcoding them.
 
-## Talking to a kernel over JTAG (`jtag/`)
+`fpga.sh` in the repository root wraps everything below in short commands
+(`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)
+shows how it fits together.
 
-The quickest way to put data into a kernel and read results back, with no
-embedded software: `xsdb`, the debugger that ships with Vivado, reads and writes
+- `pynq/<kernel>/`: **the normal way.** A driver and a Jupyter notebook for
+  the board running PYNQ. Every bitstream build packages them with the build's
+  files (below).
+- `jtag/`: fallback without Linux on the board: the PC drives the kernel over
+  the JTAG cable with `xsdb`.
+
+## On the board with PYNQ (`pynq/`)
+
+Every successful `bitstream` build writes, next to the bitstream:
+
+```text
+artifacts/<kernel>/<build>/pynq/          everything the notebook needs, in one place:
+    <kernel>.bit  <kernel>.hwh             the design (PYNQ wants the same name for both)
+    x<kernel>_hw.h                         register offsets
+    <kernel>_pynq.py  <kernel>.ipynb       driver and notebook, from software/pynq/<kernel>/
+    ...                                    files listed in software/pynq/<kernel>/include.txt
+artifacts/<kernel>/<build>/<kernel>_pynq.zip   the same, as one file to upload
+```
+
+For builds made before this existed: `python3 main.py pynq --kernel justoliunet`
+(or `fpga_pynq`), which takes the `.hwh` from the build's `.xsa`.
+
+Upload the zip in Jupyter (`http://BOARD:9090`), run `!unzip -o justoliunet_pynq.zip`
+in a notebook cell, open `justoliunet_pynq/justoliunet.ipynb` and run it from
+the top: it loads the design, runs the self-test, classifies single pixels and
+whole images, and shows the pictures. Images are prepared on a PC
+(`fpga_prepare`, then `fpga_zip`) and uploaded next to the notebook.
+
+## Talking to a kernel over JTAG (`jtag/`, fallback)
+
+For when the board runs no Linux. With no software on the board at all,
+`xsdb`, the debugger that ships with Vivado, reads and writes
 the kernel's AXI-Lite registers through the JTAG cable, via the Zynq PS.
 
 This only works for kernels whose arrays are on the `s_axilite` bundle
@@ -83,51 +115,45 @@ python tools/export_justoliunet.py --placeholder-normalization            # unti
 ```
 
 `mu_sd.txt` is what `dataset_processing/prepare_hypso_dataset.py` wrote into
-the prepared dataset folder the checkpoints were trained on. With
-`--placeholder-normalization` (mean 0, std 1; what is committed now) the
-hardware is complete and passes every test, but raw captures come out
-wrongly classified: re-export with `--mu-sd` and rebuild before judging real
-data. The exporter also writes raw test spectra and their expected logits for
-the testbench and the board. The `justoliunet_bn` checkpoint works too.
+the prepared dataset folder the checkpoints were trained on; the committed
+kernel uses it. `--placeholder-normalization` (mean 0, std 1) builds and tests
+without it, but classifies raw captures wrongly. The exporter also writes raw
+test spectra and their expected logits for the testbench and the board. The
+`justoliunet_bn` checkpoint works too.
 
 ```bash
-python3 main.py native --kernel justoliunet          # C++ vs reference
-python3 main.py bitstream --kernel justoliunet --config config/project.local.json
-xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run>
+source fpga.sh
+fpga_test                  # C++ vs reference, on the PC
+fpga_build                 # bitstream + artifacts/justoliunet/<build>/justoliunet_pynq.zip
 ```
 
-The board test runs every pixel in `tb/data/justoliunet_vectors.txt` on the
-FPGA and prints PASS or FAIL per pixel. Live, from the `xsdb` prompt:
-
-```tcl
-source software/jtag/justoliunet.tcl
-board_open artifacts/justoliunet/<run>
-jl_vector 4                     ;# one test pixel: FPGA vs reference logits
-jl_classify_file my_pixel.txt   ;# 120 raw band values, any separators
-```
+On the board, the notebook in that zip loads the design and runs the
+self-test: every pixel in `tb/data/justoliunet_vectors.txt`, PASS or FAIL.
 
 ### Classifying an image
 
-An image is classified pixel by pixel. `tools/justoliunet_image.py` (numpy)
-sends raw pixels to the board and scores what comes back:
+An image is classified pixel by pixel. On a PC, `tools/justoliunet_image.py`
+(numpy) turns a capture into pixels for the board plus the results the board
+should give; the notebook runs them through the FPGA and scores them:
 
 ```bash
-python3 tools/justoliunet_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy \
-    --step 8 --out img
-xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/<run> \
-    -pixels img/pixels.txt img/fpga_logits.txt
-python3 tools/justoliunet_image.py compare img
+fpga_prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --step 8 --out aegean
+fpga_zip aegean            # upload aegean.zip next to the notebook, then run section 4
 ```
 
 The image can be a raw HYPSO-2 capture `.nc` (read like training does; needs
 `pip install hypso`, and its labels are remapped as in training), a raw
 `(H, W, 120)` `.npy`, or a prepared training image `data<i>.npy` (110 bands,
 already z-scored) with `label<i>.npy`. A prepared image is turned back into
-raw with the kernel's own statistics, so it classifies correctly even with
-placeholder normalization.
+raw with the kernel's own statistics.
 
 `compare` checks every pixel against a numpy reference of the exact kernel,
-reports accuracy and IoU per class against the labels, and writes `rgb.png`,
-`fpga_classes.png`, `reference_classes.png`, `mismatch.png` and `labels.png`
-into `img/`. Over JTAG a pixel takes tens of milliseconds: `--crop ROW COL H W`
-a region, or `--step N` for a subsampled view of the whole scene.
+reports accuracy and IoU per class against the labels, and writes
+`overview.png`, `fpga_classes.png`, `mismatch.png`, `labels.png` and the
+input pictures into the image folder. It runs in the notebook, or on a PC
+with `fpga_compare aegean` once `fpga_logits.txt` is back. Each pixel is a
+separate kernel call: `--crop ROW COL H W` a region, or `--step N` for a
+subsampled view of the whole scene.
+
+Without Linux on the board, the same runs over JTAG: `fpga_selftest`,
+`fpga_shell` and `fpga_classify aegean` (boot switches on JTAG).

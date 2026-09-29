@@ -4,7 +4,6 @@ The simulated board answers each spectrum with the logits recorded for it in
 tb/data/justoliunet_vectors.txt, so this checks the float32 register traffic
 and the comparison logic, not the network itself (native/csim do that).
 """
-import filecmp
 import json
 import os
 import re
@@ -303,8 +302,10 @@ class ExportTests(unittest.TestCase):
                          'tb/justoliunet/justoliunet_vectors.hpp',
                          'tb/data/justoliunet_vectors.txt'):
                 with self.subTest(path=path):
-                    self.assertTrue(filecmp.cmp(Path(tmp) / path, ROOT / path, shallow=False),
-                                    f'{path} is stale; re-run tools/export_justoliunet.py')
+                    # Line endings as git stores them: a Windows checkout may add \r.
+                    fresh = (Path(tmp) / path).read_bytes().replace(b'\r\n', b'\n')
+                    committed = (ROOT / path).read_bytes().replace(b'\r\n', b'\n')
+                    self.assertTrue(fresh == committed, f'{path} is stale; re-run tools/export_justoliunet.py')
 
 
 if __name__ == '__main__':

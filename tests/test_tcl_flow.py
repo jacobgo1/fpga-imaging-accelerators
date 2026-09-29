@@ -86,6 +86,7 @@ class TclFlowTests(unittest.TestCase):
             (rtl / 'matmul.v').write_text('module matmul(input ap_clk); endmodule')
             config = json.loads((ROOT / 'config/project.json').read_text())
             config['part'] = 'xc7z020clg400-1'
+            config['board_script'] = None  # the kernel-only flow
             flow.write_settings(run, config, flow.resolve_kernel('matmul', config), 'synth')
             tcl = tkinter.Tcl()
             tcl.eval('set calls {}; set exit_code -1')
