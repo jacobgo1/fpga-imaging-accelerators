@@ -6,6 +6,13 @@ C++ and built with AMD Vitis HLS and Vivado from the command line. The point of
 the setup is that adding a kernel means writing C++, not wiring up a build.
 See [the project description](docs/project-description.txt).
 
+**On the lab server with the ZCU104:** `source fpga.sh`, then `fpga_help`. It
+has one command per step: test, build, package for PYNQ, prepare an image,
+score the results, view the pictures. The board itself is driven from a
+Jupyter notebook under PYNQ; every bitstream build brings its own. How the
+pieces fit together, from a HYPSO capture to a class map, is in
+[docs/framework.md](docs/framework.md).
+
 ## Quickstart
 
 Needs **Python 3.10+** and **GCC or Clang**; no Python packages. HLS and FPGA
@@ -106,11 +113,14 @@ you want to compare variants; keep a baseline result before tuning
 | `export` | ... then a packaged IP ZIP for the Vivado IP catalog |
 | `synth` | ... then Vivado synthesis (kernel out of context by default) |
 | `impl` | ... then placement and routing; needs a board script |
-| `bitstream` | ... then a `.bit`, and optionally an `.xsa` |
+| `bitstream` | ... then a `.bit`, and optionally an `.xsa`; plus a PYNQ package |
+| `pynq` | Package an existing build for PYNQ: `artifacts/<kernel>/<run>/pynq/` and a zip (`--run` picks the build) |
 
 Each command rebuilds its prerequisites in a fresh run directory, so a result
 can never come from stale RTL. Useful flags: `--kernel`, `--part`, `--clock-ns`,
-`--dry-run` (print the commands without running anything), `--config`, `--cxx`.
+`--dry-run` (print the commands without running anything), `--config`, `--cxx`,
+and `--skip-cosim` (leave out C/RTL co-simulation before export and later
+stages, when csim already passed and cosim is too slow to repeat every build).
 
 `csynth` and later stages print the numbers you actually want:
 
@@ -239,10 +249,10 @@ fails -- so a failed `csynth` still leaves its console log there to read.
 Kernel synthesis gives resource and timing estimates, not a working system. To
 build a bitstream you supply clocks, reset, memory access, a top-level wrapper
 and real pin constraints — see [boards/README.md](boards/README.md) for the
-contract, then set `board_script` in the config. The kernel exposes BRAM data
-ports and AXI-Lite control: something must load its inputs, start it, wait for
-completion and read the results. It is a correctness baseline, not an optimized
-accelerator.
+contract, then set `board_script` in the config. `matmul` keeps its matrices in
+AXI-Lite registers, so it can be driven over JTAG with no embedded software —
+see [software/README.md](software/README.md). It is a correctness baseline, not
+an optimized accelerator.
 
 ## How this is built, and what is unverified
 

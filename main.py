@@ -16,10 +16,12 @@ import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ElementTree
+import zipfile
 
 ROOT = Path(__file__).resolve().parent
-STAGES = ('doctor', 'kernels', 'parts', 'native', 'csim', 'csynth', 'cosim',
+STAGES = ('doctor', 'kernels', 'parts', 'pynq', 'native', 'csim', 'csynth', 'cosim',
           'export', 'synth', 'impl', 'bitstream')
+PYNQ_SOURCES = ROOT / 'software' / 'pynq'
 SOURCE_PATTERNS = ('*.cpp', '*.cc', '*.cxx')
 PARTS_FILE = ROOT / 'config' / 'parts.json'
 
@@ -130,7 +132,10 @@ def resolve_kernel(name, config):
     kernel.setdefault('top', name)
     kernel.setdefault('sources', cpp_files(source_dir) if source_dir.is_dir() else [])
     kernel.setdefault('testbench', cpp_files(testbench_dir) if testbench_dir.is_dir() else [])
-    kernel.setdefault('include_dirs', [f'src/hls/{name}'] if source_dir.is_dir() else [])
+    default_includes = [f'src/hls/{name}'] if source_dir.is_dir() else []
+    if (ROOT / 'src' / 'common').is_dir() and 'src/common' not in default_includes:
+        default_includes.append('src/common')
+    kernel.setdefault('include_dirs', default_includes)
     if 'directives' not in kernel and (ROOT / 'config' / f'{name}.tcl').is_file():
         kernel['directives'] = f'config/{name}.tcl'
     if not kernel['sources']:
@@ -162,6 +167,10 @@ def load_config(args):
         config['part'] = args.part
     if args.clock_ns is not None:
         config['clock_ns'] = args.clock_ns
+    if args.skip_cosim:
+        if args.stage in ('native', 'csim', 'csynth', 'cosim'):
+            raise ValueError(f'--skip-cosim only applies to export/synth/impl/bitstream, not {args.stage}')
+        config['skip_cosim'] = True
     config['part_requested'] = config.get('part')
     config['part'] = resolve_part(config.get('part'))
     if config['part'] and not str(config['part']).lower().startswith('xc'):
@@ -187,6 +196,7 @@ def write_settings(run, config, kernel, stage):
                   part=config['part'], clock_ns=config['clock_ns'],
                   jobs=config['jobs'], top=kernel['top'],
                   export_xsa=int(bool(config.get('export_xsa'))),
+                  skip_cosim=int(bool(config.get('skip_cosim'))),
                   board_script=(repository_path(config['board_script']).as_posix()
                                 if config.get('board_script') else ''),
                   directives=(repository_path(kernel['directives']).as_posix()
@@ -244,6 +254,88 @@ def collect(run, relative, success):
         artifacts = ROOT / 'artifacts' / relative
         shutil.copytree(run / 'deliverables', artifacts)
         shutil.copy2(run / 'manifest.json', artifacts / 'manifest.json')
+
+
+def bitstream_builds(kernel):
+    """artifacts/<kernel>/<run> folders holding a bitstream, oldest first (names are dated)."""
+    return sorted(p.parents[1] for p in (ROOT / 'artifacts' / kernel).glob('*/bitstream/*.bit'))
+
+
+def block_design_hwh(artifact):
+    """The block design description PYNQ needs: board/system.hwh, else from the .xsa (a zip)."""
+    hwh = artifact / 'board' / 'system.hwh'
+    if hwh.is_file():
+        return hwh.read_bytes()
+    for xsa in sorted((artifact / 'hardware').glob('*.xsa')):
+        with zipfile.ZipFile(xsa) as archive:
+            names = [n for n in archive.namelist() if n.endswith('.hwh')]
+            preferred = [n for n in names if Path(n).name == 'system.hwh'] or names
+            if len(preferred) == 1:
+                return archive.read(preferred[0])
+            if preferred:
+                raise ValueError(f'{xsa} holds several .hwh files ({", ".join(names)}); '
+                                 'copy the right one to board/system.hwh')
+    raise ValueError(f'{artifact} has no board/system.hwh and no .xsa containing one; '
+                     'set "export_xsa": true in the config and rebuild')
+
+
+def package_pynq(artifact, kernel):
+    """Everything a PYNQ notebook needs from one build: artifact/pynq/ and <kernel>_pynq.zip.
+
+    PYNQ's Overlay finds the .hwh by the bitstream's name, so both are named
+    after the kernel. software/pynq/<kernel>/ adds a driver and notebook, and
+    its include.txt lists repository files to bring along.
+    """
+    bits = sorted((artifact / 'bitstream').glob('*.bit'))
+    if len(bits) != 1:
+        raise ValueError(f'{artifact}: expected one .bit in bitstream/, found {len(bits)}')
+    hwh = block_design_hwh(artifact)
+    out = artifact / 'pynq'
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir()
+    shutil.copy2(bits[0], out / f'{kernel}.bit')
+    (out / f'{kernel}.hwh').write_bytes(hwh)
+    for header in (artifact / 'board').glob('*_hw.h'):
+        shutil.copy2(header, out / header.name)
+    extras = PYNQ_SOURCES / kernel
+    if extras.is_dir():
+        for file in extras.iterdir():
+            if file.is_file() and file.name != 'include.txt':
+                shutil.copy2(file, out / file.name)
+        include = extras / 'include.txt'
+        if include.is_file():
+            for line in include.read_text(encoding='utf-8').splitlines():
+                line = line.split('#')[0].strip()
+                if line:
+                    shutil.copy2(repository_path(line), out / Path(line).name)
+    archive = artifact / f'{kernel}_pynq.zip'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file in sorted(out.iterdir()):
+            zip_file.write(file, f'{kernel}_pynq/{file.name}')
+    return out, archive
+
+
+def pynq_command(args):
+    config = read_config(args.config)
+    kernel = args.kernel or config.get('default_kernel')
+    builds = bitstream_builds(kernel)
+    if args.run:
+        artifact = ROOT / 'artifacts' / kernel / args.run
+        if artifact not in builds:
+            raise ValueError(f'no bitstream build {args.run} for {kernel}; builds: '
+                             + (', '.join(b.name for b in builds) or 'none'))
+    elif builds:
+        artifact = builds[-1]
+    else:
+        raise ValueError(f'no bitstream build in artifacts/{kernel}; run "main.py bitstream --kernel {kernel}"')
+    out, archive = package_pynq(artifact, kernel)
+    print_pynq_package(out, archive)
+
+
+def print_pynq_package(out, archive):
+    print(f'PYNQ files:  {out.relative_to(ROOT).as_posix()}/  ({", ".join(sorted(p.name for p in out.iterdir()))})')
+    print(f'As one file: {archive.relative_to(ROOT).as_posix()}  (upload to Jupyter, then unzip)')
 
 
 def summarize_csynth(run, top):
@@ -387,6 +479,9 @@ def build_parser():
     parser.add_argument('--hls-tool', help='vitis-run or vitis_hls executable/path')
     parser.add_argument('--vivado-tool', default='vivado')
     parser.add_argument('--cxx', help='GCC/Clang C++ executable/path (or CXX environment variable)')
+    parser.add_argument('--skip-cosim', action='store_true',
+                        help='Skip C/RTL co-simulation before export/synth/impl/bitstream')
+    parser.add_argument('--run', help='pynq: the artifacts/<kernel>/<run> build to package; default newest')
     parser.add_argument('--dry-run', action='store_true', help='Show plan without tools or writes')
     return parser
 
@@ -401,6 +496,9 @@ def main():
         return 0
     if args.stage == 'parts':
         parts(args)
+        return 0
+    if args.stage == 'pynq':
+        pynq_command(args)
         return 0
     config, kernel = load_config(args)
     commands = []
@@ -431,8 +529,10 @@ def main():
         if args.stage == 'native':
             print('Then execute the compiled testbench.')
         else:
+            cosim = ('skipped (--skip-cosim)' if config.get('skip_cosim')
+                     else 'for cosim/export/synth/impl/bitstream')
             print('HLS prerequisites: C simulation; synthesis unless csim; '
-                  'RTL co-simulation for cosim/export/synth/impl/bitstream; '
+                  f'RTL co-simulation {cosim}; '
                   'IP export for export/synth/impl/bitstream.')
         return 0
     relative = run_directory(args.kernel, args.stage)
@@ -499,6 +599,11 @@ def main():
                 print(f'  {label:<10} {file.relative_to(ROOT).as_posix()}')
         if status == 0 and (run / 'deliverables').exists():
             print(f'Artifacts: {ROOT / "artifacts" / relative}')
+        if status == 0 and args.stage == 'bitstream':
+            try:
+                print_pynq_package(*package_pynq(ROOT / 'artifacts' / relative, args.kernel))
+            except (ValueError, OSError) as error:  # the bitstream itself is fine
+                print(f'No PYNQ package: {error}')
     return status
 
 

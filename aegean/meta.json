@@ -1,0 +1,21 @@
+{
+  "cube": "aegantsea1_2026-01-20T09-00-18Z-l1a.nc/aegantsea1_2026-01-20T09-00-18Z-l1a.nc",
+  "checkpoint": "/home/fpgaws/Documents/MartinOgJacob/fpga-imaging-accelerators/weights/fp32/justoliunet/justoliunet_pixel1d_e31_miou0-908_K110.pt",
+  "shape": [
+    75,
+    137
+  ],
+  "crop": [
+    0,
+    0,
+    598,
+    1092
+  ],
+  "step": 8,
+  "rgb_bands": [
+    56,
+    67,
+    86
+  ],
+  "meaningful_classes": true
+}

@@ -1,0 +1,5 @@
+# Repository files main.py copies into the PYNQ package, next to the driver.
+tb/data/justoliunet_vectors.txt   # self-test pixels and their expected logits
+tools/justoliunet_image.py        # compare: scores and pictures, run in the notebook
+tools/export_justoliunet.py       # imported by justoliunet_image.py
+tools/pt_reader.py                # imported by export_justoliunet.py

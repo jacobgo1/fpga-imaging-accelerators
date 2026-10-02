@@ -1,85 +1,131 @@
-# ZCU104 board_script (see ../README.md for the contract this fills in).
-#
-# Wires the exported HLS kernel's AXI-Lite control bundle to the Zynq
-# UltraScale+ PS's GP0 master, and its m_axi gmem master to the PS's HP0
-# slave (DDR) -- one control bus, one data path, matching the single
-# bundle=gmem/bundle=control the kernel's interface pragmas use (see
-# src/hls/justoliunet/justoliunet.cpp). scripts/vivado.tcl has already run
-# `create_project`, pointed ip_repo_paths at the exported IP and called
-# update_ip_catalog before sourcing this file -- see cfg(...)/ip_repo/
-# rtl_dir in ../README.md's variable table.
-#
-# NOT YET RUN AGAINST REAL VIVADO (no AMD tools in the environment this was
-# written in -- see the main README's "How this is built" section for the
-# project's existing stance on unverified stages). Expect to fix small
-# things against Vivado's own error messages, same as export/synth/impl/
-# bitstream already are for every other kernel here. The two likeliest
-# snags: the automation rule names below (`xilinx.com:bd_rule:zynq_ultra_ps_e`,
-# `xilinx.com:bd_rule:axi4`) are correct for the 2023.1-era MPSoC IP but can
-# rename between Vivado releases -- if `apply_bd_automation` errors,
-# `get_bd_cells -regexp .*` after `create_bd_cell` and re-check the rule
-# names for your installed catalog version, from the Tcl console, not the GUI.
+# boards/zcu104/system.tcl
+# Headless board integration for ZCU104 (Zynq UltraScale+ MPSoC).
+# Sourced by scripts/vivado.tcl after the project and HLS IP catalog exist.
+# Assumes the HLS kernel exposes s_axi_control (AXI-Lite) and zero or more
+# m_axi_* masters. Adjust the "Kernel" section if it uses AXI-Stream instead.
 
-create_bd_design "system"
-
-# ---------------------------------------------------------------------
-# 1. Zynq UltraScale+ MPSoC PS. apply_board_preset pulls DDR/clock/pinout
-#    settings from the ZCU104 board files Vivado ships -- set board_part
-#    in config/project.json (see boards/README.md) so this preset exists.
-# ---------------------------------------------------------------------
-create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.4 zynq_ps
-apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
-    -config {apply_board_preset "1"} [get_bd_cells zynq_ps]
-
-# One AXI-Lite master (PS -> kernel control regs) and one high-performance
-# AXI slave (kernel -> DDR), plus the PL fabric clock everything else here
-# runs on.
-set_property -dict [list \
-    CONFIG.PSU__USE__M_AXI_GP0    {1} \
-    CONFIG.PSU__USE__S_AXI_HP0_FPD {1} \
-    CONFIG.PSU__FPGA_PL0_ENABLE   {1} \
-] [get_bd_cells zynq_ps]
-
-# ---------------------------------------------------------------------
-# 2. The exported HLS kernel. Looked up by VLNV pattern rather than a
-#    hardcoded "...:1.0" so a version bump in a later HLS release doesn't
-#    silently need an edit here.
-# ---------------------------------------------------------------------
-set hls_vlnv [get_ipdefs -filter "VLNV =~ {xilinx.com:hls:$cfg(top):*}"]
-if {[llength $hls_vlnv] != 1} {
-    error "Expected exactly one xilinx.com:hls:$cfg(top):* IP in the catalog, found: $hls_vlnv"
+# ---------------------------------------------------------------- Board preset
+set bp [lindex [get_board_parts -quiet -latest_file_version *zcu104*] 0]
+if {$bp eq ""} {
+    error "ZCU104 board files not found. Check with: get_board_parts *zcu104*"
 }
-set kernel_cell [create_bd_cell -type ip -vlnv $hls_vlnv "${cfg(top)}_0"]
+set_property board_part $bp [current_project]
 
-# ---------------------------------------------------------------------
-# 3. Wiring. Matched by interface-pin name pattern (control bundle /
-#    m_axi gmem) rather than one exact literal name, since Vitis HLS's
-#    exact casing for a bundle name has moved between releases.
-# ---------------------------------------------------------------------
-set ctrl_pin [get_bd_intf_pins -of_objects [get_bd_cells $kernel_cell] \
-    -filter {NAME =~ "*control*"}]
-set gmem_pin [get_bd_intf_pins -of_objects [get_bd_cells $kernel_cell] \
-    -filter {NAME =~ "*gmem*"}]
-if {[llength $ctrl_pin] != 1} { error "Expected one *control* interface pin on $kernel_cell, found: $ctrl_pin" }
-if {[llength $gmem_pin] != 1} { error "Expected one *gmem* interface pin on $kernel_cell, found: $gmem_pin" }
+# ---------------------------------------------------------------- Block design
+set bd system
+create_bd_design $bd
 
-apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
-    -config [list Master "/zynq_ps/M_AXI_HPM0_FPD" Clk "Auto"] $ctrl_pin
-apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
-    -config [list Master $gmem_pin Slave "/zynq_ps/S_AXI_HP0_FPD" Clk "Auto"] \
-    [get_bd_intf_pins zynq_ps/S_AXI_HP0_FPD]
+# PS with board presets (DDR, MIO, etc.)
+set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e ps]
+apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
+    -config {apply_board_preset 1} $ps
 
+# PL clock at the HLS target; one control master (HPM0_FPD),
+# one high-performance slave (HP0_FPD = S_AXI_GP2), one PL->PS interrupt.
+set target_mhz [expr {1000.0 / $cfg(clock_ns)}]
+set_property -dict [list \
+    CONFIG.PSU__USE__M_AXI_GP0 {1} \
+    CONFIG.PSU__USE__M_AXI_GP1 {0} \
+    CONFIG.PSU__USE__IRQ0      {1} \
+    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [format %.3f $target_mhz] \
+] $ps
+
+# ---------------------------------------------------------------- Clock check
+# The PLL divisors rarely hit the request exactly. The kernel must not run
+# faster than the period HLS scheduled for.
+set act_mhz [get_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__ACT_FREQMHZ $ps]
+set act_ns  [expr {1000.0 / $act_mhz}]
+puts "INFO: HLS target $cfg(clock_ns) ns, actual pl_clk0 [format %.3f $act_ns] ns ($act_mhz MHz)"
+if {$act_ns < $cfg(clock_ns) - 0.01} {
+    error "pl_clk0 ($act_ns ns) is faster than the HLS target ($cfg(clock_ns) ns)"
+}
+
+# ---------------------------------------------------------------- Kernel
+set vlnv [lindex [get_ipdefs -filter "NAME == $cfg(top)"] 0]
+if {$vlnv eq ""} { error "HLS IP '$cfg(top)' not in catalog $ip_repo" }
+set k [create_bd_cell -type ip -vlnv $vlnv kernel]
+
+# Control: PS HPM0 -> kernel s_axi_control (interconnect, clock and reset auto)
+apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
+    Master /ps/M_AXI_HPM0_FPD Slave /kernel/s_axi_control \
+    Clk_master Auto Clk_slave Auto Clk_xbar Auto \
+    intc_ip {New AXI SmartConnect} master_apm 0 \
+] [get_bd_intf_pins kernel/s_axi_control]
+
+# Data: every kernel m_axi -> PS HP0 (only enabled if the kernel has masters)
+set masters [get_bd_intf_pins -quiet -of $k -filter {MODE == Master && VLNV =~ *aximm*}]
+if {[llength $masters]} {
+    set_property CONFIG.PSU__USE__S_AXI_GP2 {1} $ps
+    foreach m $masters {
+        apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
+            Master $m Slave /ps/S_AXI_HP0_FPD \
+            Clk_master Auto Clk_slave Auto Clk_xbar Auto \
+            intc_ip Auto master_apm 0 \
+        ] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
+    }
+} else {
+    puts "INFO: kernel has no m_axi masters; HP0 left disabled"
+}
+
+# Interrupt (ap_ctrl_hs + s_axilite gives an 'interrupt' pin)
+if {[llength [get_bd_pins -quiet kernel/interrupt]]} {
+    connect_bd_net [get_bd_pins kernel/interrupt] [get_bd_pins ps/pl_ps_irq0]
+}
+
+# ---------------------------------------------------------------- Finalize
+assign_bd_address
 validate_bd_design
 save_bd_design
 
-# ---------------------------------------------------------------------
-# 4. Wrapper + top, and the clock XDC vivado.tcl's kernel-only path writes
-#    for itself -- here we let the PS's own generated clock drive
-#    everything, so the only constraint left to check is that
-#    PSU__FPGA_PL0_ENABLE actually delivers cfg(clock_ns): confirm this
-#    against the PS's IP configuration, not a separate create_clock.
-# ---------------------------------------------------------------------
-set wrapper [make_wrapper -files [get_files system.bd] -top]
-add_files -norecurse $wrapper
+set bd_file [get_files $bd.bd]
+generate_target all $bd_file
+add_files -norecurse [make_wrapper -files $bd_file -top]
+
+set_property top ${bd}_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
-set_property top system_wrapper [current_fileset]
+
+# ---------------------------------------------------------------- JTAG handoff
+# Everything software/jtag/board.tcl needs besides the .bit: the PS init
+# script, the kernel's register map, and the address the PS sees it at.
+# Warnings, not errors: a missing piece only matters for JTAG testing.
+set handoff [file join $cfg(run_dir) deliverables board]
+file mkdir $handoff
+
+set psu_init [lindex [get_files -all -quiet */psu_init.tcl] 0]
+if {$psu_init ne ""} {
+    file copy -force $psu_init $handoff
+} else {
+    puts "WARNING: no psu_init.tcl among the PS output products; set export_xsa and take it from the XSA"
+}
+
+# Block-design description, which PYNQ needs to load the bitstream from Linux
+# (software/board/fpga_runner.py load).
+set hwh [lindex [get_files -all -quiet */hw_handoff/${bd}.hwh] 0]
+if {$hwh ne ""} {
+    file copy -force $hwh [file join $handoff system.hwh]
+} else {
+    puts "WARNING: no ${bd}.hwh among the block design outputs; loading from Linux with PYNQ needs it"
+}
+
+set headers [glob -nocomplain -directory $ip_repo drivers/*/src/*_hw.h]
+foreach header $headers { file copy -force $header $handoff }
+if {![llength $headers]} { puts "WARNING: HLS IP in $ip_repo has no *_hw.h register map" }
+
+set kernel_base ""
+foreach seg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces ps/Data]] {
+    if {[string match *kernel* $seg]} { set kernel_base [get_property OFFSET $seg] }
+}
+if {$kernel_base ne ""} {
+    set f [open [file join $handoff address.tcl] w]
+    puts $f "set kernel_base $kernel_base"
+    close $f
+    puts "INFO: kernel s_axi_control at $kernel_base"
+} else {
+    puts "WARNING: kernel address not found; read it from the Address Editor"
+}
+
+# ---------------------------------------------------------------- Constraints
+# pl_clk0 is constrained by the PS IP itself. This design has no PL pins, so
+# no XDC is needed. If you add external ports (LEDs, PMOD), add them here:
+set xdc [file join $cfg(root) boards zcu104 system.xdc]
+if {[file exists $xdc]} { add_files -fileset constrs_1 -norecurse $xdc }

@@ -16,7 +16,8 @@ if {[catch {
     if {$cfg(directives) ne ""} { source $cfg(directives) }
     csim_design -clean
     if {$cfg(stage) ne "csim"} { csynth_design }
-    if {$cfg(stage) in {cosim export synth impl bitstream}} {
+    # Skipping trusts csim for behavior; the RTL itself is then only checked on hardware.
+    if {$cfg(stage) in {cosim export synth impl bitstream} && !$cfg(skip_cosim)} {
         cosim_design -rtl verilog -tool xsim -trace_level port
     }
     if {$cfg(stage) in {export synth impl bitstream}} {
