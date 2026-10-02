@@ -19,6 +19,7 @@
     "relu1d_golden":             { "top": "relu1d_golden_top" },
     "maxpool1d_golden":          { "top": "maxpool1d_golden_top" },
     "flatten_golden":            { "top": "flatten_golden_top" },
-    "dense_golden":              { "top": "dense_golden_top" }
+    "dense_golden":              { "top": "dense_golden_top" },
+    "justounet2d_golden":        { "top": "justounet2d_golden_top" }
   }
 }

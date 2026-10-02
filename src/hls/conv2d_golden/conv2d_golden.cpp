@@ -17,3 +17,8 @@ void conv2d_golden_top(
     // buffers, no partitioning, no directives -- this is the baseline.
     conv2d_golden<data_t, C2D_H, C2D_W, C2D_IN_CH, C2D_OUT_CH, C2D_K>(din, weight, bias, dout);
 }
+
+
+
+
+

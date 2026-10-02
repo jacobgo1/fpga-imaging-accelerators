@@ -32,6 +32,26 @@
 // (channels last); only PyTorch's own NCHW tensors need transposing
 // (din/dout, not weights) to compare against this.
 //
+// This mirrors the following PyTorch model (eval mode -- running stats,
+// no batch stats -- same as every batchnorm_golden call here):
+//
+//   self.conv1 = nn.Conv2d(IN_CH, BASE_CH, K, padding=(K-1)//2)
+//   self.bn1   = nn.BatchNorm2d(BASE_CH)
+//   self.conv2 = nn.Conv2d(BASE_CH, 2*BASE_CH, K, padding=(K-1)//2)
+//   self.bn2   = nn.BatchNorm2d(2*BASE_CH)
+//   self.conv3 = nn.Conv2d(2*BASE_CH, BASE_CH, K, padding=(K-1)//2)
+//   self.bn3   = nn.BatchNorm2d(BASE_CH)
+//   self.conv4 = nn.Conv2d(BASE_CH, OUT_CH, K, padding=(K-1)//2)
+//   self.bn4   = nn.BatchNorm2d(OUT_CH)
+//
+//   x = relu(self.bn1(self.conv1(x))); x = maxpool2d(x, 2)             # block A
+//   x = relu(self.bn2(self.conv2(x))); x = maxpool2d(x, 2); x = upsample(x, 2)  # block B
+//   x = relu(self.bn3(self.conv3(x))); x = upsample(x, 2)              # block C
+//   x = self.bn4(self.conv4(x))                                        # block D (head)
+//
+// wN/bN <- convN.weight/convN.bias; bnN_weight/bias/mean/var <-
+// bnN.weight/bias/running_mean/running_var (see export_justounet2d_weights.py).
+//
 // H and W must be divisible by 4 (block A's halving, then block B's
 // halving of what's left): sizes that aren't fail to compile, not
 // silently misbehave, via the static_asserts below.
