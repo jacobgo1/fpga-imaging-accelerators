@@ -26,6 +26,9 @@ RUN: artifacts/<kernel>/<build> folder, default the newest build)
     fpga_weights [CHECKPOINT.pt | FOLDER ...] [--out DIR]
                                       every tensor as C++ arrays (+ .npz and a summary per
                                       model) in weights/extracted/; default: all of weights/
+    fpga_quantize [CHECKPOINT.pt | FOLDER ...] [--bits N] [--per-channel] [--scale float]
+                                      the same as int8 (default) arrays with power-of-two
+                                      scales, BatchNorm folded, in weights/quantized/
 
   Build (takes a while)
     fpga_build [KERNEL]               bitstream, without RTL co-simulation; also makes
@@ -102,6 +105,10 @@ fpga_test() {
 
 fpga_weights() {
     "$FPGA_PYTHON" "$FPGA_ROOT/tools/extract_weights.py" "$@"
+}
+
+fpga_quantize() {
+    "$FPGA_PYTHON" "$FPGA_ROOT/tools/quantize_weights.py" "$@"
 }
 
 fpga_build() {

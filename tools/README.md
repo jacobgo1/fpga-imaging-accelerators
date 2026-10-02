@@ -9,6 +9,11 @@ pt_reader.py            Read PyTorch .pt checkpoints with numpy only (no torch)
 extract_weights.py      Any checkpoint(s) -> weights/extracted/<model>/: every tensor
                         as C++ arrays (.hpp), as .npz, and a summary (.md); plus an
                         overview of all models. For starting a new model's kernel.
+quantize_weights.py     The same, quantized: BatchNorm folded into its conv, then
+                        int8 (--bits N) with a power-of-two scale per tensor
+                        (--per-channel, --scale float), as Vitis AI does. Writes
+                        weights/quantized/<model>/<model>_int8.hpp/.npz/.md with
+                        the error (SQNR) of every tensor.
 export_justoliunet.py   Checkpoint + training mu_sd.txt -> justoliunet kernel
                         (band selection, z-score, weights) + test vectors
                         (numpy). Re-run after changing either.

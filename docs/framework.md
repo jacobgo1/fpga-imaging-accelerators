@@ -248,6 +248,7 @@ fpga_help
 | Tools on PATH | `fpga_env` (or `fpga_env /path/to/settings64.sh`) |
 | Test on the PC (simulation) | `fpga_test` |
 | Weights of any trained model as C++ arrays | `fpga_weights` (all of `weights/`) or `fpga_weights weights/fp32/sp_unet_small` |
+| The same, quantized to int8 | `fpga_quantize` (options: `--bits 16`, `--per-channel`, `--scale float`) |
 | Build | `fpga_build`, then `fpga_runs` to see the builds |
 | Files for the board | `fpga_pynq`: the newest build's `pynq/` folder and `justoliunet_pynq.zip` |
 | Is the board OK? Talk to it | the notebook: sections 1 to 3 |

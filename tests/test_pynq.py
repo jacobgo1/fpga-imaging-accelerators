@@ -244,7 +244,7 @@ class FpgaShellTests(unittest.TestCase):
     def test_help_lists_every_command(self):
         result = self.bash('fpga_help')
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ('fpga_env', 'fpga_test', 'fpga_weights', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_prepare',
+        for command in ('fpga_env', 'fpga_test', 'fpga_weights', 'fpga_quantize', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_prepare',
                         'fpga_zip', 'fpga_compare', 'fpga_view', 'fpga_selftest', 'fpga_shell',
                         'fpga_classify'):
             self.assertIn(command, result.stdout)
