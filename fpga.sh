@@ -22,6 +22,11 @@ RUN: artifacts/<kernel>/<build> folder, default the newest build)
   Test without hardware
     fpga_test [KERNEL]                repo tests + the kernel's C++ testbench
 
+  Trained models
+    fpga_weights [CHECKPOINT.pt | FOLDER ...] [--out DIR]
+                                      every tensor as C++ arrays (+ .npz and a summary per
+                                      model) in weights/extracted/; default: all of weights/
+
   Build (takes a while)
     fpga_build [KERNEL]               bitstream, without RTL co-simulation; also makes
                                       the PYNQ package (below)
@@ -93,6 +98,10 @@ fpga_test() {
     local kernel="${1:-justoliunet}"
     (cd "$FPGA_ROOT" && "$FPGA_PYTHON" -m unittest discover -s tests \
         && "$FPGA_PYTHON" main.py native --kernel "$kernel")
+}
+
+fpga_weights() {
+    "$FPGA_PYTHON" "$FPGA_ROOT/tools/extract_weights.py" "$@"
 }
 
 fpga_build() {

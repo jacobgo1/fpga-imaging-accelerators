@@ -104,15 +104,34 @@ class PackageTests(unittest.TestCase):
             flow.ROOT = saved
         self.assertEqual(names, ['2026-09-25_10-00-00-bitstream', '2026-09-29_10-00-00-bitstream'])
 
-    def test_notebook_is_valid_and_its_code_parses(self):
+    def test_every_notebook_is_valid_and_its_code_parses(self):
         import ast
-        notebook = json.loads((ROOT / 'software/pynq/justoliunet/justoliunet.ipynb').read_text(encoding='utf-8'))
-        self.assertEqual(notebook['nbformat'], 4)
-        code = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
-        self.assertTrue(code)
-        for cell in code:
-            if not cell.startswith('!'):
-                ast.parse(cell)
+        notebooks = sorted((ROOT / 'software/pynq').glob('*/*.ipynb'))
+        self.assertTrue(notebooks)
+        for path in notebooks:
+            with self.subTest(notebook=path.relative_to(ROOT).as_posix()):
+                notebook = json.loads(path.read_text(encoding='utf-8'))
+                self.assertEqual(notebook['nbformat'], 4)
+                code = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
+                self.assertTrue(code)
+                for cell in code:
+                    if not cell.lstrip().startswith(('!', '%')):  # shell and magic lines are not Python
+                        ast.parse(cell)
+
+    def test_matmul_notebook_lands_next_to_its_bitstream(self):
+        build = Path(self.tmp.name) / 'artifacts/matmul/2026-09-29_10-00-00-bitstream'
+        (build / 'bitstream').mkdir(parents=True)
+        (build / 'bitstream/system_wrapper.bit').write_bytes(b'BIT')
+        (build / 'board').mkdir()
+        (build / 'board/system.hwh').write_bytes(b'<HWH/>')
+        (build / 'board/xmatmul_hw.h').write_text('#define XMATMUL_CONTROL_ADDR_AP_CTRL 0x0\n')
+        out, archive = flow.package_pynq(build, 'matmul')
+        self.assertEqual(sorted(p.name for p in out.iterdir()),
+                         ['matmul.bit', 'matmul.hwh', 'matmul.ipynb', 'xmatmul_hw.h'])
+        self.assertEqual((out / 'matmul.ipynb').read_bytes(),
+                         (ROOT / 'software/pynq/matmul/matmul.ipynb').read_bytes(), 'copied as is')
+        with zipfile.ZipFile(archive) as zip_file:
+            self.assertIn('matmul_pynq/matmul.ipynb', zip_file.namelist())
 
 
 class FakeRegisters:
@@ -225,7 +244,7 @@ class FpgaShellTests(unittest.TestCase):
     def test_help_lists_every_command(self):
         result = self.bash('fpga_help')
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ('fpga_env', 'fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_prepare',
+        for command in ('fpga_env', 'fpga_test', 'fpga_weights', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_prepare',
                         'fpga_zip', 'fpga_compare', 'fpga_view', 'fpga_selftest', 'fpga_shell',
                         'fpga_classify'):
             self.assertIn(command, result.stdout)

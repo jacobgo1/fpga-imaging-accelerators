@@ -27,8 +27,12 @@ artifacts/<kernel>/<build>/pynq/          everything the notebook needs, in one 
 artifacts/<kernel>/<build>/<kernel>_pynq.zip   the same, as one file to upload
 ```
 
-For builds made before this existed: `python3 main.py pynq --kernel justoliunet`
-(or `fpga_pynq`), which takes the `.hwh` from the build's `.xsa`.
+To give a kernel a notebook, put it in `software/pynq/<kernel>/` (like
+`software/pynq/matmul/matmul.ipynb`) and commit it: every build of that kernel
+then carries a copy next to its bitstream, ready to run after uploading.
+Re-package an existing build to pick up an edited notebook:
+`python3 main.py pynq --kernel matmul` (or `fpga_pynq matmul`); for older
+builds this also takes the `.hwh` from the build's `.xsa`.
 
 Upload the zip in Jupyter (`http://BOARD:9090`), run `!unzip -o justoliunet_pynq.zip`
 in a notebook cell, open `justoliunet_pynq/justoliunet.ipynb` and run it from
