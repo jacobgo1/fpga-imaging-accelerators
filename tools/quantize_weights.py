@@ -69,13 +69,20 @@ def fold_batchnorm(tensors):
     return out, pairs
 
 
+def tightest_step(x, bits):
+    """The smallest step that fits x without clipping, using both ends of the range:
+    the most positive value lands on qmax (127) or the most negative on qmin (-128)."""
+    qmin, qmax = -2 ** (bits - 1), 2 ** (bits - 1) - 1
+    return max(float(np.max(x, initial=0.0)) / qmax, float(np.min(x, initial=0.0)) / qmin)
+
+
 def pow2_frac(x, bits):
     """The power-of-two scale with the smallest squared error (it may clip a few outliers)."""
     qmin, qmax = -2 ** (bits - 1), 2 ** (bits - 1) - 1
-    peak = float(np.max(np.abs(x)))
-    if peak == 0.0:
+    step = tightest_step(x, bits)
+    if step == 0.0:
         return bits - 1
-    no_clip = int(np.floor(np.log2(qmax / peak)))
+    no_clip = int(np.floor(-np.log2(step)))  # the finest power-of-two step that is still >= step
     def error(frac):
         q = np.clip(np.round(x * 2.0 ** frac), qmin, qmax)
         return float(np.sum((q * 2.0 ** -frac - x) ** 2))
@@ -92,8 +99,8 @@ def quantize(x, bits, scale_kind, per_channel):
         steps = 2.0 ** -fracs.astype(np.float64)
         scales = fracs
     else:
-        peaks = np.max(np.abs(rows), axis=1)
-        steps = np.where(peaks > 0, peaks / qmax, 1.0)
+        steps = np.array([tightest_step(r, bits) for r in rows])
+        steps = np.where(steps > 0, steps, 1.0)
         scales = steps.astype(np.float32)
     q = np.clip(np.round(rows / steps[:, None]), qmin, qmax).astype(ctype(bits)[1])
     deq = q * steps[:, None]

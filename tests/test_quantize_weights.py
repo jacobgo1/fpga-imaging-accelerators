@@ -93,8 +93,19 @@ class QuantizeTests(unittest.TestCase):
         self.assertGreater(self.tool.sqnr_db(x[2], deq_pc[2]), self.tool.sqnr_db(x[2], deq_pt[2]),
                            'the small channel gains from its own scale')
         q, scales, _ = self.tool.quantize(x, 8, 'float', True)
-        self.assertEqual(np.abs(q.reshape(4, -1)).max(axis=1).tolist(), [127] * 4)
+        for row in q.reshape(4, -1):  # each channel reaches one end of the range exactly
+            self.assertTrue(row.max() == 127 or row.min() == -128, row)
         self.assertEqual(scales.dtype, np.float32)
+
+    def test_the_binding_side_reaches_its_end_of_the_range(self):
+        q, _, _ = self.tool.quantize(np.array([-0.8, -0.1, 0.0, 0.3, 0.5]), 8, 'float', False)
+        self.assertEqual((q.min(), q.max()), (-128, 80))       # negative side binds: -0.8 -> -128
+        q, _, _ = self.tool.quantize(np.array([-0.2, 0.0, 0.9]), 8, 'float', False)
+        self.assertEqual((q.min(), q.max()), (-28, 127))       # positive side binds: 0.9 -> 127
+        q, _, _ = self.tool.quantize(np.array([0.375, 1.16]), 8, 'float', False)
+        self.assertEqual(q.max(), 127)                          # one sign only: still uses its end
+        q, frac, _ = self.tool.quantize(np.array([-1.0, 0.25]), 8, 'pow2', False)
+        self.assertEqual((q.min(), int(frac)), (-128, 7))       # -1.0 * 2^7 = -128 fits; 127 would not
 
     def test_more_bits_mean_less_noise(self):
         _, _, tensors = self.tool.ew.load(checkpoint('sp_unet_small'))
