@@ -22,8 +22,9 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / 'software/pynq/justounetsimple/justounetsimple.ipynb'
+OPT_NOTEBOOK = ROOT / 'software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb'
 CXX = shutil.which('g++') or shutil.which('clang++')
-AP_CTRL, DIN, DOUT = 0x00, 0x10, 0x1c
+AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
 HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_GIE       0x04
@@ -32,6 +33,8 @@ HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}
 #define XJUSTOUNETSIMPLE_CONTROL_BITS_DOUT_DATA 64
 """
+OPT_HEADER = (HEADER.replace('XJUSTOUNETSIMPLE_', 'XJUSTOUNETSIMPLE_OPT_')
+              + f'#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_N_DATA    0x{N_REG:02x}\n')
 
 
 def load_module(name, path):
@@ -84,6 +87,25 @@ class FakeKernel:
             self.words[offset] = value
 
 
+class FakeBatchKernel(FakeKernel):
+    """The optimized kernel: n patches per start, input as [55][32][32][2] per patch."""
+
+    def write(self, offset, value):
+        if offset == AP_CTRL and value & 1:
+            n = self.words[N_REG]
+            din, dout = self.buffers[self.address(DIN)], self.buffers[self.address(DOUT)]
+            for k in range(n):
+                self.starts += 1
+                patch = np.array(din[k]).transpose(1, 2, 0, 3).reshape(32, 32, 110)
+                scores = self.model.forward_patch(patch, self.layers)
+                if self.broken:
+                    scores[5, 5, 0] += 0.5
+                dout[k] = scores
+            self.done = True
+        else:
+            self.words[offset] = value
+
+
 @unittest.skipIf(np is None, 'needs numpy')
 class JustoUNetSimpleTests(unittest.TestCase):
     @classmethod
@@ -114,7 +136,7 @@ class JustoUNetSimpleTests(unittest.TestCase):
         raw[:, :, kept] = z / inv_std + mean
         return raw
 
-    def prepare(self, h, w):
+    def prepare(self, h, w, header=('xjustounetsimple_hw.h', HEADER)):
         np.save(self.dir / 'source.npy', self.raw_cube(h, w))
         np.save(self.dir / 'source_labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
         board = self.dir / 'board'
@@ -130,13 +152,13 @@ class JustoUNetSimpleTests(unittest.TestCase):
             for f in (board / 'aegean_unet').iterdir():
                 z.write(f, f'aegean_unet/{f.name}')
         shutil.rmtree(board / 'aegean_unet')
-        (board / 'xjustounetsimple_hw.h').write_text(HEADER)
+        (board / header[0]).write_text(header[1])
         shutil.copy2(ROOT / 'mu_sd.txt', board)
         return board
 
-    def run_notebook(self, board, broken=False):
+    def run_notebook(self, board, broken=False, notebook=NOTEBOOK, kernel_class=FakeKernel):
         """Every code cell of the notebook, in order, with fake pynq and matplotlib."""
-        kernel = FakeKernel(self.model, self.layers, broken)
+        kernel = kernel_class(self.model, self.layers, broken)
         overlay = types.SimpleNamespace(kernel=kernel)
         pynq = types.ModuleType('pynq')
         pynq.Overlay = lambda path: overlay
@@ -155,8 +177,8 @@ class JustoUNetSimpleTests(unittest.TestCase):
         try:
             import os
             os.chdir(board)
-            notebook = json.loads(NOTEBOOK.read_text(encoding='utf-8'))
-            for cell in notebook['cells']:
+            cells = json.loads(Path(notebook).read_text(encoding='utf-8'))['cells']
+            for cell in cells:
                 if cell['cell_type'] == 'code':
                     exec(''.join(cell['source']), namespace)
         finally:
@@ -207,6 +229,27 @@ int main(int, char** argv) {
 
     def test_notebook_shows_a_wrong_kernel(self):
         ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
+        self.assertFalse(ns['close'].all())
+
+    def run_opt(self, h, w, broken=False):
+        board = self.prepare(h, w, ('xjustounetsimple_opt_hw.h', OPT_HEADER))
+        return board, self.run_notebook(board, broken, OPT_NOTEBOOK, FakeBatchKernel)
+
+    def test_opt_notebook_classifies_the_image_like_the_reference(self):
+        board, (ns, kernel) = self.run_opt(70, 50)    # 3 x 2 patches, not a multiple of 32
+        self.assertEqual(ns['scores'].shape, (70, 50, 3))
+        self.assertTrue(ns['close'].all())
+        self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
+        self.assertEqual(kernel.address(DIN), ns['patches_in'].physical_address)
+
+    def test_opt_notebook_splits_large_images_into_batches(self):
+        board, (ns, kernel) = self.run_opt(40, 40)
+        ns['BATCH'] = 1                               # pretend the buffers hold one patch
+        scores = ns['classify'](ns['cube'])
+        np.testing.assert_allclose(scores, ns['reference'], rtol=1e-4, atol=1e-4)
+
+    def test_opt_notebook_shows_a_wrong_kernel(self):
+        _, (ns, _) = self.run_opt(40, 40, broken=True)
         self.assertFalse(ns['close'].all())
 
     def test_notebook_padding_matches_the_reference_tiling(self):
