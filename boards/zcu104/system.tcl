@@ -52,17 +52,28 @@ apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
     intc_ip {New AXI SmartConnect} master_apm 0 \
 ] [get_bd_intf_pins kernel/s_axi_control]
 
-# Data: every kernel m_axi -> PS HP0 (only enabled if the kernel has masters)
+# Data: every kernel m_axi -> one SmartConnect -> PS HP0 (only enabled if the
+# kernel has masters). The automation connects the first master and creates the
+# SmartConnect (with clocks and resets); every further master gets its own input
+# port on that same SmartConnect. Running the automation per master instead
+# leaves the second one on a new SmartConnect that cannot reach the already
+# used HP0, an empty black box in implementation.
 set masters [get_bd_intf_pins -quiet -of $k -filter {MODE == Master && VLNV =~ *aximm*}]
 if {[llength $masters]} {
     set_property CONFIG.PSU__USE__S_AXI_GP2 {1} $ps
-    foreach m $masters {
-        apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
-            Master $m Slave /ps/S_AXI_HP0_FPD \
-            Clk_master Auto Clk_slave Auto Clk_xbar Auto \
-            intc_ip Auto master_apm 0 \
-        ] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
+    apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
+        Master [lindex $masters 0] Slave /ps/S_AXI_HP0_FPD \
+        Clk_master Auto Clk_slave Auto Clk_xbar Auto \
+        intc_ip {New AXI SmartConnect} master_apm 0 \
+    ] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
+    set hp0_net [get_bd_intf_nets -of [get_bd_intf_pins ps/S_AXI_HP0_FPD]]
+    set smc [get_bd_cells -of [get_bd_intf_pins -of $hp0_net -filter {MODE == Master}]]
+    foreach m [lrange $masters 1 end] {
+        set port [get_property CONFIG.NUM_SI $smc]
+        set_property CONFIG.NUM_SI [expr {$port + 1}] $smc
+        connect_bd_intf_net $m [get_bd_intf_pins $smc/[format S%02d_AXI $port]]
     }
+    puts "INFO: [llength $masters] kernel m_axi master(s) -> $smc -> HP0"
 } else {
     puts "INFO: kernel has no m_axi masters; HP0 left disabled"
 }
@@ -78,11 +89,6 @@ validate_bd_design
 save_bd_design
 
 set bd_file [get_files $bd.bd]
-# Synthesize the block design's IP inside synth_1 (global), not in separate
-# out-of-context runs: an OOC result that is missing or stale reaches
-# implementation as an empty black box (seen with the second SmartConnect a
-# kernel with two m_axi bundles gets).
-set_property synth_checkpoint_mode None $bd_file
 generate_target all $bd_file
 add_files -norecurse [make_wrapper -files $bd_file -top]
 

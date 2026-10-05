@@ -21,7 +21,7 @@ spec.loader.exec_module(flow)
 
 @unittest.skipIf(tkinter is None, 'Optional Tcl tests require Python tkinter; no display needed')
 class TclFlowTests(unittest.TestCase):
-    def execute_hls(self, stage, fail_at='', skip_cosim=False):
+    def execute_hls(self, stage, fail_at='', skip_cosim=False, csynth_report=True):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
             config = json.loads((ROOT / 'config/project.json').read_text())
@@ -34,6 +34,9 @@ class TclFlowTests(unittest.TestCase):
                          'set_part', 'create_clock', 'csim_design', 'csynth_design',
                          'cosim_design', 'export_design', 'close_project'):
                 body = f'lappend ::calls {name}'
+                if name == 'csynth_design' and csynth_report:  # what a real run leaves behind
+                    body += ('; set d [file join $::cfg(run_dir) hls solution syn report]'
+                             '; file mkdir $d; close [open [file join $d $::cfg(top)_csynth.rpt] w]')
                 if name == fail_at:
                     body += '; error "injected tool failure"'
                 tcl.eval(f'proc {name} {{args}} {{{body}}}')
@@ -71,6 +74,14 @@ class TclFlowTests(unittest.TestCase):
         code, calls = self.execute_hls('export', fail_at='csim_design')
         self.assertEqual(code, 1)
         self.assertNotIn('csynth_design', calls)
+        self.assertNotIn('export_design', calls)
+
+    def test_synthesis_that_fails_without_raising_stops_export(self):
+        # Vitis HLS reports some failures ("Pre-synthesis failed") only as a
+        # message and returns normally: no report must mean no export.
+        code, calls = self.execute_hls('bitstream', skip_cosim=True, csynth_report=False)
+        self.assertEqual(code, 1)
+        self.assertIn('csynth_design', calls)
         self.assertNotIn('export_design', calls)
 
     def test_scripts_have_complete_tcl_syntax(self):

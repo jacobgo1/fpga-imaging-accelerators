@@ -15,7 +15,13 @@ if {[catch {
     create_clock -period $cfg(clock_ns) -name default
     if {$cfg(directives) ne ""} { source $cfg(directives) }
     csim_design -clean
-    if {$cfg(stage) ne "csim"} { csynth_design }
+    if {$cfg(stage) ne "csim"} {
+        csynth_design
+        # Some failures (a front-end crash: "Pre-synthesis failed") only print an
+        # ERROR and return normally; without this the flow goes on without RTL.
+        set report [file join $cfg(run_dir) hls solution syn report $cfg(top)_csynth.rpt]
+        if {![file exists $report]} { error "C synthesis failed: no $report" }
+    }
     # Skipping trusts csim for behavior; the RTL itself is then only checked on hardware.
     if {$cfg(stage) in {cosim export synth impl bitstream} && !$cfg(skip_cosim)} {
         cosim_design -rtl verilog -tool xsim -trace_level port
