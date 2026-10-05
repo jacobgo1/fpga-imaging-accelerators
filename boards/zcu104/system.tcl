@@ -78,6 +78,11 @@ validate_bd_design
 save_bd_design
 
 set bd_file [get_files $bd.bd]
+# Synthesize the block design's IP inside synth_1 (global), not in separate
+# out-of-context runs: an OOC result that is missing or stale reaches
+# implementation as an empty black box (seen with the second SmartConnect a
+# kernel with two m_axi bundles gets).
+set_property synth_checkpoint_mode None $bd_file
 generate_target all $bd_file
 add_files -norecurse [make_wrapper -files $bd_file -top]
 
