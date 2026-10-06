@@ -16,7 +16,6 @@ added the exported HLS IP to its catalog before sourcing your script. Populate
 | `cfg(part)` / `cfg(clock_ns)` | Device and HLS clock target |
 | `cfg(top)` | HLS kernel top name (not the board-level top) |
 | `ip_repo` | Exported HLS IP catalog directory |
-| `rtl_dir` | HLS synthesized Verilog directory |
 
 Your script should:
 
@@ -33,6 +32,6 @@ Never suppress unconstrained-pin DRCs to force a bitstream, and read the
 unconstrained-path section of the timing report — the automatic negative-slack
 check cannot detect constraints you forgot to write.
 
-`synth` then synthesizes the whole system, `impl` routes it, and `bitstream`
-writes the `.bit` (plus debug probes, and an `.xsa` when `export_xsa` is true).
-Programming the board and building boot images are separate from this flow.
+`vivado.tcl` then synthesizes the whole system, routes it and writes the
+`.bit`. `main.py` packs the `.bit` with the block design's `.hwh` for PYNQ. The
+ZCU104 script, [zcu104/system.tcl](zcu104/system.tcl), is the example to read.

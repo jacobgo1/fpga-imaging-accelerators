@@ -19,6 +19,8 @@ export_justoliunet.py   Checkpoint + training mu_sd.txt -> justoliunet kernel
                         (numpy). Re-run after changing either.
 justoliunet_image.py    Image cube -> pixels for the board, then FPGA result
                         vs reference and labels, with PNG class maps (numpy)
+justounetsimple_image.py  The same for justounetsimple(_opt): capture -> cube.npy,
+                        labels and reference scores, for the notebook (numpy)
 hypso_dims.py   Spatial/spectral dimensions of HYPSO .nc captures
                 (pip install hypso). Answers what real capture sizes look
                 like before setting CONV_IC/CONV_IH/CONV_IW in a kernel.

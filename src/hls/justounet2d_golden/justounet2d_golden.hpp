@@ -23,8 +23,7 @@
 //    fine for an isolated synthesis/cosim baseline with no real weights
 //    to load), this one uses justoliunet.cpp's m_axi/s_axilite pattern:
 //    it IS the deployment target, so every array needs a settable DDR
-//    address, not a fixed on-chip BRAM -- see software/zcu104/
-//    export_justounet2d_weights.py + run_justounet2d.py.
+//    address, not a fixed on-chip BRAM.
 // =====================================================================
 
 // =====================================================================

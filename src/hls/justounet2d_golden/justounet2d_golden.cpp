@@ -28,9 +28,8 @@ void justounet2d_golden_top(
     // synthesis/cosim baseline with no real weights to load), this
     // kernel IS the deployment target. Real trained weights have to be
     // DMA'd out of wherever the PS put them in DDR, at addresses chosen
-    // at run time, not fixed on-chip BRAMs -- see software/zcu104/
-    // export_justounet2d_weights.py + run_justounet2d.py for the PS side
-    // that writes those buffers and points these registers at them.
+    // at run time, not fixed on-chip BRAMs; the PS writes those buffers
+    // and points these registers at them.
     #pragma HLS INTERFACE mode=m_axi port=din         bundle=gmem offset=slave
     #pragma HLS INTERFACE mode=m_axi port=w1          bundle=gmem offset=slave
     #pragma HLS INTERFACE mode=m_axi port=b1          bundle=gmem offset=slave

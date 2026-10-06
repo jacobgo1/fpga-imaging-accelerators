@@ -31,7 +31,7 @@
 //    addresses the PS puts in the matching s_axilite registers. That is
 //    what makes feeding a real hyperspectral tile, and swapping in a
 //    newly-trained model's weights, a plain host-side memory write
-//    instead of a re-synthesized bitstream -- see software/zcu104/.
+//    instead of a re-synthesized bitstream -- see boards/zcu104/system.tcl.
 // =====================================================================
 
 // =====================================================================

@@ -4,7 +4,9 @@ The driver runs against a simulated overlay whose kernel computes each pixel
 with the numpy reference of the committed kernel, so this checks the register
 traffic and the image handling -- not PYNQ or the board.
 """
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -49,15 +51,20 @@ def load_module(name, path):
 flow = load_module('flow', ROOT / 'main.py')
 
 
-def make_build(directory, hwh=True):
-    build = Path(directory) / 'artifacts/justoliunet/2026-09-29_10-00-00-bitstream'
-    (build / 'bitstream').mkdir(parents=True)
-    (build / 'bitstream/system_wrapper.bit').write_bytes(b'BIT')
-    (build / 'board').mkdir()
-    (build / 'board/xjustoliunet_hw.h').write_text(HEADER)
+def make_build(directory, kernel='justoliunet', header=HEADER, hwh=True):
+    """A bitstream run folder as main.py and Vivado leave it, with only the files packaging reads."""
+    run = Path(directory) / f'build/{kernel}/2026-09-29_10-00-00-bitstream'
+    impl = run / 'vivado/system.runs/impl_1'
+    impl.mkdir(parents=True)
+    (impl / 'system_wrapper.bit').write_bytes(b'BIT')
     if hwh:
-        (build / 'board/system.hwh').write_bytes(b'<HWH/>')
-    return build
+        handoff = run / 'vivado/system.gen/sources_1/bd/system/hw_handoff'
+        handoff.mkdir(parents=True)
+        (handoff / 'system.hwh').write_bytes(b'<HWH/>')
+    driver = run / f'hls/solution/impl/ip/drivers/{kernel}_v1_0/src'
+    driver.mkdir(parents=True)
+    (driver / f'x{kernel}_hw.h').write_text(header)
+    return run
 
 
 class PackageTests(unittest.TestCase):
@@ -68,38 +75,32 @@ class PackageTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def package(self, run, kernel):
+        with contextlib.redirect_stdout(io.StringIO()):
+            archive = flow.package_pynq(run, kernel)
+        return run / f'{kernel}_pynq', archive
+
     def test_package_has_matching_names_and_everything_the_notebook_uses(self):
-        build = make_build(self.dir)
-        out, archive = flow.package_pynq(build, 'justoliunet')
+        out, archive = self.package(make_build(self.dir), 'justoliunet')
         self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(PACKAGE))
         self.assertEqual((out / 'justoliunet.bit').read_bytes(), b'BIT')
         self.assertEqual((out / 'justoliunet.hwh').read_bytes(), b'<HWH/>')
         with zipfile.ZipFile(archive) as zip_file:
             self.assertEqual(sorted(zip_file.namelist()), sorted(f'justoliunet_pynq/{n}' for n in PACKAGE))
 
-    def test_hwh_comes_from_the_xsa_for_older_builds(self):
-        build = make_build(self.dir, hwh=False)
-        (build / 'hardware').mkdir()
-        with zipfile.ZipFile(build / 'hardware/system.xsa', 'w') as xsa:
-            xsa.writestr('system.hwh', b'<FROM XSA/>')
-            xsa.writestr('system_wrapper.bit', b'BIT')
-        out, _ = flow.package_pynq(build, 'justoliunet')
-        self.assertEqual((out / 'justoliunet.hwh').read_bytes(), b'<FROM XSA/>')
+    def test_missing_hwh_is_named(self):
+        with self.assertRaisesRegex(SystemExit, 'block design description'):
+            self.package(make_build(self.dir, hwh=False), 'justoliunet')
 
-    def test_missing_hwh_says_how_to_get_one(self):
-        build = make_build(self.dir, hwh=False)
-        with self.assertRaisesRegex(ValueError, 'export_xsa'):
-            flow.package_pynq(build, 'justoliunet')
-
-    def test_newest_build_is_packaged_by_default(self):
-        older = self.dir / 'artifacts/justoliunet/2026-09-25_10-00-00-bitstream/bitstream'
+    def test_newest_bitstream_run_is_found(self):
+        older = self.dir / 'build/justoliunet/2026-09-25_10-00-00-bitstream/vivado/system.runs/impl_1'
         older.mkdir(parents=True)
         (older / 'system_wrapper.bit').write_bytes(b'')
         make_build(self.dir)
-        (self.dir / 'artifacts/justoliunet/2026-09-30_10-00-00-export').mkdir()
+        (self.dir / 'build/justoliunet/2026-09-30_10-00-00-csynth').mkdir()
         saved, flow.ROOT = flow.ROOT, self.dir
         try:
-            names = [b.name for b in flow.bitstream_builds('justoliunet')]
+            names = [run.name for run in flow.bitstream_runs('justoliunet')]
         finally:
             flow.ROOT = saved
         self.assertEqual(names, ['2026-09-25_10-00-00-bitstream', '2026-09-29_10-00-00-bitstream'])
@@ -119,13 +120,8 @@ class PackageTests(unittest.TestCase):
                         ast.parse(cell)
 
     def test_matmul_notebook_lands_next_to_its_bitstream(self):
-        build = Path(self.tmp.name) / 'artifacts/matmul/2026-09-29_10-00-00-bitstream'
-        (build / 'bitstream').mkdir(parents=True)
-        (build / 'bitstream/system_wrapper.bit').write_bytes(b'BIT')
-        (build / 'board').mkdir()
-        (build / 'board/system.hwh').write_bytes(b'<HWH/>')
-        (build / 'board/xmatmul_hw.h').write_text('#define XMATMUL_CONTROL_ADDR_AP_CTRL 0x0\n')
-        out, archive = flow.package_pynq(build, 'matmul')
+        run = make_build(self.dir, 'matmul', '#define XMATMUL_CONTROL_ADDR_AP_CTRL 0x0\n')
+        out, archive = self.package(run, 'matmul')
         self.assertEqual(sorted(p.name for p in out.iterdir()),
                          ['matmul.bit', 'matmul.hwh', 'matmul.ipynb', 'xmatmul_hw.h'])
         self.assertEqual((out / 'matmul.ipynb').read_bytes(),
@@ -244,28 +240,24 @@ class FpgaShellTests(unittest.TestCase):
     def test_help_lists_every_command(self):
         result = self.bash('fpga_help')
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ('fpga_env', 'fpga_test', 'fpga_weights', 'fpga_quantize', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_prepare',
-                        'fpga_zip', 'fpga_compare', 'fpga_view', 'fpga_selftest', 'fpga_shell',
-                        'fpga_classify'):
+        for command in ('fpga_env', 'fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq', 'fpga_zip'):
             self.assertIn(command, result.stdout)
 
-    def test_newest_build_is_the_default_run(self):
+    def test_runs_lists_bitstream_runs_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             make_build(tmp)
-            older = Path(tmp) / 'artifacts/justoliunet/2026-09-25_10-00-00-bitstream/bitstream'
-            older.mkdir(parents=True)
-            (older / 'x.bit').write_bytes(b'')
-            result = self.bash('echo "latest=$(_fpga_run justoliunet)"; '
-                               'echo "named=$(_fpga_run justoliunet 2026-09-25_10-00-00-bitstream)"', tmp)
+            (Path(tmp) / 'build/justoliunet/2026-09-30_10-00-00-csynth').mkdir()
+            result = self.bash('fpga_runs justoliunet', tmp)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('2026-09-29_10-00-00-bitstream', result.stdout.split('latest=')[1].split()[0])
-            self.assertIn('2026-09-25_10-00-00-bitstream', result.stdout.split('named=')[1].split()[0])
+            self.assertEqual([Path(line).name for line in result.stdout.split()],
+                             ['2026-09-29_10-00-00-bitstream'])
 
-    def test_missing_build_is_explained(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = self.bash('_fpga_run justoliunet', tmp)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('fpga_build', result.stderr)
+    def test_kernel_must_be_named(self):
+        for command in ('fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq'):
+            with self.subTest(command=command):
+                result = self.bash(command)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('usage', result.stderr)
 
     def test_zip_keeps_the_folder_name_inside(self):
         with tempfile.TemporaryDirectory() as tmp:

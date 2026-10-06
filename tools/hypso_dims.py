@@ -2,7 +2,7 @@
 """Report the real dimensions of HYPSO hyperspectral captures.
 
 Host-side only: uses the `hypso` package (pip install hypso), not any AMD
-tool, and never touches build/ or reports/. The one thing it answers is what
+tool, and never touches build/. The one thing it answers is what
 src/hls/conv2d/conv2d.hpp needs before it can be retargeted at real captures:
 how many spectral bands and how many spatial pixels an actual HYPSO-1/HYPSO-2
 file has, as int16, so CONV_IC/CONV_IH/CONV_IW can be set from data instead

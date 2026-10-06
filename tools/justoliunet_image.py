@@ -3,8 +3,8 @@
 
     1. python tools/justoliunet_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy \\
            --crop 200 300 32 32 --out img
-    2. xsdb software/jtag/justoliunet.tcl artifacts/justoliunet/RUN_DIRECTORY \\
-           -pixels img/pixels.txt img/fpga_logits.txt            (board machine)
+    2. zip img, upload it next to justoliunet.ipynb on the board (PYNQ) and run
+       the notebook's image section: it writes img/fpga_logits.txt
     3. python tools/justoliunet_image.py compare img
 
 The kernel takes raw L1a spectra and does training's preprocessing itself
@@ -19,12 +19,11 @@ Classes: 0 cloud, 1 land, 2 sea; other label values count as unlabeled.
 
 compare checks the FPGA logits against a numpy reference of the exact kernel
 (same preprocessing constants and checkpoint), scores both against the labels,
-and writes PNG maps next to the data. Over JTAG each pixel takes tens of
-milliseconds, so use --crop or --step to keep to a few thousand pixels.
+and writes PNG maps next to the data. Each pixel is one kernel call from
+Python, so use --crop or --step to keep to a few thousand pixels.
 """
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import struct
@@ -219,25 +218,12 @@ def prepare(args):
         print('WARNING: the kernel was exported with placeholder normalization, so raw spectra are '
               'not z-scored as in training: FPGA and reference will agree, but the classes will be '
               'wrong. Re-export with --mu-sd and rebuild, or use a prepared data<i>.npy.')
-    seconds = len(pixels) * 0.05
-    estimate = f'{seconds / 60:.0f} min' if seconds >= 120 else f'{seconds:.0f} s'
-    print(f'Over JTAG expect very roughly {estimate}; the board script reports the real rate.')
-    print('Next, on the board machine:')
-    print(f'  {board_command(out)}')
+    print(f'Next, on the board: {BOARD_STEP}')
     print(f'Then: python tools/justoliunet_image.py compare {out.as_posix()}')
 
 
-def newest_bitstream_run():
-    """artifacts/justoliunet/<run> of the latest bitstream build, if this machine has one."""
-    runs = sorted(p.parents[1] for p in (ROOT / 'artifacts/justoliunet').glob('*/bitstream/*.bit'))
-    return runs[-1] if runs else None
-
-
-def board_command(out):
-    run = newest_bitstream_run()
-    run_arg = Path(os.path.relpath(run)).as_posix() if run else 'artifacts/justoliunet/RUN_DIRECTORY'
-    return (f'xsdb software/jtag/justoliunet.tcl {run_arg} '
-            f'-pixels {(out / "pixels.txt").as_posix()} {(out / "fpga_logits.txt").as_posix()}')
+BOARD_STEP = ("zip this folder, upload it next to justoliunet.ipynb and run the notebook's "
+              "image section (jl.classify_folder), which writes fpga_logits.txt")
 
 
 def class_name(c):
@@ -260,7 +246,7 @@ def compare(args):
     reference = np.load(out / 'reference_logits.npy')
     if not (out / 'fpga_logits.txt').exists():
         raise SystemExit(f'no FPGA results in {out.as_posix()}/fpga_logits.txt yet; run the board step first:\n'
-                         f'  {board_command(out)}')
+                         f'  {BOARD_STEP}')
     rows = [l.split() for l in (out / 'fpga_logits.txt').read_text().splitlines() if l.strip()]
     fpga = np.array(rows, dtype=np.float64).reshape(len(rows), reference.shape[1])
     n, total = len(fpga), len(reference)

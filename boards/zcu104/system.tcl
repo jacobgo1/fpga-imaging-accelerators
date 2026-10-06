@@ -1,38 +1,55 @@
-# boards/zcu104/system.tcl
-# Headless board integration for ZCU104 (Zynq UltraScale+ MPSoC).
-# Sourced by scripts/vivado.tcl after the project and HLS IP catalog exist.
-# Assumes the HLS kernel exposes s_axi_control (AXI-Lite) and zero or more
-# m_axi_* masters. Adjust the "Kernel" section if it uses AXI-Stream instead.
+# boards/zcu104/system.tcl -- the hardware around the HLS kernel, wire by wire.
+#
+# scripts/vivado.tcl sources this after it has created an empty project and
+# put the exported HLS IP in its catalog. Everything this design contains is
+# created and connected below; nothing is added automatically.
+#
+#   PS ("ps": 4 x ARM, DDR controller)
+#     pl_clk0  ───────────────────────────────┬──► every clock pin below
+#     pl_resetn0 ──► rst (proc_sys_reset) ────┴──► every reset pin below
+#     M_AXI_HPM0_FPD ──► ctrl (SmartConnect) ──► kernel/s_axi_control   registers
+#     S_AXI_HP0_FPD  ◄── data (SmartConnect) ◄── kernel/m_axi_*         DDR access
+#     pl_ps_irq0     ◄── kernel/interrupt                               (unused by software)
+#
+# The data path only exists if the kernel has m_axi ports (justounetsimple_opt
+# has two: gmem0 reads, gmem1 writes). A kernel with only s_axilite (matmul)
+# gets the control path alone.
+#
+# To change the design, edit this file. To look at what it produced, open
+# build/KERNEL/latest/vivado/system.xpr in Vivado and open the block design.
 
-# ---------------------------------------------------------------- Board preset
+# ---------------------------------------------------------------- Project
 set bp [lindex [get_board_parts -quiet -latest_file_version *zcu104*] 0]
-if {$bp eq ""} {
-    error "ZCU104 board files not found. Check with: get_board_parts *zcu104*"
-}
+if {$bp eq ""} { error "ZCU104 board files not found. Check with: get_board_parts *zcu104*" }
 set_property board_part $bp [current_project]
+create_bd_design system
 
-# ---------------------------------------------------------------- Block design
-set bd system
-create_bd_design $bd
-
-# PS with board presets (DDR, MIO, etc.)
+# ---------------------------------------------------------------- Blocks
+# The PS. The board preset only configures the chip's own pins and DDR for the
+# ZCU104 (MIO, DDR timing); it creates no blocks and no wires.
 set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e ps]
-apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
-    -config {apply_board_preset 1} $ps
+apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset 1} $ps
 
-# PL clock at the HLS target; one control master (HPM0_FPD),
-# one high-performance slave (HP0_FPD = S_AXI_GP2), one PL->PS interrupt.
-set target_mhz [expr {1000.0 / $cfg(clock_ns)}]
+# The kernel, from the HLS IP catalog.
+set vlnv [lindex [get_ipdefs -filter "NAME == $cfg(top)"] 0]
+if {$vlnv eq ""} { error "HLS IP '$cfg(top)' not in catalog $ip_repo" }
+set kernel [create_bd_cell -type ip -vlnv $vlnv kernel]
+set masters [get_bd_intf_pins -quiet -of $kernel -filter {MODE == Master && VLNV =~ *aximm*}]
+puts "INFO: kernel $vlnv, m_axi ports: [llength $masters]"
+
+# Which PS ports exist: HPM0_FPD (PS -> kernel registers), HP0_FPD (kernel ->
+# DDR, only with m_axi ports), one interrupt, and the PL clock at the HLS target.
 set_property -dict [list \
-    CONFIG.PSU__USE__M_AXI_GP0 {1} \
-    CONFIG.PSU__USE__M_AXI_GP1 {0} \
-    CONFIG.PSU__USE__IRQ0      {1} \
-    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [format %.3f $target_mhz] \
+    CONFIG.PSU__USE__M_AXI_GP0 1 \
+    CONFIG.PSU__USE__M_AXI_GP1 0 \
+    CONFIG.PSU__USE__M_AXI_GP2 0 \
+    CONFIG.PSU__USE__S_AXI_GP2 [expr {[llength $masters] > 0}] \
+    CONFIG.PSU__USE__IRQ0      1 \
+    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [format %.3f [expr {1000.0 / $cfg(clock_ns)}]] \
 ] $ps
 
-# ---------------------------------------------------------------- Clock check
-# The PLL divisors rarely hit the request exactly. The kernel must not run
-# faster than the period HLS scheduled for.
+# The PLL rarely hits the requested frequency exactly. The kernel must not run
+# faster than the period HLS scheduled it for.
 set act_mhz [get_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__ACT_FREQMHZ $ps]
 set act_ns  [expr {1000.0 / $act_mhz}]
 puts "INFO: HLS target $cfg(clock_ns) ns, actual pl_clk0 [format %.3f $act_ns] ns ($act_mhz MHz)"
@@ -40,103 +57,68 @@ if {$act_ns < $cfg(clock_ns) - 0.01} {
     error "pl_clk0 ($act_ns ns) is faster than the HLS target ($cfg(clock_ns) ns)"
 }
 
-# ---------------------------------------------------------------- Kernel
-set vlnv [lindex [get_ipdefs -filter "NAME == $cfg(top)"] 0]
-if {$vlnv eq ""} { error "HLS IP '$cfg(top)' not in catalog $ip_repo" }
-set k [create_bd_cell -type ip -vlnv $vlnv kernel]
+# Reset: turns the PS's pl_resetn0 into a reset synchronous to pl_clk0.
+set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst]
 
-# Control: PS HPM0 -> kernel s_axi_control (interconnect, clock and reset auto)
-apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
-    Master /ps/M_AXI_HPM0_FPD Slave /kernel/s_axi_control \
-    Clk_master Auto Clk_slave Auto Clk_xbar Auto \
-    intc_ip {New AXI SmartConnect} master_apm 0 \
-] [get_bd_intf_pins kernel/s_axi_control]
+# Control path: one AXI-Lite link from the PS to the kernel's registers.
+set ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect ctrl]
+set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $ctrl
 
-# Data: every kernel m_axi -> one SmartConnect -> PS HP0 (only enabled if the
-# kernel has masters). The automation connects the first master and creates the
-# SmartConnect (with clocks and resets); every further master gets its own input
-# port on that same SmartConnect. Running the automation per master instead
-# leaves the second one on a new SmartConnect that cannot reach the already
-# used HP0, an empty black box in implementation.
-set masters [get_bd_intf_pins -quiet -of $k -filter {MODE == Master && VLNV =~ *aximm*}]
+# Data path: every kernel m_axi port into one SmartConnect, out to DDR via HP0.
 if {[llength $masters]} {
-    set_property CONFIG.PSU__USE__S_AXI_GP2 {1} $ps
-    apply_bd_automation -rule xilinx.com:bd_rule:axi4 -config [list \
-        Master [lindex $masters 0] Slave /ps/S_AXI_HP0_FPD \
-        Clk_master Auto Clk_slave Auto Clk_xbar Auto \
-        intc_ip {New AXI SmartConnect} master_apm 0 \
-    ] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
-    set hp0_net [get_bd_intf_nets -of [get_bd_intf_pins ps/S_AXI_HP0_FPD]]
-    set smc [get_bd_cells -of [get_bd_intf_pins -of $hp0_net -filter {MODE == Master}]]
-    foreach m [lrange $masters 1 end] {
-        set port [get_property CONFIG.NUM_SI $smc]
-        set_property CONFIG.NUM_SI [expr {$port + 1}] $smc
-        connect_bd_intf_net $m [get_bd_intf_pins $smc/[format S%02d_AXI $port]]
-    }
-    puts "INFO: [llength $masters] kernel m_axi master(s) -> $smc -> HP0"
-} else {
-    puts "INFO: kernel has no m_axi masters; HP0 left disabled"
+    set data [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect data]
+    set_property -dict [list CONFIG.NUM_SI [llength $masters] CONFIG.NUM_MI 1] $data
 }
 
-# Interrupt (ap_ctrl_hs + s_axilite gives an 'interrupt' pin)
+# ---------------------------------------------------------------- Wires
+# Clock: pl_clk0 drives everything in the fabric, and the PS side of each port.
+set clocked [list rst/slowest_sync_clk kernel/ap_clk ctrl/aclk ps/maxihpm0_fpd_aclk]
+if {[llength $masters]} { lappend clocked data/aclk ps/saxihp0_fpd_aclk }
+foreach pin $clocked { connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_pins $pin] }
+
+# Reset.
+connect_bd_net [get_bd_pins ps/pl_resetn0] [get_bd_pins rst/ext_reset_in]
+set reset [list kernel/ap_rst_n ctrl/aresetn]
+if {[llength $masters]} { lappend reset data/aresetn }
+foreach pin $reset { connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_pins $pin] }
+
+# Control path.
+connect_bd_intf_net [get_bd_intf_pins ps/M_AXI_HPM0_FPD] [get_bd_intf_pins ctrl/S00_AXI]
+connect_bd_intf_net [get_bd_intf_pins ctrl/M00_AXI]      [get_bd_intf_pins kernel/s_axi_control]
+
+# Data path.
+set port 0
+foreach master $masters {
+    connect_bd_intf_net $master [get_bd_intf_pins data/[format S%02d_AXI $port]]
+    incr port
+}
+if {[llength $masters]} {
+    connect_bd_intf_net [get_bd_intf_pins data/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
+}
+
+# Interrupt (HLS adds the pin for a kernel with s_axilite port=return).
 if {[llength [get_bd_pins -quiet kernel/interrupt]]} {
     connect_bd_net [get_bd_pins kernel/interrupt] [get_bd_pins ps/pl_ps_irq0]
 }
 
-# ---------------------------------------------------------------- Finalize
+# ---------------------------------------------------------------- Addresses
+# The kernel's registers in the PS's address map (0xA000_0000 on the ZCU104),
+# and all of DDR in the kernel's m_axi address map. PYNQ reads both from the .hwh.
 assign_bd_address
+foreach seg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces ps/Data]] {
+    puts "INFO: PS sees [get_property NAME $seg] at [get_property OFFSET $seg]"
+}
+
+# ---------------------------------------------------------------- Finish
 validate_bd_design
 save_bd_design
-
-set bd_file [get_files $bd.bd]
+set bd_file [get_files system.bd]
 generate_target all $bd_file
 add_files -norecurse [make_wrapper -files $bd_file -top]
-
-set_property top ${bd}_wrapper [get_filesets sources_1]
+set_property top system_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
-# ---------------------------------------------------------------- JTAG handoff
-# Everything software/jtag/board.tcl needs besides the .bit: the PS init
-# script, the kernel's register map, and the address the PS sees it at.
-# Warnings, not errors: a missing piece only matters for JTAG testing.
-set handoff [file join $cfg(run_dir) deliverables board]
-file mkdir $handoff
-
-set psu_init [lindex [get_files -all -quiet */psu_init.tcl] 0]
-if {$psu_init ne ""} {
-    file copy -force $psu_init $handoff
-} else {
-    puts "WARNING: no psu_init.tcl among the PS output products; set export_xsa and take it from the XSA"
-}
-
-# Block-design description, which PYNQ needs to load the bitstream from Linux
-# (software/board/fpga_runner.py load).
-set hwh [lindex [get_files -all -quiet */hw_handoff/${bd}.hwh] 0]
-if {$hwh ne ""} {
-    file copy -force $hwh [file join $handoff system.hwh]
-} else {
-    puts "WARNING: no ${bd}.hwh among the block design outputs; loading from Linux with PYNQ needs it"
-}
-
-set headers [glob -nocomplain -directory $ip_repo drivers/*/src/*_hw.h]
-foreach header $headers { file copy -force $header $handoff }
-if {![llength $headers]} { puts "WARNING: HLS IP in $ip_repo has no *_hw.h register map" }
-
-set kernel_base ""
-foreach seg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces ps/Data]] {
-    if {[string match *kernel* $seg]} { set kernel_base [get_property OFFSET $seg] }
-}
-if {$kernel_base ne ""} {
-    set f [open [file join $handoff address.tcl] w]
-    puts $f "set kernel_base $kernel_base"
-    close $f
-    puts "INFO: kernel s_axi_control at $kernel_base"
-} else {
-    puts "WARNING: kernel address not found; read it from the Address Editor"
-}
-
-# ---------------------------------------------------------------- Constraints
-# pl_clk0 is constrained by the PS IP itself. This design has no PL pins, so
-# no XDC is needed. If you add external ports (LEDs, PMOD), add them here:
+# No external pins, so no XDC is needed (pl_clk0 is constrained by the PS IP).
+# If you add LEDs or PMOD pins, put them in boards/zcu104/system.xdc.
 set xdc [file join $cfg(root) boards zcu104 system.xdc]
 if {[file exists $xdc]} { add_files -fileset constrs_1 -norecurse $xdc }

@@ -13,7 +13,7 @@ void justoliunet(
     // kernel DMAs every input/output out of the same DDR region the PS
     // filled, instead of exposing 12 separate BRAM ports that would each
     // need their own controller wired by hand in the block design (see
-    // software/zcu104/ and boards/README.md for the PS side of this).
+    // boards/zcu104/system.tcl for the PS side of this).
     // Every array also gets an s_axilite entry: that is what turns its
     // pointer into a settable register, so the PS can point each argument
     // at wherever in the DDR buffer it put that array before pulsing start.
