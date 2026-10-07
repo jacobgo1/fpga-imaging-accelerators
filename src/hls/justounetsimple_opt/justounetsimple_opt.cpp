@@ -90,17 +90,28 @@ constexpr int FILL = H / 2 * W * WORDS;         // words per port per patch
 constexpr int EMIT = CHUNKS * H * W;            // vectors per patch to conv1
 static_assert(FILL >= EMIT, "a round must have time to send a whole patch");
 
+// One bank of the patch buffers: both ping-pong buffers, [buffer][chunk][row / 2][x],
+// flattened. 8 bands (128 bits) per entry.
+constexpr int BANK_HALF = CHUNKS * (H / 2) * W;
+typedef vec_t<act_t, PB> bank_t[2 * BANK_HALF];
+
 static void patch_buffer(hls::stream<jopt_raw_t>& raw0, hls::stream<jopt_raw_t>& raw1,
                          hls::stream<vec_t<act_t, P1> >& out, int height, int width) {
-    // [buffer][row parity = port][word of the chunk][chunk][row / 2][x]: 8 bands
-    // each, 128 bits. Each port writes its own row parity, so the two writes of
-    // a cycle and the two reads (both words of a chunk) hit different banks.
-    vec_t<act_t, PB> buf[2][2][2][CHUNKS][H / 2][W];
-    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=3
-    #pragma HLS AGGREGATE variable=buf compact=bit
-    #pragma HLS BIND_STORAGE variable=buf type=ram_2p impl=uram
+    // Four banks: [row parity = port][word of the chunk]. The ping-pong buffer is
+    // the high half of the address, not a bank of its own. Each bank has exactly
+    // one write and one read in the loop below, at fixed places: a bank whose
+    // write or read HLS has to pick at run time gets one store per possible
+    // pick, and its single write port then takes that many cycles (II = 5 when
+    // the buffer and the word half were array indices).
+    bank_t b00, b01, b10, b11;
+    #pragma HLS AGGREGATE variable=b00 compact=bit
+    #pragma HLS AGGREGATE variable=b01 compact=bit
+    #pragma HLS AGGREGATE variable=b10 compact=bit
+    #pragma HLS AGGREGATE variable=b11 compact=bit
+    #pragma HLS BIND_STORAGE variable=b00 type=ram_2p impl=uram
+    #pragma HLS BIND_STORAGE variable=b01 type=ram_2p impl=uram
+    #pragma HLS BIND_STORAGE variable=b10 type=ram_2p impl=uram
+    #pragma HLS BIND_STORAGE variable=b11 type=ram_2p impl=uram
     // The z-score constants of the kept words (1-14), one small ROM per lane.
     int32_t za[2 * CHUNKS][PB], zb[2 * CHUNKS][PB];
     #pragma HLS ARRAY_PARTITION variable=za type=complete dim=2
@@ -120,31 +131,50 @@ static void patch_buffer(hls::stream<jopt_raw_t>& raw0, hls::stream<jopt_raw_t>&
         int ec = 0, ey = 0, ex = 0;             // emit: chunk, row, pixel
         step: for (int t = 0; t < FILL; t++) {
             #pragma HLS PIPELINE II=1
-            // Writes go to buffer wb, reads to buffer 1 - wb.
-            #pragma HLS DEPENDENCE variable=buf type=inter false
-            #pragma HLS DEPENDENCE variable=buf type=intra false
+            // Writes go to one half of each bank, reads to the other.
+            #pragma HLS DEPENDENCE variable=b00 type=inter false
+            #pragma HLS DEPENDENCE variable=b01 type=inter false
+            #pragma HLS DEPENDENCE variable=b10 type=inter false
+            #pragma HLS DEPENDENCE variable=b11 type=inter false
+            #pragma HLS DEPENDENCE variable=b00 type=intra false
+            #pragma HLS DEPENDENCE variable=b01 type=intra false
+            #pragma HLS DEPENDENCE variable=b10 type=intra false
+            #pragma HLS DEPENDENCE variable=b11 type=intra false
+            jopt_raw_t w0, w1;
             if (fill) {
-                const jopt_raw_t w0 = raw0.read(), w1 = raw1.read();
-                if (fw > 0) {                   // word 0, raw bands 0-7, is dropped
-                    const int kw = fw - 1;      // kept word: chunk kw / 2, half kw % 2
-                    vec_t<act_t, PB> z0, z1;
-                    for (int p = 0; p < PB; p++) {
-                        #pragma HLS UNROLL
-                        // round((dn - mean) / std * 2^IN_FRAC), saturated
-                        const int64_t s0 = ((int64_t)w0[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
-                        const int64_t s1 = ((int64_t)w1[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
-                        z0.v[p] = (act_t)(s0 > 32767 ? 32767 : s0 < -32768 ? -32768 : s0);
-                        z1.v[p] = (act_t)(s1 > 32767 ? 32767 : s1 < -32768 ? -32768 : s1);
-                    }
-                    buf[wb][0][kw & 1][kw >> 1][fr][fx] = z0;
-                    buf[wb][1][kw & 1][kw >> 1][fr][fx] = z1;
-                }
+                w0 = raw0.read();
+                w1 = raw1.read();
+            }
+            // Word 0 (raw bands 0-7) is dropped; kept word kw goes to chunk kw / 2,
+            // into the bank of half kw % 2.
+            const int kw = fw > 0 ? fw - 1 : 0;
+            const bool store = fill && fw > 0;
+            vec_t<act_t, PB> z0, z1;
+            for (int p = 0; p < PB; p++) {
+                #pragma HLS UNROLL
+                // round((dn - mean) / std * 2^IN_FRAC), saturated
+                const int64_t s0 = ((int64_t)w0[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
+                const int64_t s1 = ((int64_t)w1[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
+                z0.v[p] = (act_t)(s0 > 32767 ? 32767 : s0 < -32768 ? -32768 : s0);
+                z1.v[p] = (act_t)(s1 > 32767 ? 32767 : s1 < -32768 ? -32768 : s1);
+            }
+            const int waddr = (wb ? BANK_HALF : 0) + ((kw >> 1) * (H / 2) + fr) * W + fx;
+            if (store && (kw & 1) == 0) b00[waddr] = z0;
+            if (store && (kw & 1) == 1) b01[waddr] = z0;
+            if (store && (kw & 1) == 0) b10[waddr] = z1;
+            if (store && (kw & 1) == 1) b11[waddr] = z1;
+            if (fill) {
                 if (fw < WORDS - 1) fw++;
                 else { fw = 0; if (fx < W - 1) fx++; else { fx = 0; fr++; } }
             }
+
             if (emit && t < EMIT) {
-                const vec_t<act_t, PB> lo = buf[1 - wb][ey & 1][0][ec][ey >> 1][ex];
-                const vec_t<act_t, PB> hi = buf[1 - wb][ey & 1][1][ec][ey >> 1][ex];
+                // All four banks are read; the row's parity picks the pair.
+                const int raddr = (wb ? 0 : BANK_HALF) + (ec * (H / 2) + (ey >> 1)) * W + ex;
+                const vec_t<act_t, PB> r00 = b00[raddr], r01 = b01[raddr];
+                const vec_t<act_t, PB> r10 = b10[raddr], r11 = b11[raddr];
+                const vec_t<act_t, PB> lo = (ey & 1) ? r10 : r00;
+                const vec_t<act_t, PB> hi = (ey & 1) ? r11 : r01;
                 vec_t<act_t, P1> v;
                 for (int p = 0; p < PB; p++) {
                     #pragma HLS UNROLL
