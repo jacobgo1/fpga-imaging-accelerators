@@ -5,7 +5,8 @@
         --out aegean_unet [--crop ROW COL HEIGHT WIDTH]
 
 Writes, into --out:
-    cube.npy               the raw L1a cube (H x W x 120), what the board classifies
+    cube.npy               the raw L1a cube (H x W x 120; uint16 when the values are raw
+                           counts), what the board classifies
     reference_scores.npy   the numpy model's scores (H x W x 3) for the same 32 x 32 patches,
                            which the notebook checks the FPGA against
     labels.npy             the labels, remapped as in training (if --labels)
@@ -71,6 +72,8 @@ def prepare(args):
         raise SystemExit('the crop is empty')
     if not np.isfinite(cube).all():
         raise SystemExit('the cube contains NaN or infinite values')
+    if cube.min() >= 0 and cube.max() <= 65535 and np.array_equal(cube, np.rint(cube)):
+        cube = cube.astype(np.uint16)    # raw counts, as captured: what justounetsimple_opt reads
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

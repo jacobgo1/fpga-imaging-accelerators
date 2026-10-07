@@ -4,6 +4,7 @@ The notebook's own code cells run against a fake `pynq` whose kernel computes ea
 with the numpy model, on an image folder made by tools/justounetsimple_image.py prepare.
 That checks the register traffic, the patching and the comparison -- not PYNQ or the board.
 """
+import gc
 import importlib.util
 import json
 from pathlib import Path
@@ -34,13 +35,14 @@ HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}
 #define XJUSTOUNETSIMPLE_CONTROL_BITS_DOUT_DATA 64
 """
-DIN0, DIN1, OPT_DOUT, OPT_N = 0x10, 0x1c, 0x28, 0x34
+DIN0, DIN1, OPT_DOUT, HEIGHT, WIDTH = 0x10, 0x1c, 0x28, 0x34, 0x3c
 OPT_HEADER = f"""\
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN0_DATA 0x{DIN0:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN1_DATA 0x{DIN1:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DOUT_DATA 0x{OPT_DOUT:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_N_DATA    0x{OPT_N:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL     0x{AP_CTRL:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN0_DATA   0x{DIN0:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN1_DATA   0x{DIN1:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DOUT_DATA   0x{OPT_DOUT:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_HEIGHT_DATA 0x{HEIGHT:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_WIDTH_DATA  0x{WIDTH:02x}
 """
 OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
 
@@ -95,31 +97,41 @@ class FakeKernel:
             self.words[offset] = value
 
 
-class FakeBatchKernel(FakeKernel):
-    """The optimized kernel: n patches per start, computed with the bit-exact numpy model of
-    its integer arithmetic. Input: int16, 110 bands + 2 zero bands in 7 chunks of 16, bands
-    0-7 of a chunk from din0 and 8-15 from din1, [7][32][32][8] per patch on each; output:
-    int32 scores."""
+class FakeImageKernel(FakeKernel):
+    """The optimized kernel: a whole raw cube (height x width x 120 uint16) per start, at any
+    address inside a buffer (strips start part-way into the scores), computed with the
+    bit-exact numpy model (classify_fixed). Allocations larger than max_bytes fail, as when
+    PYNQ's CMA is short."""
 
-    def __init__(self, model, layers, broken=False):
+    def __init__(self, model, layers, broken=False, max_bytes=None):
         super().__init__(model, layers, broken)
-        self.qlayers = model.load_quantized()
+        self.qlayers, self.prep = model.load_quantized(), model.prep_constants()
+        self.max_bytes, self.runs = max_bytes, []
+
+    def allocate(self, shape, dtype):
+        if self.max_bytes is not None and np.prod(shape) * np.dtype(dtype).itemsize > self.max_bytes:
+            raise RuntimeError('Failed to allocate Memory!')
+        return super().allocate(shape, dtype)
+
+    def view(self, address, shape, dtype):
+        """shape x dtype at a physical address, inside one buffer."""
+        for start, buffer in self.buffers.items():
+            if start <= address and address + np.prod(shape) * np.dtype(dtype).itemsize <= start + buffer.nbytes:
+                raw = np.asarray(buffer).reshape(-1).view(np.uint8)
+                return raw[address - start:].view(dtype)[:np.prod(shape)].reshape(shape)
+        raise AssertionError(f'0x{address:x}: no buffer holds {shape} {np.dtype(dtype)} there')
 
     def write(self, offset, value):
         if offset == AP_CTRL and value & 1:
-            n = self.words[OPT_N]
-            halves = [self.buffers[self.address(DIN0)], self.buffers[self.address(DIN1)]]
-            dout = self.buffers[self.address(OPT_DOUT)]
-            assert all(h.dtype == np.int16 for h in halves) and dout.dtype == np.int32
-            for k in range(n):
-                self.starts += 1
-                # [port][chunk][y][x][band] -> y, x, chunk, port, band
-                patch = np.stack([np.array(h[k]) for h in halves]).transpose(2, 3, 1, 0, 4).reshape(32, 32, 112)
-                assert not patch[..., 110:].any(), 'the padding bands must be zero'
-                scores = self.model.forward_patch_fixed(patch[..., :110], self.qlayers)
-                if self.broken:
-                    scores[5, 5, 0] += 1 << 15
-                dout[k] = scores
+            self.starts += 1
+            assert self.address(DIN0) == self.address(DIN1), 'both input ports read the same cube'
+            h, w = self.words[HEIGHT], self.words[WIDTH]
+            cube = self.view(self.address(DIN0), (h, w, 120), np.uint16)
+            scores = self.model.classify_fixed(cube, self.qlayers, self.prep)
+            if self.broken:
+                scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
+            self.view(self.address(OPT_DOUT), (h, w, 3), np.int32)[:] = scores
+            self.runs.append((h, w))
             self.done = True
         else:
             self.words[offset] = value
@@ -144,19 +156,21 @@ class JustoUNetSimpleTests(unittest.TestCase):
         self.dir = Path(self.tmp.name)
 
     def tearDown(self):
+        gc.collect()        # a notebook's namespace (a cycle) may still map cube.npy; Windows locks it
         self.tmp.cleanup()
 
-    def raw_cube(self, h, w, seed=0):
+    def raw_cube(self, h, w, seed=0, counts=False):
         """Raw values whose preprocessing gives N(0, 1); the dropped bands hold 1e6, so a
-        wrong band selection blows the scores up."""
+        wrong band selection blows the scores up. counts: whole numbers 0 .. 65535 like a
+        capture's, the dropped bands 65535."""
         kept, mean, inv_std = self.model.read_preprocessing()
         z = np.random.default_rng(seed).normal(0, 1, (h, w, 110)).astype(np.float32)
-        raw = np.full((h, w, 120), 1.0e6, dtype=np.float32)
+        raw = np.full((h, w, 120), 65535.0 if counts else 1.0e6, dtype=np.float32)
         raw[:, :, kept] = z / inv_std + mean
-        return raw
+        return np.clip(np.rint(raw), 0, 65535) if counts else raw
 
-    def prepare(self, h, w, header=('xjustounetsimple_hw.h', HEADER)):
-        np.save(self.dir / 'source.npy', self.raw_cube(h, w))
+    def prepare(self, h, w, header=('xjustounetsimple_hw.h', HEADER), counts=False):
+        np.save(self.dir / 'source.npy', self.raw_cube(h, w, counts=counts))
         np.save(self.dir / 'source_labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
         board = self.dir / 'board'
         board.mkdir()
@@ -252,70 +266,100 @@ int main(int, char** argv) {
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
-        """forward_patch_fixed predicts the board's answers: it must be the optimized kernel's
-        arithmetic bit for bit."""
+        """classify_fixed predicts the board's answers: it must be the optimized kernel's
+        arithmetic bit for bit, the z-score and the edge patches included."""
         source = self.dir / 'run_opt.cpp'
         source.write_text("""
 #include "justounetsimple_opt.hpp"
 #include <cstdio>
-static jopt_in_t din[2][JOPT_IN_PAD / JOPT_P1][JOPT_H][JOPT_W];
-static int32_t dout[JOPT_H][JOPT_W][JOPT_OUT_CH];
+#include <cstdlib>
+#include <vector>
 int main(int, char** argv) {
-    FILE* f = fopen(argv[1], "rb"); if (fread(din, sizeof din, 1, f) != 1) return 1; fclose(f);
-    justounetsimple_opt(&din[0][0][0][0], &din[1][0][0][0], &dout[0][0][0], 1);
-    f = fopen(argv[2], "wb"); fwrite(dout, sizeof dout, 1, f); fclose(f);
+    const int h = atoi(argv[3]), w = atoi(argv[4]);
+    std::vector<jopt_raw_t> din(h * w * JOPT_RAW_BANDS / JOPT_PORT_BANDS);
+    std::vector<int32_t> dout(h * w * JOPT_OUT_CH);
+    FILE* f = fopen(argv[1], "rb");
+    if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
+    fclose(f);
+    justounetsimple_opt(din.data(), din.data(), dout.data(), h, w);
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(int32_t), dout.size(), f); fclose(f);
 }
 """)
         exe = self.dir / 'run_opt.exe'
         subprocess.run([CXX, '-std=c++14', '-O2', f'-I{OPT_SOURCE}', f'-I{ROOT / "src/common"}',
                         str(source), str(OPT_SOURCE / 'justounetsimple_opt.cpp'), '-o', str(exe)], check=True)
-        x = np.random.default_rng(3).uniform(-3, 3, (32, 32, 110)).astype(np.float32)
-        xq = self.model.quantize_input(x)
-        padded = np.pad(xq, ((0, 0), (0, 0), (0, 2)))
-        padded.reshape(32, 32, 7, 2, 8).transpose(3, 2, 0, 1, 4).tofile(self.dir / 'in.bin')
-        subprocess.run([str(exe), str(self.dir / 'in.bin'), str(self.dir / 'out.bin')], check=True)
-        cpp = np.fromfile(self.dir / 'out.bin', dtype=np.int32).reshape(32, 32, 3)
-        want = self.model.forward_patch_fixed(xq, self.model.load_quantized())
+        h, w = 37, 45                                     # 2 x 2 patches, the edge ones partial
+        cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
+        cube.tofile(self.dir / 'in.bin')
+        subprocess.run([str(exe), str(self.dir / 'in.bin'), str(self.dir / 'out.bin'), str(h), str(w)],
+                       check=True)
+        cpp = np.fromfile(self.dir / 'out.bin', dtype=np.int32).reshape(h, w, 3)
+        want = self.model.classify_fixed(cube)
         np.testing.assert_array_equal(cpp, want)
         scores = want * 2.0 ** -self.model.OUT_FRAC
-        np.testing.assert_allclose(scores, self.model.forward_patch(x, self.layers), atol=0.02)
+        kept, mean, inv_std = self.model.read_preprocessing()
+        floats = np.zeros((h, w, 3), dtype=np.float32)
+        for patch, tile in self.patching.iter_patches(cube, pad_mode='edge'):
+            x = self.model.preprocess(patch, kept, mean, inv_std)
+            self.patching.place(floats, self.model.forward_patch(x, self.layers), tile)
+        np.testing.assert_allclose(scores, floats, atol=0.02)
         self.assertGreater(float(scores.max() - scores.min()), 1.0, 'the reference should not be constant')
+
+    def test_integer_z_score_is_within_one_unit_of_the_float_one(self):
+        cube = self.raw_cube(16, 16, counts=True)
+        kept, mean, inv_std = self.model.read_preprocessing()
+        floats = self.model.quantize_input(self.model.preprocess(cube, kept, mean, inv_std))
+        ints = self.model.preprocess_fixed(cube.astype(np.uint16))
+        self.assertLessEqual(int(np.abs(ints.astype(int) - floats).max()), 1)
+
+    def test_prep_header_is_up_to_date(self):
+        """justounetsimple_prep.hpp is generated from mu_sd.txt: regenerate it when that changes."""
+        self.assertEqual(self.model.PREP_HEADER.read_text(encoding='utf-8'), self.model.prep_header(),
+                         'run: python tools/justounetsimple_model.py')
 
     def test_opt_notebook_uses_the_kernel_formats(self):
         """The notebook and the numpy model hard-code what justounetsimple_opt.hpp defines."""
-        header = (OPT_SOURCE / 'justounetsimple_opt.hpp').read_text()
+        header = (OPT_SOURCE / 'justounetsimple_opt.hpp').read_text(encoding='utf-8')
 
         def define(name):
             return int(re.search(rf'#define JOPT_{name}\s+(\d+)', header).group(1))
 
         setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
         ns = {}
-        for line in re.findall(r'^(?:IN_FRAC|P1), .*$', setup, re.M):
-            exec(line, ns)
-        for name in ('IN_FRAC', 'OUT_FRAC', 'P1', 'PORT_BANDS'):
-            self.assertEqual(ns[name], define(name), name)
-        self.assertEqual(ns['IN_PAD'], -(-define('IN_CH') // define('P1')) * define('P1'))
+        exec(re.search(r'^BANDS, OUT_FRAC = .*$', setup, re.M).group(0), ns)
+        self.assertEqual(ns['BANDS'], define('RAW_BANDS'))
+        self.assertEqual(ns['OUT_FRAC'], define('OUT_FRAC'))
         for name in ('IN_FRAC', 'ACT_FRAC', 'OUT_FRAC'):
             self.assertEqual(getattr(self.model, name), define(name), name)
 
-    def run_opt(self, h, w, broken=False):
-        board = self.prepare(h, w, ('xjustounetsimple_opt_hw.h', OPT_HEADER))
-        return board, self.run_notebook(board, broken, OPT_NOTEBOOK, FakeBatchKernel)
+    def run_opt(self, h, w, broken=False, max_bytes=None):
+        board = self.prepare(h, w, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
+        self.assertEqual(np.load(board.parent / 'source.npy').dtype, np.float32)
+        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken, max_bytes)
+        return board, self.run_notebook(board, broken, OPT_NOTEBOOK, kernel)
 
-    def test_opt_notebook_classifies_the_image_like_the_reference(self):
+    def test_opt_notebook_classifies_the_whole_image_in_one_start(self):
         board, (ns, kernel) = self.run_opt(70, 50)    # 3 x 2 patches, not a multiple of 32
+        self.assertEqual(np.load(board / 'aegean_unet/cube.npy').dtype, np.uint16, 'saved as raw counts')
         self.assertEqual(ns['scores'].shape, (70, 50, 3))
         self.assertTrue(ns['close'].all())
         self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        self.assertEqual(kernel.address(DIN0), ns['bands_in'][0].physical_address)
-        self.assertEqual(kernel.address(DIN1), ns['bands_in'][1].physical_address)
+        self.assertIsNone(ns['strips'])
+        # the self-test patch, the whole image, then 5 timed runs of the whole image
+        self.assertEqual(kernel.runs, [(32, 32)] + [(70, 50)] * 6)
+        self.assertEqual(kernel.address(DIN0), ns['cube_in'].physical_address)
         self.assertEqual(kernel.address(OPT_DOUT), ns['scores_out'].physical_address)
+        self.assertGreater(ns['wall'], 0)
+        self.assertGreater(ns['fpga'], 0)
 
-    def test_opt_notebook_splits_large_images_into_batches(self):
-        board, (ns, kernel) = self.run_opt(40, 40)
-        ns['BATCH'] = 1                               # pretend the buffers hold one patch
-        scores = ns['classify'](ns['cube'])
-        np.testing.assert_allclose(scores, ns['reference'], rtol=0, atol=ns['TOLERANCE'])
+    def test_opt_notebook_uses_strips_when_the_cube_does_not_fit(self):
+        # 150 x 40 x 120 x 2 bytes = 1.44 MB does not fit, a 128-row strip (1.23 MB) does.
+        board, (ns, kernel) = self.run_opt(150, 40, max_bytes=1_300_000)
+        self.assertIsNone(ns['cube_in'])
+        self.assertEqual(len(ns['strips']), 2)
+        self.assertEqual(ns['scores'].shape, (150, 40, 3))
+        self.assertTrue(ns['close'].all())
+        self.assertEqual(kernel.runs[1:3], [(128, 40), (22, 40)], 'two strips, the second the rest')
 
     def test_opt_notebook_shows_a_wrong_kernel(self):
         _, (ns, _) = self.run_opt(40, 40, broken=True)

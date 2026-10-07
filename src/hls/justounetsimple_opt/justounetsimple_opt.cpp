@@ -1,4 +1,5 @@
 #include "justounetsimple_opt.hpp"
+#include "justounetsimple_prep.hpp"
 #include "../../optimized/stream_ops.hpp"
 #include <type_traits>
 
@@ -7,13 +8,20 @@
 #include "../../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
 
 namespace q = justounetsimple_int8;
+namespace prep = justounetsimple_prep;
 static_assert(std::is_same<std::remove_const<std::remove_all_extents<
                   decltype(q::conv1_weight)>::type>::type, wgt_t>::value,
               "the weights must be int8; did the header's element type change?");
+static_assert(prep::IN_FRAC == JOPT_IN_FRAC, "justounetsimple_prep.hpp is out of date: "
+              "run python tools/justounetsimple_model.py");
 
 constexpr int H = JOPT_H, W = JOPT_W, IN = JOPT_IN_CH, B = JOPT_BASE_CH, OUT = JOPT_OUT_CH;
 constexpr int P1 = JOPT_P1, INP = JOPT_IN_PAD, PB = JOPT_PORT_BANDS;
-static_assert(P1 == 2 * PB, "conv1's bands per cycle come from two ports");
+constexpr int WORDS = JOPT_RAW_BANDS / PB;      // 15 words per pixel in the cube
+constexpr int CHUNKS = INP / P1;                // 7 chunks of 16 bands for conv1
+static_assert(JOPT_RAW_BANDS % PB == 0 && P1 == 2 * PB, "a chunk is two words");
+static_assert(prep::FIRST_BAND == PB && (CHUNKS * 2 + 1) * PB <= JOPT_RAW_BANDS,
+              "the kept bands must start at word 1 of each pixel");
 
 // Fraction bits: each layer's sums carry its input's plus its weights'.
 constexpr int SUM1 = JOPT_IN_FRAC + q::conv1_weight_frac;
@@ -29,27 +37,134 @@ static_assert(SUM1 > JOPT_ACT_FRAC && SUM2 > JOPT_ACT_FRAC && SUM3 > JOPT_ACT_FR
 // 32767 * (the largest sum of |q| over one output channel), 3.7e8 for conv1.
 // The testbench checks that bound against the real weights.
 
-// ---- load: DDR -> stream, 16 bands per cycle, 8 from each port ----
-static void load(const jopt_in_t *din0, const jopt_in_t *din1,
-                 hls::stream<vec_t<act_t, P1> >& out, int n) {
-    load: for (int i = 0; i < n * (INP / P1) * H * W; i++) {
-        #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=7168 max=458752
-        const jopt_in_t lo = din0[i], hi = din1[i];
-        vec_t<act_t, P1> v;
-        for (int p = 0; p < PB; p++) {
-            #pragma HLS UNROLL
-            v.v[p] = lo[p];
-            v.v[PB + p] = hi[p];
+// The image is cut into patch rows x patch columns, raster order (loop tiling:
+// every process below walks the same grid).
+static int patch_rows(int height) { return (height + H - 1) / H; }
+static int patch_cols(int width) { return (width + W - 1) / W; }
+
+// ---- read_rows: DDR -> stream, the raw words of every other row of each patch ----
+// For each patch, rows PORT, PORT + 2, ... : 32 pixels x 15 words each, in
+// cube order. One burst per row. Past the image's bottom the last row is read
+// again; past its right edge the last pixel is repeated, so every patch is
+// whole (the same as the notebook's edge padding used to be).
+template<int PORT>
+static void read_rows(const jopt_raw_t *din, hls::stream<jopt_raw_t>& out, int height, int width) {
+    const int rows = patch_rows(height), cols = patch_cols(width);
+    patch_row: for (int pr = 0; pr < rows; pr++) {
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=19
+        patch_col: for (int pc = 0; pc < cols; pc++) {
+            #pragma HLS LOOP_TRIPCOUNT min=1 max=35
+            line: for (int i = 0; i < H / 2; i++) {
+                const int y = pr * H + 2 * i + PORT;
+                const int x0 = pc * W;
+                const int n = width - x0 < W ? width - x0 : W;   // pixels inside the image
+                const jopt_raw_t *src = din + ((uint32_t)(y < height ? y : height - 1) * width + x0) * WORDS;
+                jopt_raw_t last[WORDS];                          // the last pixel read
+                #pragma HLS ARRAY_PARTITION variable=last type=complete
+                int w = 0;
+                take: for (int k = 0; k < n * WORDS; k++) {
+                    #pragma HLS PIPELINE II=1
+                    #pragma HLS LOOP_TRIPCOUNT min=15 max=480
+                    const jopt_raw_t v = src[k];
+                    out.write(v);
+                    last[w] = v;
+                    w = (w == WORDS - 1) ? 0 : w + 1;
+                }
+                edge: for (int k = 0; k < (W - n) * WORDS; k++) {
+                    #pragma HLS PIPELINE II=1
+                    #pragma HLS LOOP_TRIPCOUNT min=0 max=465
+                    out.write(last[w]);
+                    w = (w == WORDS - 1) ? 0 : w + 1;
+                }
+            }
         }
-        out.write(v);
+    }
+}
+
+// ---- patch_buffer: z-score, then the ping-pong between the readers and conv1 ----
+// Round k fills patch k into one buffer while it sends patch k-1 from the
+// other to conv1, 16 bands of a pixel per cycle in conv1's order (chunk by
+// chunk, each in raster order); then the buffers swap. n patches take n + 1
+// rounds of 7680 cycles (the words of one patch per port).
+constexpr int FILL = H / 2 * W * WORDS;         // words per port per patch
+constexpr int EMIT = CHUNKS * H * W;            // vectors per patch to conv1
+static_assert(FILL >= EMIT, "a round must have time to send a whole patch");
+
+static void patch_buffer(hls::stream<jopt_raw_t>& raw0, hls::stream<jopt_raw_t>& raw1,
+                         hls::stream<vec_t<act_t, P1> >& out, int height, int width) {
+    // [buffer][row parity = port][word of the chunk][chunk][row / 2][x]: 8 bands
+    // each, 128 bits. Each port writes its own row parity, so the two writes of
+    // a cycle and the two reads (both words of a chunk) hit different banks.
+    vec_t<act_t, PB> buf[2][2][2][CHUNKS][H / 2][W];
+    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=buf type=complete dim=3
+    #pragma HLS AGGREGATE variable=buf compact=bit
+    #pragma HLS BIND_STORAGE variable=buf type=ram_2p impl=uram
+    // The z-score constants of the kept words (1-14), one small ROM per lane.
+    int32_t za[2 * CHUNKS][PB], zb[2 * CHUNKS][PB];
+    #pragma HLS ARRAY_PARTITION variable=za type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=zb type=complete dim=2
+    load_z: for (int k = 0; k < 2 * CHUNKS * PB; k++) {
+        #pragma HLS PIPELINE II=1
+        za[k / PB][k % PB] = prep::A[k];
+        zb[k / PB][k % PB] = prep::B[k];
+    }
+
+    const int n = patch_rows(height) * patch_cols(width);
+    int wb = 0;                                 // the buffer being filled
+    round: for (int k = 0; k <= n; k++) {
+        #pragma HLS LOOP_TRIPCOUNT min=2 max=666
+        const bool fill = k < n, emit = k > 0;
+        int fr = 0, fx = 0, fw = 0;             // fill: row pair, pixel, word
+        int ec = 0, ey = 0, ex = 0;             // emit: chunk, row, pixel
+        step: for (int t = 0; t < FILL; t++) {
+            #pragma HLS PIPELINE II=1
+            // Writes go to buffer wb, reads to buffer 1 - wb.
+            #pragma HLS DEPENDENCE variable=buf type=inter false
+            #pragma HLS DEPENDENCE variable=buf type=intra false
+            if (fill) {
+                const jopt_raw_t w0 = raw0.read(), w1 = raw1.read();
+                if (fw > 0) {                   // word 0, raw bands 0-7, is dropped
+                    const int kw = fw - 1;      // kept word: chunk kw / 2, half kw % 2
+                    vec_t<act_t, PB> z0, z1;
+                    for (int p = 0; p < PB; p++) {
+                        #pragma HLS UNROLL
+                        // round((dn - mean) / std * 2^IN_FRAC), saturated
+                        const int64_t s0 = ((int64_t)w0[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
+                        const int64_t s1 = ((int64_t)w1[p] * za[kw][p] + zb[kw][p]) >> prep::FRAC;
+                        z0.v[p] = (act_t)(s0 > 32767 ? 32767 : s0 < -32768 ? -32768 : s0);
+                        z1.v[p] = (act_t)(s1 > 32767 ? 32767 : s1 < -32768 ? -32768 : s1);
+                    }
+                    buf[wb][0][kw & 1][kw >> 1][fr][fx] = z0;
+                    buf[wb][1][kw & 1][kw >> 1][fr][fx] = z1;
+                }
+                if (fw < WORDS - 1) fw++;
+                else { fw = 0; if (fx < W - 1) fx++; else { fx = 0; fr++; } }
+            }
+            if (emit && t < EMIT) {
+                const vec_t<act_t, PB> lo = buf[1 - wb][ey & 1][0][ec][ey >> 1][ex];
+                const vec_t<act_t, PB> hi = buf[1 - wb][ey & 1][1][ec][ey >> 1][ex];
+                vec_t<act_t, P1> v;
+                for (int p = 0; p < PB; p++) {
+                    #pragma HLS UNROLL
+                    v.v[p] = lo.v[p];
+                    v.v[PB + p] = hi.v[p];
+                }
+                out.write(v);
+                if (ex < W - 1) ex++;
+                else { ex = 0; if (ey < H - 1) ey++; else { ey = 0; ec++; } }
+            }
+        }
+        wb = 1 - wb;
     }
 }
 
 // ---- block A: conv1 (110 -> 6) at 32 x 32, 16 bands per cycle ----
 // Reads 112 bands (110 + 2 zero bands, zero weights). 6 x 16 x 9 = 864
 // multiply-adds per cycle.
-static void conv_a(hls::stream<vec_t<act_t, P1> >& in, hls::stream<vec_t<acc_t, B> >& out, int n) {
+static void conv_a(hls::stream<vec_t<act_t, P1> >& in, hls::stream<vec_t<acc_t, B> >& out,
+                   int height, int width) {
     wgt_t wl[B][INP][3][3];
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=1
     #pragma HLS ARRAY_PARTITION variable=wl type=cyclic factor=P1 dim=2
@@ -59,16 +174,19 @@ static void conv_a(hls::stream<vec_t<act_t, P1> >& in, hls::stream<vec_t<acc_t, 
     #pragma HLS ARRAY_PARTITION variable=bl type=complete
 
     load_conv_weights<B, IN, INP>(q::conv1_weight, q::conv1_bias, SUM1 - q::conv1_bias_frac, wl, bl);
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_stream<H, W, INP, B, P1, 1>(in, wl, bl, out);
     }
 }
 
 // ReLU, max-pool -> 16 x 16 x 6.
-static void pool_a(hls::stream<vec_t<acc_t, B> >& in, hls::stream<vec_t<act_t, B> >& out, int n) {
+static void pool_a(hls::stream<vec_t<acc_t, B> >& in, hls::stream<vec_t<act_t, B> >& out,
+                   int height, int width) {
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         relu_pool<H, W, B, SUM1 - JOPT_ACT_FRAC>(in, out);
     }
 }
@@ -78,92 +196,126 @@ static void pool_a(hls::stream<vec_t<acc_t, B> >& in, hls::stream<vec_t<act_t, B
 // small memory per (input channel, tap), addressed by the output channel.
 
 // ---- block B: conv2 (6 -> 12) at 16 x 16, 12 cycles per pixel ----
-static void conv_b(hls::stream<vec_t<act_t, B> >& in, hls::stream<vec_t<acc_t, 2 * B> >& out, int n) {
+static void conv_b(hls::stream<vec_t<act_t, B> >& in, hls::stream<vec_t<acc_t, 2 * B> >& out,
+                   int height, int width) {
     wgt_t wl[2 * B][B][3][3];
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
     acc_t bl[2 * B];
     load_conv_weights<2 * B, B>(q::conv2_weight, q::conv2_bias, SUM2 - q::conv2_bias_frac, wl, bl);
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_stream<H / 2, W / 2, B, 2 * B, B, 2 * B>(in, wl, bl, out);
     }
 }
 
 // ReLU, max-pool, upsample -> 16 x 16 x 12.
-static void pool_up_b(hls::stream<vec_t<acc_t, 2 * B> >& in, hls::stream<vec_t<act_t, 2 * B> >& out, int n) {
+static void pool_up_b(hls::stream<vec_t<acc_t, 2 * B> >& in, hls::stream<vec_t<act_t, 2 * B> >& out,
+                      int height, int width) {
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         relu_pool_up<H / 2, W / 2, 2 * B, SUM2 - JOPT_ACT_FRAC>(in, out);
     }
 }
 
 // ---- block C: conv3 (12 -> 6) at 16 x 16, 6 cycles per pixel ----
-static void conv_c(hls::stream<vec_t<act_t, 2 * B> >& in, hls::stream<vec_t<acc_t, B> >& out, int n) {
+static void conv_c(hls::stream<vec_t<act_t, 2 * B> >& in, hls::stream<vec_t<acc_t, B> >& out,
+                   int height, int width) {
     wgt_t wl[B][2 * B][3][3];
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
     acc_t bl[B];
     load_conv_weights<B, 2 * B>(q::conv3_weight, q::conv3_bias, SUM3 - q::conv3_bias_frac, wl, bl);
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_stream<H / 2, W / 2, 2 * B, B, 2 * B, B>(in, wl, bl, out);
     }
 }
 
 // ReLU, upsample -> 32 x 32 x 6.
-static void up_c(hls::stream<vec_t<acc_t, B> >& in, hls::stream<vec_t<act_t, B> >& out, int n) {
+static void up_c(hls::stream<vec_t<acc_t, B> >& in, hls::stream<vec_t<act_t, B> >& out,
+                 int height, int width) {
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         relu_up<H / 2, W / 2, B, SUM3 - JOPT_ACT_FRAC>(in, out);
     }
 }
 
 // ---- block D: conv4 (6 -> 3) at 32 x 32, no activation, 3 cycles per pixel ----
-static void conv_d(hls::stream<vec_t<act_t, B> >& in, hls::stream<vec_t<acc_t, OUT> >& out, int n) {
+static void conv_d(hls::stream<vec_t<act_t, B> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
+                   int height, int width) {
     wgt_t wl[OUT][B][3][3];
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
     acc_t bl[OUT];
     load_conv_weights<OUT, B>(q::conv4_weight, q::conv4_bias, SUM4 - q::conv4_bias_frac, wl, bl);
+    const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_stream<H, W, B, OUT, B, OUT>(in, wl, bl, out);
     }
 }
 
-// ---- store: stream -> DDR, a pixel's 3 scores at OUT_FRAC fraction bits ----
-static void store(hls::stream<vec_t<acc_t, OUT> >& in, int32_t *dout, int n) {
-    store: for (int i = 0; i < n * H * W; i++) {
-        #pragma HLS PIPELINE II=OUT
-        #pragma HLS LOOP_TRIPCOUNT min=1024 max=65536
-        const vec_t<acc_t, OUT> v = in.read();
-        for (int c = 0; c < OUT; c++) {
-            #pragma HLS UNROLL
-            dout[i * OUT + c] = round_shift<SUM4 - JOPT_OUT_FRAC>(v.v[c]);
+// ---- store: stream -> DDR, each patch row into its place in the image ----
+// A patch row's scores (3 per pixel, OUT_FRAC fraction bits) are collected,
+// then written in one burst -- only the pixels inside the image.
+static void store(hls::stream<vec_t<acc_t, OUT> >& in, int32_t *dout, int height, int width) {
+    const int rows = patch_rows(height), cols = patch_cols(width);
+    patch_row: for (int pr = 0; pr < rows; pr++) {
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=19
+        patch_col: for (int pc = 0; pc < cols; pc++) {
+            #pragma HLS LOOP_TRIPCOUNT min=1 max=35
+            line: for (int r = 0; r < H; r++) {
+                int32_t scores[W * OUT];
+                #pragma HLS ARRAY_PARTITION variable=scores type=cyclic factor=OUT
+                take: for (int x = 0; x < W; x++) {
+                    #pragma HLS PIPELINE II=1
+                    const vec_t<acc_t, OUT> v = in.read();
+                    for (int c = 0; c < OUT; c++) {
+                        #pragma HLS UNROLL
+                        scores[x * OUT + c] = round_shift<SUM4 - JOPT_OUT_FRAC>(v.v[c]);
+                    }
+                }
+                const int y = pr * H + r, x0 = pc * W;
+                const int n = width - x0 < W ? width - x0 : W;
+                if (y < height) {
+                    int32_t *dst = dout + ((uint32_t)y * width + x0) * OUT;
+                    put: for (int k = 0; k < n * OUT; k++) {
+                        #pragma HLS PIPELINE II=1
+                        #pragma HLS LOOP_TRIPCOUNT min=3 max=96
+                        dst[k] = scores[k];
+                    }
+                }
+            }
         }
     }
 }
 
-void justounetsimple_opt(const jopt_in_t *din0, const jopt_in_t *din1, int32_t *dout, int n)
+void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1, int32_t *dout,
+                         int height, int width)
 {
     // Three AXI masters, each on its own HP port (boards/zcu104/system.tcl):
-    // two read the input in parallel, one writes the scores. The PS sets the
-    // DDR addresses and the patch count in the s_axilite registers. depth is
-    // only for co-simulation: two patches, as in the testbench.
-    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=14336 max_read_burst_length=64
-    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=14336 max_read_burst_length=64
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=6144 max_write_burst_length=64
+    // two read the cube in parallel (point both at it), one writes the scores.
+    // depth is only for co-simulation: the testbench's 40 x 50 image.
+    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=6000 max_write_burst_length=128
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=n      bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
     #pragma HLS DATAFLOW
 
+    hls::stream<jopt_raw_t> s_raw0("s_raw0"), s_raw1("s_raw1");
     hls::stream<vec_t<act_t, P1> > s_in("s_in");
     hls::stream<vec_t<acc_t, B> > s_conv1("s_conv1");
     hls::stream<vec_t<act_t, B> > s_a("s_a");
@@ -172,18 +324,26 @@ void justounetsimple_opt(const jopt_in_t *din0, const jopt_in_t *din1, int32_t *
     hls::stream<vec_t<acc_t, B> > s_conv3("s_conv3");
     hls::stream<vec_t<act_t, B> > s_c("s_c");
     hls::stream<vec_t<acc_t, OUT> > s_conv4("s_conv4");
+    // The readers pause between rows (a new burst); let them run ahead.
+    #pragma HLS STREAM variable=s_raw0 depth=64
+    #pragma HLS STREAM variable=s_raw1 depth=64
+    #pragma HLS STREAM variable=s_in depth=64
     // conv1 hands out a patch's 16 x 16 pooled pixels during its last chunk
     // only (1024 cycles), conv2 takes one per 12 cycles. Room for all of them,
     // so conv1 never waits for conv2.
     #pragma HLS STREAM variable=s_a depth=256
+    // A patch row of scores, so conv4 keeps going while store writes one out.
+    #pragma HLS STREAM variable=s_conv4 depth=32
 
-    load(din0, din1, s_in, n);
-    conv_a(s_in, s_conv1, n);
-    pool_a(s_conv1, s_a, n);
-    conv_b(s_a, s_conv2, n);
-    pool_up_b(s_conv2, s_b, n);
-    conv_c(s_b, s_conv3, n);
-    up_c(s_conv3, s_c, n);
-    conv_d(s_c, s_conv4, n);
-    store(s_conv4, dout, n);
+    read_rows<0>(din0, s_raw0, height, width);
+    read_rows<1>(din1, s_raw1, height, width);
+    patch_buffer(s_raw0, s_raw1, s_in, height, width);
+    conv_a(s_in, s_conv1, height, width);
+    pool_a(s_conv1, s_a, height, width);
+    conv_b(s_a, s_conv2, height, width);
+    pool_up_b(s_conv2, s_b, height, width);
+    conv_c(s_b, s_conv3, height, width);
+    up_c(s_conv3, s_c, height, width);
+    conv_d(s_c, s_conv4, height, width);
+    store(s_conv4, dout, height, width);
 }
