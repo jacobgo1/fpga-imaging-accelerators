@@ -113,26 +113,37 @@ class TclFlowTests(unittest.TestCase):
             return ([str(w) for w in tcl.splitlist(tcl.getvar('wires'))],
                     [str(p) for p in tcl.splitlist(tcl.getvar('props'))])
 
-    def test_zcu104_wires_two_masters_through_one_smartconnect_to_hp0(self):
-        wires, props = self.wire_zcu104(['m_axi_gmem0', 'm_axi_gmem1'])
+    def test_zcu104_gives_each_master_its_own_hp_port(self):
+        wires, props = self.wire_zcu104(['m_axi_gmem2', 'm_axi_gmem0', 'm_axi_gmem1'])  # any order
         for wire in ('ps/M_AXI_HPM0_FPD => ctrl/S00_AXI', 'ctrl/M00_AXI => kernel/s_axi_control',
-                     'kernel/m_axi_gmem0 => data/S00_AXI', 'kernel/m_axi_gmem1 => data/S01_AXI',
-                     'data/M00_AXI => ps/S_AXI_HP0_FPD', 'kernel/interrupt -> ps/pl_ps_irq0',
-                     'ps/pl_resetn0 -> rst/ext_reset_in'):
+                     'kernel/interrupt -> ps/pl_ps_irq0', 'ps/pl_resetn0 -> rst/ext_reset_in'):
             self.assertIn(wire, wires)
-        for pin in ('rst/slowest_sync_clk', 'kernel/ap_clk', 'ctrl/aclk', 'data/aclk',
-                    'ps/maxihpm0_fpd_aclk', 'ps/saxihp0_fpd_aclk'):
+        for i in range(3):   # m_axi_gmem<i> -> data<i> -> HP<i>, in name order
+            self.assertIn(f'kernel/m_axi_gmem{i} => data{i}/S00_AXI', wires)
+            self.assertIn(f'data{i}/M00_AXI => ps/S_AXI_HP{i}_FPD', wires)
+            self.assertIn(f'ps/pl_clk0 -> data{i}/aclk', wires)
+            self.assertIn(f'ps/pl_clk0 -> ps/saxihp{i}_fpd_aclk', wires)
+            self.assertIn(f'rst/peripheral_aresetn -> data{i}/aresetn', wires)
+        for pin in ('rst/slowest_sync_clk', 'kernel/ap_clk', 'ctrl/aclk', 'ps/maxihpm0_fpd_aclk'):
             self.assertIn(f'ps/pl_clk0 -> {pin}', wires)
-        for pin in ('kernel/ap_rst_n', 'ctrl/aresetn', 'data/aresetn'):
+        for pin in ('kernel/ap_rst_n', 'ctrl/aresetn'):
             self.assertIn(f'rst/peripheral_aresetn -> {pin}', wires)
-        self.assertEqual(props[props.index('CONFIG.PSU__USE__S_AXI_GP2') + 1], '1')
-        self.assertEqual(props[props.index('CONFIG.NUM_SI', props.index('CONFIG.NUM_SI') + 1) + 1], '2')
+        self.assertFalse([w for w in wires if 'HP3' in w or 'saxihp3' in w], wires)
+        hp_used = [props[props.index(f'CONFIG.PSU__USE__S_AXI_GP{gp}') + 1] for gp in (2, 3, 4, 5)]
+        self.assertEqual(hp_used, ['1', '1', '1', '0'])
+        smartconnect_inputs = [props[i + 1] for i, p in enumerate(props) if p == 'CONFIG.NUM_SI']
+        self.assertEqual(smartconnect_inputs, ['1'] * 4, 'ctrl, then one per master')
+
+    def test_zcu104_rejects_more_masters_than_hp_ports(self):
+        with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):
+            self.wire_zcu104([f'm_axi_gmem{i}' for i in range(5)])
 
     def test_zcu104_without_masters_has_no_data_path(self):
         wires, props = self.wire_zcu104([])
         self.assertIn('ctrl/M00_AXI => kernel/s_axi_control', wires)
-        self.assertFalse([w for w in wires if 'data/' in w or 'HP0' in w or 'saxihp0' in w], wires)
-        self.assertEqual(props[props.index('CONFIG.PSU__USE__S_AXI_GP2') + 1], '0')
+        self.assertFalse([w for w in wires if 'data' in w or 'S_AXI_HP' in w or 'saxihp' in w], wires)
+        hp_used = [props[props.index(f'CONFIG.PSU__USE__S_AXI_GP{gp}') + 1] for gp in (2, 3, 4, 5)]
+        self.assertEqual(hp_used, ['0'] * 4)
 
     def execute_vivado(self, progress='100%'):
         with tempfile.TemporaryDirectory() as tmp:

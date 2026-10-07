@@ -7,13 +7,17 @@
 #   PS ("ps": 4 x ARM, DDR controller)
 #     pl_clk0  ───────────────────────────────┬──► every clock pin below
 #     pl_resetn0 ──► rst (proc_sys_reset) ────┴──► every reset pin below
-#     M_AXI_HPM0_FPD ──► ctrl (SmartConnect) ──► kernel/s_axi_control   registers
-#     S_AXI_HP0_FPD  ◄── data (SmartConnect) ◄── kernel/m_axi_*         DDR access
-#     pl_ps_irq0     ◄── kernel/interrupt                               (unused by software)
+#     M_AXI_HPM0_FPD ──► ctrl (SmartConnect)  ──► kernel/s_axi_control   registers
+#     S_AXI_HP0_FPD  ◄── data0 (SmartConnect) ◄── kernel/m_axi_gmem0     DDR access
+#     S_AXI_HP1_FPD  ◄── data1 (SmartConnect) ◄── kernel/m_axi_gmem1     (one HP port
+#     ...                                         ...                    per m_axi port)
+#     pl_ps_irq0     ◄── kernel/interrupt                                (unused by software)
 #
-# The data path only exists if the kernel has m_axi ports (justounetsimple_opt
-# has two: gmem0 reads, gmem1 writes). A kernel with only s_axilite (matmul)
-# gets the control path alone.
+# The data path only exists if the kernel has m_axi ports. Each gets an HP port
+# of its own (up to four), 128 bits per cycle each: justounetsimple_opt reads
+# its input through two of them at once (gmem0, gmem1) and writes through a
+# third (gmem2). A kernel with only s_axilite (matmul) gets the control path
+# alone.
 #
 # To change the design, edit this file. To look at what it produced, open
 # build/KERNEL/latest/vivado/system.xpr in Vivado and open the block design.
@@ -37,13 +41,19 @@ set kernel [create_bd_cell -type ip -vlnv $vlnv kernel]
 set masters [get_bd_intf_pins -quiet -of $kernel -filter {MODE == Master && VLNV =~ *aximm*}]
 puts "INFO: kernel $vlnv, m_axi ports: [llength $masters]"
 
-# Which PS ports exist: HPM0_FPD (PS -> kernel registers), HP0_FPD (kernel ->
-# DDR, only with m_axi ports), one interrupt, and the PL clock at the HLS target.
+# Which PS ports exist: HPM0_FPD (PS -> kernel registers), HP0_FPD .. HP3_FPD
+# (kernel -> DDR, one per m_axi port; the PS calls them S_AXI_GP2 .. GP5), one
+# interrupt, and the PL clock at the HLS target.
+set hp_ports [llength $masters]
+if {$hp_ports > 4} { error "the kernel has $hp_ports m_axi ports; the PS has 4 HP ports" }
 set_property -dict [list \
     CONFIG.PSU__USE__M_AXI_GP0 1 \
     CONFIG.PSU__USE__M_AXI_GP1 0 \
     CONFIG.PSU__USE__M_AXI_GP2 0 \
-    CONFIG.PSU__USE__S_AXI_GP2 [expr {[llength $masters] > 0}] \
+    CONFIG.PSU__USE__S_AXI_GP2 [expr {$hp_ports > 0}] \
+    CONFIG.PSU__USE__S_AXI_GP3 [expr {$hp_ports > 1}] \
+    CONFIG.PSU__USE__S_AXI_GP4 [expr {$hp_ports > 2}] \
+    CONFIG.PSU__USE__S_AXI_GP5 [expr {$hp_ports > 3}] \
     CONFIG.PSU__USE__IRQ0      1 \
     CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [format %.3f [expr {1000.0 / $cfg(clock_ns)}]] \
 ] $ps
@@ -64,36 +74,37 @@ set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst]
 set ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect ctrl]
 set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $ctrl
 
-# Data path: every kernel m_axi port into one SmartConnect, out to DDR via HP0.
-if {[llength $masters]} {
-    set data [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect data]
-    set_property -dict [list CONFIG.NUM_SI [llength $masters] CONFIG.NUM_MI 1] $data
+# Data path: each kernel m_axi port through its own SmartConnect (it adapts
+# the port's width and AXI details) to its own HP port, so the ports do not
+# share one port's bandwidth: master i -> data<i> -> HP<i>.
+for {set i 0} {$i < $hp_ports} {incr i} {
+    set data [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect data$i]
+    set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $data
 }
 
 # ---------------------------------------------------------------- Wires
 # Clock: pl_clk0 drives everything in the fabric, and the PS side of each port.
 set clocked [list rst/slowest_sync_clk kernel/ap_clk ctrl/aclk ps/maxihpm0_fpd_aclk]
-if {[llength $masters]} { lappend clocked data/aclk ps/saxihp0_fpd_aclk }
+for {set i 0} {$i < $hp_ports} {incr i} { lappend clocked data$i/aclk ps/saxihp${i}_fpd_aclk }
 foreach pin $clocked { connect_bd_net [get_bd_pins ps/pl_clk0] [get_bd_pins $pin] }
 
 # Reset.
 connect_bd_net [get_bd_pins ps/pl_resetn0] [get_bd_pins rst/ext_reset_in]
 set reset [list kernel/ap_rst_n ctrl/aresetn]
-if {[llength $masters]} { lappend reset data/aresetn }
+for {set i 0} {$i < $hp_ports} {incr i} { lappend reset data$i/aresetn }
 foreach pin $reset { connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd_pins $pin] }
 
 # Control path.
 connect_bd_intf_net [get_bd_intf_pins ps/M_AXI_HPM0_FPD] [get_bd_intf_pins ctrl/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins ctrl/M00_AXI]      [get_bd_intf_pins kernel/s_axi_control]
 
-# Data path.
-set port 0
-foreach master $masters {
-    connect_bd_intf_net $master [get_bd_intf_pins data/[format S%02d_AXI $port]]
-    incr port
-}
-if {[llength $masters]} {
-    connect_bd_intf_net [get_bd_intf_pins data/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP0_FPD]
+# Data path (masters in name order: m_axi_gmem0 -> HP0, m_axi_gmem1 -> HP1, ...).
+set i 0
+foreach master [lsort $masters] {
+    puts "INFO: [get_property NAME $master] -> data$i -> S_AXI_HP${i}_FPD"
+    connect_bd_intf_net $master [get_bd_intf_pins data$i/S00_AXI]
+    connect_bd_intf_net [get_bd_intf_pins data$i/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP${i}_FPD]
+    incr i
 }
 
 # Interrupt (HLS adds the pin for a kernel with s_axilite port=return).

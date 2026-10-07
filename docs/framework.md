@@ -43,18 +43,23 @@ nothing added automatically:
  PS ("ps": 4 x ARM, DDR controller)
    pl_clk0  ───────────────────────────────┬──► every clock pin below (100 MHz)
    pl_resetn0 ──► rst (proc_sys_reset) ────┴──► every reset pin below
-   M_AXI_HPM0_FPD ──► ctrl (SmartConnect) ──► kernel/s_axi_control   registers
-   S_AXI_HP0_FPD  ◄── data (SmartConnect) ◄── kernel/m_axi_gmem0     reads input from DDR
-                                          ◄── kernel/m_axi_gmem1     writes output to DDR
-   pl_ps_irq0     ◄── kernel/interrupt                               (not used)
+   M_AXI_HPM0_FPD ──► ctrl (SmartConnect)  ──► kernel/s_axi_control   registers
+   S_AXI_HP0_FPD  ◄── data0 (SmartConnect) ◄── kernel/m_axi_gmem0     reads input (bands 0-7 of each chunk)
+   S_AXI_HP1_FPD  ◄── data1 (SmartConnect) ◄── kernel/m_axi_gmem1     reads input (bands 8-15)
+   S_AXI_HP2_FPD  ◄── data2 (SmartConnect) ◄── kernel/m_axi_gmem2     writes output to DDR
+   pl_ps_irq0     ◄── kernel/interrupt                                (not used)
 ```
+
+Every `m_axi` port gets an HP port of its own (up to four), in name order. An
+HP port moves 128 bits per clock cycle, so a kernel that needs more than that
+from DDR splits its input over several `m_axi` bundles.
 
 The kernel's ports come from the `INTERFACE` pragmas on its top function:
 
 | Pragma in the C++ | Port on the IP | Wired to |
 | --- | --- | --- |
 | `s_axilite port=... bundle=control` (and `port=return`) | `s_axi_control`: start/done bits, scalar arguments, buffer addresses | PS `M_AXI_HPM0_FPD`, through `ctrl` |
-| `m_axi port=din bundle=gmem0` | `m_axi_gmem0`: the kernel reads/writes DDR itself | PS `S_AXI_HP0_FPD`, through `data` |
+| `m_axi port=din0 bundle=gmem0` | `m_axi_gmem0`: the kernel reads/writes DDR itself | PS `S_AXI_HP0_FPD`, through `data0` (`gmem1` → HP1, ...) |
 | (always) | `ap_clk`, `ap_rst_n`, `interrupt` | `pl_clk0`, `rst`, `pl_ps_irq0` |
 
 A kernel with no `m_axi` ports (e.g. `matmul`) gets only the control path.
@@ -88,12 +93,13 @@ The board runs PYNQ (Linux), with Jupyter at `http://BOARD:9090`. After
 1. `Overlay('K.bit')`: PYNQ programs the FPGA. From `K.hwh` (same name, same
    folder) it sets `pl_clk0` and finds the block called `kernel`.
 2. `allocate(...)` reserves buffers in DDR that the kernel can reach through
-   HP0. Each has a `physical_address`.
+   its HP ports. Each has a `physical_address`.
 3. Registers are written over `ctrl`: the buffer addresses into `din`/`dout`,
    and arguments such as `n`. The offsets come from `xK_hw.h`, which HLS
    generated.
 4. `AP_CTRL = 1` starts the kernel. It reads its input from DDR through
-   `m_axi_gmem0` → `data` → HP0 and writes the result back the same way.
+   `m_axi_gmem0` → `data0` → HP0 (and `gmem1` → HP1) and writes the result
+   back through `gmem2` → HP2.
 5. The notebook polls `AP_CTRL` bit 1 (done), calls `invalidate()` so the CPU
    doesn't read stale cache, and reads the result buffer.
 

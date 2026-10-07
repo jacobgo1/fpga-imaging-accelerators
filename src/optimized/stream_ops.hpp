@@ -2,74 +2,126 @@
 
 #include "conv3x3_stream.hpp"
 
-// What happens between two convolutions, read from a finished conv3x3_stream
-// result (acc) and written as a stream in the order the next conv3x3_stream
-// with P = 1 consumes it: channel by channel, each one in raster order.
-// One output value per clock cycle. The caller partitions acc cyclic 2 in
-// dims 1 and 2 (a 2x2 block comes from four different memories) and complete
-// in dim 3.
+// What happens between two convolutions. Each reads a conv3x3_stream's output
+// (all channels of a pixel, raster order) and writes activations in the same
+// form, the order the next conv3x3_stream with P = all its channels reads.
+//
+// Sums come in with S fraction bits and leave as activations with S - SHIFT:
+// rounded to nearest, ReLU'd, saturated at the int16 maximum. Rounding is
+// monotonic, so max-pooling before or after it gives the same result.
 
-static inline float max2(float a, float b) {
+// One sum -> one activation: ReLU, round off SHIFT bits, saturate.
+template<int SHIFT>
+act_t requant_relu(acc_t v) {
+    #pragma HLS INLINE
+    static_assert(SHIFT >= 1, "requant_relu drops at least one bit");
+    if (v <= 0) return 0;
+    const acc_t r = (v + ((acc_t)1 << (SHIFT - 1))) >> SHIFT;
+    return r > 32767 ? (act_t)32767 : (act_t)r;
+}
+
+// Round off SHIFT bits (no ReLU, no saturation: the result only gets smaller).
+template<int SHIFT>
+acc_t round_shift(acc_t v) {
+    #pragma HLS INLINE
+    static_assert(SHIFT >= 0, "round_shift only drops bits");
+    return SHIFT == 0 ? v : (v + ((acc_t)1 << (SHIFT > 0 ? SHIFT - 1 : 0))) >> SHIFT;
+}
+
+static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE
     return a > b ? a : b;
 }
 
-// ReLU, then 2x2 max-pool: H x W -> H/2 x W/2.
-template<int H, int W, int CH>
-void emit_relu_pool(const float acc[H][W][CH], hls::stream<vec_t<1> >& out) {
-    for (int ch = 0; ch < CH; ch++)
-        for (int y = 0; y < H / 2; y++)
-            for (int x = 0; x < W / 2; x++) {
-                #pragma HLS PIPELINE II=1
-                float m = max2(max2(acc[2 * y][2 * x][ch], acc[2 * y][2 * x + 1][ch]),
-                               max2(acc[2 * y + 1][2 * x][ch], acc[2 * y + 1][2 * x + 1][ch]));
-                vec_t<1> v;
-                v.v[0] = max2(m, 0.0f);   // max then ReLU == ReLU then max
-                out.write(v);
-            }
-}
-
-// ReLU, 2x2 max-pool, then 2x nearest upsample: H x W -> H x W, every 2x2
-// block replaced by its maximum.
-template<int H, int W, int CH>
-void emit_relu_pool_up(const float acc[H][W][CH], hls::stream<vec_t<1> >& out) {
-    for (int ch = 0; ch < CH; ch++)
-        for (int y = 0; y < H; y++)
-            for (int x = 0; x < W; x++) {
-                #pragma HLS PIPELINE II=1
-                const int y0 = y & ~1, x0 = x & ~1;
-                float m = max2(max2(acc[y0][x0][ch], acc[y0][x0 + 1][ch]),
-                               max2(acc[y0 + 1][x0][ch], acc[y0 + 1][x0 + 1][ch]));
-                vec_t<1> v;
-                v.v[0] = max2(m, 0.0f);
-                out.write(v);
-            }
-}
-
-// ReLU, then 2x nearest upsample: H x W -> 2H x 2W.
-template<int H, int W, int CH>
-void emit_relu_up(const float acc[H][W][CH], hls::stream<vec_t<1> >& out) {
-    for (int ch = 0; ch < CH; ch++)
-        for (int y = 0; y < 2 * H; y++)
-            for (int x = 0; x < 2 * W; x++) {
-                #pragma HLS PIPELINE II=1
-                vec_t<1> v;
-                v.v[0] = max2(acc[y / 2][x / 2][ch], 0.0f);
-                out.write(v);
-            }
-}
-
-// No activation: every pixel's CH values together, in raster order (HWC).
-template<int H, int W, int CH>
-void emit_pixels(const float acc[H][W][CH], hls::stream<vec_t<CH> >& out) {
+// ReLU, then 2x2 max-pool: H x W -> H/2 x W/2. A pooled pixel leaves as soon
+// as its block's last value (odd row, odd column) arrives.
+template<int H, int W, int CH, int SHIFT>
+void relu_pool(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
+    act_t row[W / 2][CH];   // the even row's pairs, pooled
+    #pragma HLS ARRAY_PARTITION variable=row type=complete dim=2
+    act_t left[CH];         // the even column's value
+    #pragma HLS ARRAY_PARTITION variable=left type=complete
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
             #pragma HLS PIPELINE II=1
-            vec_t<CH> v;
+            #pragma HLS DEPENDENCE variable=row type=inter false
+            const vec_t<acc_t, CH> v = in.read();
+            vec_t<act_t, CH> o;
             for (int ch = 0; ch < CH; ch++) {
                 #pragma HLS UNROLL
-                v.v[ch] = acc[y][x][ch];
+                const act_t a = requant_relu<SHIFT>(v.v[ch]);
+                if (x % 2 == 0) {
+                    left[ch] = a;
+                } else {
+                    const act_t m = max2(left[ch], a);
+                    if (y % 2 == 0) row[x / 2][ch] = m;
+                    else o.v[ch] = max2(row[x / 2][ch], m);
+                }
             }
-            out.write(v);
+            if (y % 2 == 1 && x % 2 == 1) out.write(o);
         }
+}
+
+// ReLU, 2x2 max-pool, then 2x nearest upsample: H x W -> H x W, every 2x2
+// block replaced by its maximum. Each pair of rows is taken in, then given out.
+template<int H, int W, int CH, int SHIFT>
+void relu_pool_up(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
+    act_t blk[W / 2][CH];   // the maxima of this row pair's 2x2 blocks
+    #pragma HLS ARRAY_PARTITION variable=blk type=complete dim=2
+    act_t left[CH];
+    #pragma HLS ARRAY_PARTITION variable=left type=complete
+    pairs: for (int j = 0; j < H / 2; j++) {
+        take: for (int i = 0; i < 2 * W; i++) {
+            #pragma HLS PIPELINE II=1
+            #pragma HLS DEPENDENCE variable=blk type=inter false
+            const int x = i % W;
+            const vec_t<acc_t, CH> v = in.read();
+            for (int ch = 0; ch < CH; ch++) {
+                #pragma HLS UNROLL
+                const act_t a = requant_relu<SHIFT>(v.v[ch]);
+                if (x % 2 == 0) {
+                    left[ch] = a;
+                } else {
+                    const act_t m = max2(left[ch], a);
+                    blk[x / 2][ch] = (i < W) ? m : max2(blk[x / 2][ch], m);
+                }
+            }
+        }
+        give: for (int i = 0; i < 2 * W; i++) {
+            #pragma HLS PIPELINE II=1
+            vec_t<act_t, CH> o;
+            for (int ch = 0; ch < CH; ch++) {
+                #pragma HLS UNROLL
+                o.v[ch] = blk[(i % W) / 2][ch];
+            }
+            out.write(o);
+        }
+    }
+}
+
+// ReLU, then 2x nearest upsample: H x W -> 2H x 2W. Each row is taken in, then
+// given out twice, every pixel twice.
+template<int H, int W, int CH, int SHIFT>
+void relu_up(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
+    act_t line[W][CH];
+    #pragma HLS ARRAY_PARTITION variable=line type=complete dim=2
+    rows: for (int y = 0; y < H; y++) {
+        take: for (int x = 0; x < W; x++) {
+            #pragma HLS PIPELINE II=1
+            const vec_t<acc_t, CH> v = in.read();
+            for (int ch = 0; ch < CH; ch++) {
+                #pragma HLS UNROLL
+                line[x][ch] = requant_relu<SHIFT>(v.v[ch]);
+            }
+        }
+        give: for (int i = 0; i < 4 * W; i++) {
+            #pragma HLS PIPELINE II=1
+            vec_t<act_t, CH> o;
+            for (int ch = 0; ch < CH; ch++) {
+                #pragma HLS UNROLL
+                o.v[ch] = line[(i % (2 * W)) / 2][ch];
+            }
+            out.write(o);
+        }
+    }
 }

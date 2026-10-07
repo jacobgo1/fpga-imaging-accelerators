@@ -7,6 +7,7 @@ That checks the register traffic, the patching and the comparison -- not PYNQ or
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -33,8 +34,15 @@ HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}
 #define XJUSTOUNETSIMPLE_CONTROL_BITS_DOUT_DATA 64
 """
-OPT_HEADER = (HEADER.replace('XJUSTOUNETSIMPLE_', 'XJUSTOUNETSIMPLE_OPT_')
-              + f'#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_N_DATA    0x{N_REG:02x}\n')
+DIN0, DIN1, OPT_DOUT, OPT_N = 0x10, 0x1c, 0x28, 0x34
+OPT_HEADER = f"""\
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN0_DATA 0x{DIN0:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DIN1_DATA 0x{DIN1:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DOUT_DATA 0x{OPT_DOUT:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_N_DATA    0x{OPT_N:02x}
+"""
+OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
 
 
 def load_module(name, path):
@@ -88,18 +96,29 @@ class FakeKernel:
 
 
 class FakeBatchKernel(FakeKernel):
-    """The optimized kernel: n patches per start, input as [55][32][32][2] per patch."""
+    """The optimized kernel: n patches per start, computed with the bit-exact numpy model of
+    its integer arithmetic. Input: int16, 110 bands + 2 zero bands in 7 chunks of 16, bands
+    0-7 of a chunk from din0 and 8-15 from din1, [7][32][32][8] per patch on each; output:
+    int32 scores."""
+
+    def __init__(self, model, layers, broken=False):
+        super().__init__(model, layers, broken)
+        self.qlayers = model.load_quantized()
 
     def write(self, offset, value):
         if offset == AP_CTRL and value & 1:
-            n = self.words[N_REG]
-            din, dout = self.buffers[self.address(DIN)], self.buffers[self.address(DOUT)]
+            n = self.words[OPT_N]
+            halves = [self.buffers[self.address(DIN0)], self.buffers[self.address(DIN1)]]
+            dout = self.buffers[self.address(OPT_DOUT)]
+            assert all(h.dtype == np.int16 for h in halves) and dout.dtype == np.int32
             for k in range(n):
                 self.starts += 1
-                patch = np.array(din[k]).transpose(1, 2, 0, 3).reshape(32, 32, 110)
-                scores = self.model.forward_patch(patch, self.layers)
+                # [port][chunk][y][x][band] -> y, x, chunk, port, band
+                patch = np.stack([np.array(h[k]) for h in halves]).transpose(2, 3, 1, 0, 4).reshape(32, 32, 112)
+                assert not patch[..., 110:].any(), 'the padding bands must be zero'
+                scores = self.model.forward_patch_fixed(patch[..., :110], self.qlayers)
                 if self.broken:
-                    scores[5, 5, 0] += 0.5
+                    scores[5, 5, 0] += 1 << 15
                 dout[k] = scores
             self.done = True
         else:
@@ -231,6 +250,54 @@ int main(int, char** argv) {
         ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
         self.assertFalse(ns['close'].all())
 
+    @unittest.skipUnless(CXX, 'no C++ compiler')
+    def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
+        """forward_patch_fixed predicts the board's answers: it must be the optimized kernel's
+        arithmetic bit for bit."""
+        source = self.dir / 'run_opt.cpp'
+        source.write_text("""
+#include "justounetsimple_opt.hpp"
+#include <cstdio>
+static jopt_in_t din[2][JOPT_IN_PAD / JOPT_P1][JOPT_H][JOPT_W];
+static int32_t dout[JOPT_H][JOPT_W][JOPT_OUT_CH];
+int main(int, char** argv) {
+    FILE* f = fopen(argv[1], "rb"); if (fread(din, sizeof din, 1, f) != 1) return 1; fclose(f);
+    justounetsimple_opt(&din[0][0][0][0], &din[1][0][0][0], &dout[0][0][0], 1);
+    f = fopen(argv[2], "wb"); fwrite(dout, sizeof dout, 1, f); fclose(f);
+}
+""")
+        exe = self.dir / 'run_opt.exe'
+        subprocess.run([CXX, '-std=c++14', '-O2', f'-I{OPT_SOURCE}', f'-I{ROOT / "src/common"}',
+                        str(source), str(OPT_SOURCE / 'justounetsimple_opt.cpp'), '-o', str(exe)], check=True)
+        x = np.random.default_rng(3).uniform(-3, 3, (32, 32, 110)).astype(np.float32)
+        xq = self.model.quantize_input(x)
+        padded = np.pad(xq, ((0, 0), (0, 0), (0, 2)))
+        padded.reshape(32, 32, 7, 2, 8).transpose(3, 2, 0, 1, 4).tofile(self.dir / 'in.bin')
+        subprocess.run([str(exe), str(self.dir / 'in.bin'), str(self.dir / 'out.bin')], check=True)
+        cpp = np.fromfile(self.dir / 'out.bin', dtype=np.int32).reshape(32, 32, 3)
+        want = self.model.forward_patch_fixed(xq, self.model.load_quantized())
+        np.testing.assert_array_equal(cpp, want)
+        scores = want * 2.0 ** -self.model.OUT_FRAC
+        np.testing.assert_allclose(scores, self.model.forward_patch(x, self.layers), atol=0.02)
+        self.assertGreater(float(scores.max() - scores.min()), 1.0, 'the reference should not be constant')
+
+    def test_opt_notebook_uses_the_kernel_formats(self):
+        """The notebook and the numpy model hard-code what justounetsimple_opt.hpp defines."""
+        header = (OPT_SOURCE / 'justounetsimple_opt.hpp').read_text()
+
+        def define(name):
+            return int(re.search(rf'#define JOPT_{name}\s+(\d+)', header).group(1))
+
+        setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
+        ns = {}
+        for line in re.findall(r'^(?:IN_FRAC|P1), .*$', setup, re.M):
+            exec(line, ns)
+        for name in ('IN_FRAC', 'OUT_FRAC', 'P1', 'PORT_BANDS'):
+            self.assertEqual(ns[name], define(name), name)
+        self.assertEqual(ns['IN_PAD'], -(-define('IN_CH') // define('P1')) * define('P1'))
+        for name in ('IN_FRAC', 'ACT_FRAC', 'OUT_FRAC'):
+            self.assertEqual(getattr(self.model, name), define(name), name)
+
     def run_opt(self, h, w, broken=False):
         board = self.prepare(h, w, ('xjustounetsimple_opt_hw.h', OPT_HEADER))
         return board, self.run_notebook(board, broken, OPT_NOTEBOOK, FakeBatchKernel)
@@ -240,13 +307,15 @@ int main(int, char** argv) {
         self.assertEqual(ns['scores'].shape, (70, 50, 3))
         self.assertTrue(ns['close'].all())
         self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        self.assertEqual(kernel.address(DIN), ns['patches_in'].physical_address)
+        self.assertEqual(kernel.address(DIN0), ns['bands_in'][0].physical_address)
+        self.assertEqual(kernel.address(DIN1), ns['bands_in'][1].physical_address)
+        self.assertEqual(kernel.address(OPT_DOUT), ns['scores_out'].physical_address)
 
     def test_opt_notebook_splits_large_images_into_batches(self):
         board, (ns, kernel) = self.run_opt(40, 40)
         ns['BATCH'] = 1                               # pretend the buffers hold one patch
         scores = ns['classify'](ns['cube'])
-        np.testing.assert_allclose(scores, ns['reference'], rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(scores, ns['reference'], rtol=0, atol=ns['TOLERANCE'])
 
     def test_opt_notebook_shows_a_wrong_kernel(self):
         _, (ns, _) = self.run_opt(40, 40, broken=True)
