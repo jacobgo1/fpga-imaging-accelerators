@@ -10,15 +10,17 @@ Each stage includes the ones above it:
     csynth     ... then C++ -> Verilog
     cosim      ... then simulate that Verilog with the testbench
     bitstream  ... then export the IP; the block design around it, synthesis, place and
-               route, .bit (scripts/vivado.tcl + boards/zcu104/system.tcl); the PYNQ zip
+               route, .bit (scripts/vivado.tcl + boards/BOARD/system.tcl); the PYNQ zip
 
 and two helpers:
 
     pynq       re-make the PYNQ zip of an earlier bitstream run (--run, default the newest)
     kernels    list the kernels and the files found for each
 
-Every run gets its own folder, build/KERNEL/DATE-STAGE/, with everything it produced in
-it. build/KERNEL/latest points at the newest one. Settings are in config/project.json.
+--board picks the FPGA (its part and board script, from config/project.json); the
+default is the config's "board". Every run gets its own folder, build/KERNEL/DATE-STAGE/
+(DATE-STAGE-BOARD for a board other than the default), with everything it produced in it.
+build/KERNEL/latest points at the newest one. Settings are in config/project.json.
 """
 import argparse
 import datetime
@@ -64,9 +66,12 @@ def find_kernel(name):
 
 # ------------------------------------------------------------------ 2. A folder for this run
 
-def new_run_folder(name, stage):
-    """build/NAME/2026-10-06_14-03-12-STAGE/, and build/NAME/latest pointing at it."""
+def new_run_folder(name, stage, board=None):
+    """build/NAME/2026-10-06_14-03-12-STAGE/ (…-STAGE-BOARD for another board than the
+    default), and build/NAME/latest pointing at it."""
     stamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    if board and board != CONFIG['board']:
+        stage = f'{stage}-{board}'
     run = ROOT / 'build' / name / f'{stamp}-{stage}'
     count = 2
     while run.exists():  # two runs in the same second
@@ -129,8 +134,9 @@ def native(kernel, run):
 
 # ------------------------------------------------------------------ 4b. Vitis HLS and Vivado
 
-def write_settings(kernel, run, stage, clock_ns, skip_cosim):
+def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
     """settings.tcl: everything the Tcl scripts need to know, as the Tcl array cfg(...)."""
+    target = CONFIG['boards'][board or CONFIG['board']]
     def tcl(value):  # a {braced} Tcl word: taken literally, spaces and all
         value = value.as_posix() if isinstance(value, Path) else str(value)
         if any(c in value for c in '{}\\'):
@@ -139,8 +145,8 @@ def write_settings(kernel, run, stage, clock_ns, skip_cosim):
 
     settings = {
         'root': ROOT, 'run_dir': run, 'stage': stage, 'top': kernel['top'],
-        'part': CONFIG['part'], 'clock_ns': clock_ns, 'jobs': CONFIG['jobs'],
-        'skip_cosim': int(skip_cosim), 'board_script': ROOT / CONFIG['board_script'],
+        'board': board or CONFIG['board'], 'part': target['part'], 'clock_ns': clock_ns, 'jobs': CONFIG['jobs'],
+        'skip_cosim': int(skip_cosim), 'board_script': ROOT / target['script'],
         'directives': kernel['directives'] or '',
     }
     lines = [f'set cfg({key}) {tcl(value)}' for key, value in settings.items()]
@@ -253,6 +259,8 @@ def main():
     parser.add_argument('--clock-ns', type=float, default=CONFIG['clock_ns'],
                         help=f'clock period target (default {CONFIG["clock_ns"]} from the config)')
     parser.add_argument('--run', help='pynq: which build/KERNEL/ folder (default: the newest bitstream)')
+    parser.add_argument('--board', choices=sorted(CONFIG['boards']), default=CONFIG['board'],
+                        help=f'which FPGA: its part and board script (default {CONFIG["board"]} from the config)')
     args = parser.parse_args()
 
     if args.stage == 'kernels':
@@ -271,19 +279,20 @@ def main():
 
     if args.clock_ns <= 0:
         raise SystemExit('--clock-ns must be positive')
-    run = new_run_folder(args.kernel, args.stage)
-    print(f'{args.stage} {args.kernel}: part {CONFIG["part"]}, clock {args.clock_ns} ns, '
+    run = new_run_folder(args.kernel, args.stage, args.board)
+    part = CONFIG['boards'][args.board]['part']
+    print(f'{args.stage} {args.kernel}: {args.board} ({part}), clock {args.clock_ns} ns, '
           f'in {show(run)}/')
     commit = subprocess.run(['git', 'describe', '--always', '--dirty'], cwd=ROOT, capture_output=True,
                             text=True).stdout.strip() if shutil.which('git') else None
-    record = {'kernel': args.kernel, 'stage': args.stage, 'git': commit, 'part': CONFIG['part'],
+    record = {'kernel': args.kernel, 'stage': args.stage, 'git': commit, 'board': args.board, 'part': part,
               'clock_ns': args.clock_ns, 'skip_cosim': args.skip_cosim,
               'started': datetime.datetime.now().isoformat(timespec='seconds'), 'result': 'failed'}
     try:
         if args.stage == 'native':
             native(kernel, run)
         else:
-            write_settings(kernel, run, args.stage, args.clock_ns, args.skip_cosim)
+            write_settings(kernel, run, args.stage, args.clock_ns, args.skip_cosim, args.board)
             shutil.copy2(ROOT / 'scripts' / 'hls.tcl', run)
             hls(run)
             if args.stage == 'bitstream':

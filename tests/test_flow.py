@@ -81,6 +81,12 @@ class RunFolderTests(unittest.TestCase):
         self.assertTrue(second.name.startswith(first.name))
         self.assertEqual(first.parent, flow.ROOT / 'build' / 'k')
 
+    def test_a_run_for_another_board_says_so_in_its_name(self):
+        default = flow.new_run_folder('k', 'bitstream', flow.CONFIG['board'])
+        other = flow.new_run_folder('k', 'bitstream', 'zynq7030')
+        self.assertTrue(default.name.endswith('-bitstream'))
+        self.assertTrue(other.name.endswith('-bitstream-zynq7030'))
+
     def test_failing_tool_stops_the_run_and_keeps_its_output(self):
         run = flow.new_run_folder('k', 'csim')
         with contextlib.redirect_stdout(io.StringIO()):
@@ -104,6 +110,18 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(float(tcl.getvar('cfg(clock_ns)')), 5.0)
             sources = tcl.splitlist(tcl.getvar('cfg(sources)'))
             self.assertEqual(list(sources), [(ROOT / 'src/hls/matmul/matmul.cpp').as_posix()])
+            self.assertEqual(tcl.getvar('cfg(board)'), 'zcu104')
+            self.assertEqual(tcl.getvar('cfg(board_script)'), (ROOT / 'boards/zcu104/system.tcl').as_posix())
+
+    def test_board_picks_the_part_and_the_board_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = pathlib.Path(tmp)
+            flow.write_settings(flow.find_kernel('matmul'), run, 'bitstream', 10.0, True, 'zynq7030')
+            tcl = tkinter.Tcl()
+            tcl.eval(f'source {{{(run / "settings.tcl").as_posix()}}}')
+            self.assertEqual(tcl.getvar('cfg(board)'), 'zynq7030')
+            self.assertEqual(tcl.getvar('cfg(part)'), flow.CONFIG['boards']['zynq7030']['part'])
+            self.assertEqual(tcl.getvar('cfg(board_script)'), (ROOT / 'boards/zynq7030/system.tcl').as_posix())
 
 
 class EstimateTests(unittest.TestCase):

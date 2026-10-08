@@ -1,7 +1,16 @@
 {
-  "part": "xczu7ev-ffvc1156-2-e",
+  "board": "zcu104",
+  "boards": {
+    "zcu104": {
+      "part": "xczu7ev-ffvc1156-2-e",
+      "script": "boards/zcu104/system.tcl"
+    },
+    "zynq7030": {
+      "part": "xc7z030sbg485-1",
+      "script": "boards/zynq7030/system.tcl"
+    }
+  },
   "clock_ns": 10.0,
   "jobs": 10,
-  "board_script": "boards/zcu104/system.tcl",
   "kernels": {}
 }

@@ -36,6 +36,9 @@ separately when the RTL needs checking.
 
 ## 2. The hardware around the kernel
 
+There is one board script per board, not per kernel: it wires whatever control
+and `m_axi` ports the kernel has. `--board` picks it (default `zcu104`; also
+`zynq7030`, HYPSO-2's FPGA, see [boards/README.md](../boards/README.md)).
 `boards/zcu104/system.tcl` creates every block and wire of this design, with
 nothing added automatically:
 

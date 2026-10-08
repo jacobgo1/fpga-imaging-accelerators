@@ -72,9 +72,10 @@ build/KERNEL/latest/
 
 ## Settings
 
-[config/project.json](config/project.json): the FPGA part (the ZCU104's
-`xczu7ev-ffvc1156-2-e`), `clock_ns`, `jobs` (Vivado threads), the board design
-script, and top-function names. Use the same AMD release everywhere you build.
+[config/project.json](config/project.json): the `boards` (each with its FPGA
+part and board script: `zcu104`, the default, and `zynq7030`, HYPSO-2's FPGA;
+pick one with `--board`), `clock_ns`, `jobs` (Vivado threads), and
+top-function names. Use the same AMD release everywhere you build.
 On Linux, `fpga_env` sources Vivado's `settings64.sh`. On Windows, run the
 `settings64.bat` files in **cmd.exe** and build from that same window (calling a
 `.bat` from PowerShell doesn't keep its PATH). `main.py` uses `vitis-run` if it's

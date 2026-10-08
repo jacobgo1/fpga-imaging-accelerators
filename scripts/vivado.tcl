@@ -33,7 +33,7 @@ if {[catch {
     set_property ip_repo_paths [list $ip_repo] [current_project]
     update_ip_catalog
 
-    # 2. The block design: boards/zcu104/system.tcl. It leaves system_wrapper as the top.
+    # 2. The block design: boards/BOARD/system.tcl. It leaves system_wrapper as the top.
     source $cfg(board_script)
 
     # 3. Synthesis.

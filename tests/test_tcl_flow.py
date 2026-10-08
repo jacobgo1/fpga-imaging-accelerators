@@ -83,12 +83,26 @@ class TclFlowTests(unittest.TestCase):
 
     def test_scripts_have_complete_tcl_syntax(self):
         tcl = tkinter.Tcl()
-        for path in ('scripts/hls.tcl', 'scripts/vivado.tcl', 'boards/zcu104/system.tcl'):
-            self.assertEqual(int(tcl.call('info', 'complete', (ROOT / path).read_text())), 1)
+        for path in ('scripts/hls.tcl', 'scripts/vivado.tcl', 'boards/zcu104/system.tcl',
+                     'boards/zynq7030/system.tcl'):
+            self.assertEqual(int(tcl.call('info', 'complete', (ROOT / path).read_text(encoding='utf-8'))), 1)
+
+    def test_every_configured_board_has_its_script(self):
+        for board, target in flow.CONFIG['boards'].items():
+            with self.subTest(board=board):
+                self.assertTrue((ROOT / target['script']).is_file(), target['script'])
+        self.assertIn(flow.CONFIG['board'], flow.CONFIG['boards'])
 
     def wire_zcu104(self, masters):
-        """Run boards/zcu104/system.tcl with block design commands that only record."""
+        return self.wire_board('zcu104', masters)
+
+    def wire_board(self, board, masters, preset=None):
+        """Run boards/BOARD/system.tcl with block design commands that only record.
+        preset: the text of a boards/BOARD/ps7_preset.tcl to put in the fake repository."""
         with tempfile.TemporaryDirectory() as tmp:
+            if preset is not None:
+                (Path(tmp) / 'boards' / board).mkdir(parents=True)
+                (Path(tmp) / 'boards' / board / 'ps7_preset.tcl').write_text(preset)
             tcl = tkinter.Tcl()
             tcl.eval(f'set cfg(top) k; set cfg(clock_ns) 10.0; set cfg(run_dir) {{{tmp}}}; '
                      f'set cfg(root) {{{tmp}}}; set ip_repo {{{tmp}}}; set wires {{}}; set props {{}}')
@@ -109,7 +123,7 @@ class TclFlowTests(unittest.TestCase):
                      ' if {"-of" in $args} {return $::masters}; return [lindex $args end]}')
             tcl.eval('proc connect_bd_net {a b} {lappend ::wires "$a -> $b"}')
             tcl.eval('proc connect_bd_intf_net {a b} {lappend ::wires "$a => $b"}')
-            tcl.eval('source ' + braced((ROOT / 'boards/zcu104/system.tcl').as_posix()))
+            tcl.eval('source ' + braced((ROOT / 'boards' / board / 'system.tcl').as_posix()))
             return ([str(w) for w in tcl.splitlist(tcl.getvar('wires'))],
                     [str(p) for p in tcl.splitlist(tcl.getvar('props'))])
 
@@ -144,6 +158,33 @@ class TclFlowTests(unittest.TestCase):
         self.assertFalse([w for w in wires if 'data' in w or 'S_AXI_HP' in w or 'saxihp' in w], wires)
         hp_used = [props[props.index(f'CONFIG.PSU__USE__S_AXI_GP{gp}') + 1] for gp in (2, 3, 4, 5)]
         self.assertEqual(hp_used, ['0'] * 4)
+
+    def test_zynq7030_gives_each_master_its_own_64_bit_hp_port(self):
+        wires, props = self.wire_board('zynq7030', ['m_axi_gmem1', 'm_axi_gmem0', 'm_axi_gmem2'])
+        for wire in ('ps/M_AXI_GP0 => ctrl/S00_AXI', 'ctrl/M00_AXI => kernel/s_axi_control',
+                     'kernel/interrupt -> ps/IRQ_F2P', 'ps/FCLK_RESET0_N -> rst/ext_reset_in'):
+            self.assertIn(wire, wires)
+        for i in range(3):   # m_axi_gmem<i> -> data<i> -> HP<i>, in name order
+            self.assertIn(f'kernel/m_axi_gmem{i} => data{i}/S00_AXI', wires)
+            self.assertIn(f'data{i}/M00_AXI => ps/S_AXI_HP{i}', wires)
+            self.assertIn(f'ps/FCLK_CLK0 -> ps/S_AXI_HP{i}_ACLK', wires)
+            self.assertIn(f'ps/FCLK_CLK0 -> data{i}/aclk', wires)
+            self.assertEqual(props[props.index(f'CONFIG.PCW_S_AXI_HP{i}_DATA_WIDTH') + 1], '64')
+        for pin in ('rst/slowest_sync_clk', 'kernel/ap_clk', 'ctrl/aclk', 'ps/M_AXI_GP0_ACLK'):
+            self.assertIn(f'ps/FCLK_CLK0 -> {pin}', wires)
+        hp_used = [props[props.index(f'CONFIG.PCW_USE_S_AXI_HP{i}') + 1] for i in range(4)]
+        self.assertEqual(hp_used, ['1', '1', '1', '0'])
+        self.assertEqual(props[props.index('CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ') + 1], '100.000')
+
+    def test_zynq7030_applies_the_ps_preset_when_there_is_one(self):
+        _, props = self.wire_board('zynq7030', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
+        self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
+        _, props = self.wire_board('zynq7030', [])
+        self.assertNotIn('CONFIG.PCW_X', props)
+
+    def test_zynq7030_rejects_more_masters_than_hp_ports(self):
+        with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):
+            self.wire_board('zynq7030', [f'm_axi_gmem{i}' for i in range(5)])
 
     def execute_vivado(self, progress='100%'):
         with tempfile.TemporaryDirectory() as tmp:

@@ -147,6 +147,9 @@ class FpgaShellTests(unittest.TestCase):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
                                  ['justounetsimple', 'justounetsimple_opt'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
+        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
+                         ['--board', '--clock-ns'])
 
     def test_tab_completes_a_kernels_bitstream_runs(self):
         with tempfile.TemporaryDirectory() as tmp:

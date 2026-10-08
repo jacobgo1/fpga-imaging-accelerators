@@ -21,7 +21,7 @@ newest bitstream build.
                              python3 main.py native --kernel KERNEL
   fpga_build KERNEL [ARGS]   python3 main.py bitstream --kernel KERNEL --skip-cosim [ARGS]
                              (C++ -> IP -> block design -> .bit, then the PYNQ zip;
-                             e.g. ARGS = --clock-ns 5)
+                             ARGS e.g. --board zynq7030 (default zcu104), --clock-ns 5)
   fpga_runs KERNEL           the runs in build/KERNEL/ with a bitstream, newest last
   fpga_pynq KERNEL [RUN]     python3 main.py pynq --kernel KERNEL [--run RUN]
                              (re-make the PYNQ folder and zip of an existing build)
@@ -96,15 +96,22 @@ fpga_zip() {
 # ---- Tab completion (bash) ----
 # fpga_test / fpga_build / fpga_runs KERNEL, fpga_pynq KERNEL RUN, fpga_zip DIR.
 _fpga_complete() {
-    local cur="${COMP_WORDS[COMP_CWORD]}" words=""
+    local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" words=""
     case "${COMP_WORDS[0]}:$COMP_CWORD" in
         fpga_test:1|fpga_build:1|fpga_runs:1|fpga_pynq:1)
             words="$(fpga_kernels)" ;;
         fpga_pynq:2)
             local run
             for run in $(fpga_runs "${COMP_WORDS[1]}" 2>/dev/null); do words="$words ${run##*/}"; done ;;
-        fpga_build:2)
-            words="--clock-ns" ;;
+        fpga_build:*)
+            if [ "$prev" = "--board" ]; then
+                local script
+                for script in "$FPGA_ROOT"/boards/*/system.tcl; do
+                    [ -f "$script" ] && words="$words $(basename "$(dirname "$script")")"
+                done
+            elif [ "$prev" != "--clock-ns" ]; then
+                words="--board --clock-ns"
+            fi ;;
     esac
     # shellcheck disable=SC2207
     COMPREPLY=($(compgen -W "$words" -- "$cur"))
