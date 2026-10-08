@@ -10,8 +10,8 @@ For every checkpoint, writes into OUT/<model>/:
 
 and OUT/README.md, a table of all models. Tensors are written exactly as trained:
 BatchNorm stays separate (weight, bias, running_mean, running_var, eps 1e-5);
-fold it into the preceding convolution in the kernel, as export_justoliunet.py
-does for justoliunet_bn. BatchNorm's num_batches_tracked counter is left out.
+fold it into the preceding convolution in the kernel, or use quantize_weights.py,
+which does that. BatchNorm's num_batches_tracked counter is left out.
 
     python tools/extract_weights.py                       # every .pt under weights/
     python tools/extract_weights.py weights/fp32/sp_unet_small/*.pt

@@ -4,21 +4,24 @@
 #     fpga_help
 #
 # Each command is a short wrapper; fpga_help shows what it runs, so you can
-# also type that directly.
+# also type that directly. Tab completes kernel names (and runs, for fpga_pynq).
 
 FPGA_ROOT="${FPGA_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 FPGA_PYTHON="${FPGA_PYTHON:-python3}"
 
 fpga_help() {
     cat <<'EOF'
-FPGA commands. KERNEL is a folder name in src/hls/ (e.g. justounetsimple_opt).
-RUN is a folder in build/KERNEL/ and defaults to the newest bitstream build.
+FPGA commands. KERNEL is a folder name in src/hls/ (e.g. justounetsimple_opt):
+press Tab to complete it. RUN is a folder in build/KERNEL/ and defaults to the
+newest bitstream build.
 
+  fpga_kernels               the kernels there are (python3 main.py kernels for their files)
   fpga_env [settings64.sh]   put Vivado and Vitis HLS on PATH (sources settings64.sh)
   fpga_test KERNEL           python3 -m unittest discover -s tests
                              python3 main.py native --kernel KERNEL
-  fpga_build KERNEL          python3 main.py bitstream --kernel KERNEL --skip-cosim
-                             (C++ -> IP -> block design -> .bit, then the PYNQ zip)
+  fpga_build KERNEL [ARGS]   python3 main.py bitstream --kernel KERNEL --skip-cosim [ARGS]
+                             (C++ -> IP -> block design -> .bit, then the PYNQ zip;
+                             e.g. ARGS = --clock-ns 5)
   fpga_runs KERNEL           the runs in build/KERNEL/ with a bitstream, newest last
   fpga_pynq KERNEL [RUN]     python3 main.py pynq --kernel KERNEL [--run RUN]
                              (re-make the PYNQ folder and zip of an existing build)
@@ -29,6 +32,14 @@ EOF
 }
 
 _fpga_fail() { echo "fpga: $*" >&2; return 1; }
+
+# The kernels: one folder each in src/hls/.
+fpga_kernels() {
+    local dir
+    for dir in "$FPGA_ROOT"/src/hls/*/; do
+        [ -d "$dir" ] && basename "$dir"
+    done
+}
 
 # Run folders are named by date, so glob order is time order.
 fpga_runs() {
@@ -81,3 +92,26 @@ fpga_zip() {
         && "$FPGA_PYTHON" -m zipfile -c "$(basename "$dir").zip" "$(basename "$dir")") || return
     echo "$dir.zip: upload it next to the notebook"
 }
+
+# ---- Tab completion (bash) ----
+# fpga_test / fpga_build / fpga_runs KERNEL, fpga_pynq KERNEL RUN, fpga_zip DIR.
+_fpga_complete() {
+    local cur="${COMP_WORDS[COMP_CWORD]}" words=""
+    case "${COMP_WORDS[0]}:$COMP_CWORD" in
+        fpga_test:1|fpga_build:1|fpga_runs:1|fpga_pynq:1)
+            words="$(fpga_kernels)" ;;
+        fpga_pynq:2)
+            local run
+            for run in $(fpga_runs "${COMP_WORDS[1]}" 2>/dev/null); do words="$words ${run##*/}"; done ;;
+        fpga_build:2)
+            words="--clock-ns" ;;
+    esac
+    # shellcheck disable=SC2207
+    COMPREPLY=($(compgen -W "$words" -- "$cur"))
+}
+
+if [ -n "${BASH_VERSION:-}" ]; then
+    complete -F _fpga_complete fpga_test fpga_build fpga_runs fpga_pynq
+    complete -d fpga_zip
+    complete -f fpga_env
+fi

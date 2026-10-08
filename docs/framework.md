@@ -113,8 +113,11 @@ source fpga.sh       # once per terminal on the lab server
 fpga_help            # every command, and the main.py line it runs
 ```
 
+Tab completes `K` (the kernel names), and for `fpga_pynq` also `RUN`.
+
 | Goal | Command |
 | --- | --- |
+| Which kernels there are | `fpga_kernels` |
 | Tools on PATH | `fpga_env` |
 | Test on the PC/server, no FPGA | `fpga_test K` |
 | Bitstream + board zip | `fpga_build K` |
@@ -134,6 +137,7 @@ preparing images), described in [tools/README.md](../tools/README.md).
    register names and buffer shapes), plus an `include.txt` if it needs repo files.
 4. `fpga_build K`, upload `K_pynq.zip`, and run the notebook.
 
-The first accelerator, `justoliunet`, matched the PC reference on every pixel
-of a real capture (`aegean/overview.png`). The JTAG/xsdb scripts used for that
-run were removed. They're under the git tag `pre-simplify`.
+The first accelerator, `justoliunet` (a per-pixel 1D network, since removed;
+it is in the git history), matched the PC reference on every pixel of a real
+capture (`aegean/overview.png`). The JTAG/xsdb scripts used for that run are
+under the git tag `pre-simplify`.

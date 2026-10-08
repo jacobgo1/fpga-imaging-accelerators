@@ -12,8 +12,8 @@ void conv2d_padded_golden(data_t din[H][W][IN_CH],
                            data_t weight[OUT_CH][IN_CH][K][K],
                            data_t bias[OUT_CH],
                            data_t dout[H + 2*PAD - K + 1][W + 2*PAD - K + 1][OUT_CH]) {
-    // static: at realistic image sizes (see half_unet_golden.hpp,
-    // justounet2d_golden.hpp) this is tens to hundreds of MB -- far past
+    // static: at realistic image sizes (see justounet2d_golden.hpp)
+    // this is tens to hundreds of MB -- far past
     // what belongs on the call stack. A plain local here passed silently
     // for every small testbench this was exercised with until a
     // real-sized input (hyperspectral tiles, hundreds of rows/cols/bands)

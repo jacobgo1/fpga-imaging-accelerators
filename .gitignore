@@ -1,6 +1,4 @@
 /build/
-# Output of the old layout, before every run lived in build/ alone
-/reports/
 /artifacts/
 __pycache__/
 *.py[cod]

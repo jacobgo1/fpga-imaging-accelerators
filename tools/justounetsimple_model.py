@@ -9,9 +9,10 @@ classify_fixed  the optimized kernel (justounetsimple_opt) bit for bit: the raw 
                 (preprocess_fixed), cuts the image into patches like the notebook
                 (forward_patch_fixed per patch) and puts the scores back.
 
-The kernel does no preprocessing: the notebook on the board does it, the same way as
-here. The same band selection and z-score as justoliunet is assumed (mu_sd.txt, bands
-0-7 and 118-119 dropped).
+The golden kernel (justounetsimple) does no preprocessing: its notebook does it, the
+same way as preprocess here. justounetsimple_opt does it in hardware, in integers, as
+preprocess_fixed here. The band selection and z-score are training's
+(hypso-onboard-segmentation: mu_sd.txt, bands 0-7 and 118-119 dropped).
 """
 from pathlib import Path
 import re

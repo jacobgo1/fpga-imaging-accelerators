@@ -3,21 +3,5 @@
   "clock_ns": 10.0,
   "jobs": 10,
   "board_script": "boards/zcu104/system.tcl",
-  "kernels": {
-    "relu_golden":             { "top": "relu_golden_top" },
-    "conv2d_golden":           { "top": "conv2d_golden_top" },
-    "conv2d_padded_golden":    { "top": "conv2d_padded_golden_top" },
-    "padding_golden":          { "top": "padding_golden_top" },
-    "maxpool_golden":          { "top": "maxpool_golden_top" },
-    "add_golden":              { "top": "add_golden_top" },
-    "conv1x1_golden":          { "top": "conv1x1_golden_top" },
-    "nearest_neighbor_golden": { "top": "nearest_neighbor_golden_top" },
-    "batchnorm_golden":        { "top": "batchnorm_golden_top" },
-    "conv1d_golden":           { "top": "conv1d_golden_top" },
-    "relu1d_golden":           { "top": "relu1d_golden_top" },
-    "maxpool1d_golden":        { "top": "maxpool1d_golden_top" },
-    "flatten_golden":          { "top": "flatten_golden_top" },
-    "dense_golden":            { "top": "dense_golden_top" },
-    "justounet2d_golden":      { "top": "justounet2d_golden_top" }
-  }
+  "kernels": {}
 }

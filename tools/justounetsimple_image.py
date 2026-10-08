@@ -26,7 +26,36 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import justounetsimple_model as model
 import patching
-from justoliunet_image import DEFAULT_RGB, capture_rgb, load_capture, remap_labels
+
+# Label remapping from hypso-onboard-segmentation (prepare_hypso_dataset.py remap_labels):
+# 0 cloud, 1 land, 2 sea; other values are unlabeled.
+RAW_LABEL_TO_CLASS = {1: 0, 2: 1, 3: 2, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0}
+DEFAULT_RGB = [56, 67, 86]  # HYPSO-2 r/g/b bands, as in the capture -meta.json files
+
+
+def load_capture(path):
+    """A raw HYPSO-2 capture's L1a cube, read as prepare_hypso_dataset.py does."""
+    try:
+        from hypso import Hypso2
+    except ImportError:
+        raise SystemExit('reading .nc captures needs the hypso package, as in training: pip install hypso')
+    return Hypso2(path=Path(path)).l1a_cube.to_numpy().astype(np.float32)
+
+
+def capture_rgb(nc_path):
+    """The capture's own RGB band choice, from the -meta.json beside it."""
+    for meta_path in Path(nc_path).parent.glob('*-meta.json'):
+        meta = json.loads(meta_path.read_text())
+        if all(f'{c}_band' in meta for c in 'rgb'):
+            return [int(meta[f'{c}_band']) for c in 'rgb']
+    return None
+
+
+def remap_labels(raw):
+    labels = raw.astype(np.int64)
+    for value, cls in RAW_LABEL_TO_CLASS.items():
+        labels[raw == value] = cls
+    return labels
 
 
 def reference_scores(cube, kept, mean, inv_std, layers):

@@ -40,8 +40,8 @@ Python 3.10+, and g++ for `native`.
 ## Add a kernel
 
 ```text
-src/hls/conv2d/conv2d.cpp      synthesizable C++, top function named conv2d
-tb/conv2d/conv2d_tb.cpp        main() that returns nonzero on mismatch
+src/hls/NAME/NAME.cpp          synthesizable C++, top function named NAME
+tb/NAME/NAME_tb.cpp            main() that returns nonzero on mismatch
 ```
 
 All `.cpp` files in `src/hls/NAME/` are the kernel, and all in `tb/NAME/` are the
@@ -87,8 +87,10 @@ main.py            the build: python3 main.py STAGE --kernel KERNEL
 fpga.sh            short commands for the lab server
 config/            project.json, optional HLS directives per kernel
 src/hls/KERNEL/    synthesizable C++, one folder per kernel
-src/common/        C++ shared between kernels
-tb/KERNEL/         self-checking testbenches;  tb/data/: test vectors
+src/golden/        reference layers and models: plain loops, what is computed
+src/optimized/     streaming, fixed-point building blocks: how it is computed fast
+src/common/        C++ shared between kernels (hls::stream for plain g++)
+tb/KERNEL/         self-checking testbenches
 scripts/           hls.tcl (Vitis HLS), vivado.tcl (Vivado)
 boards/zcu104/     system.tcl: the block design around the kernel
 software/pynq/     a notebook per kernel, packed into the zip for the board

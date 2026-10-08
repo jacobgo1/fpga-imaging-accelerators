@@ -49,15 +49,17 @@ class QuantizeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout
 
-    def test_folding_matches_the_justoliunet_exporter(self):
-        export = load_module('export_justoliunet', ROOT / 'tools/export_justoliunet.py')
-        path = checkpoint('justoliunet_bn')
-        convs, _ = export.load_layers(path)
-        _, _, tensors = self.tool.ew.load(path)
+    def test_folding_is_the_batchnorm_formula(self):
+        # conv then BN = conv with w' = w * s and b' = (b - mean) * s + beta, s = gamma / sqrt(var + eps)
+        _, _, tensors = self.tool.ew.load(checkpoint('justoliunet_bn'))
         folded, pairs = self.tool.fold_batchnorm(tensors)
         self.assertEqual(pairs, {'conv1': 'bn1'})
-        np.testing.assert_allclose(folded['conv1.weight'], convs[0][0], rtol=1e-6, atol=1e-7)
-        np.testing.assert_allclose(folded['conv1.bias'], convs[0][1], rtol=1e-6, atol=1e-7)
+        s = tensors['bn1.weight'] / np.sqrt(tensors['bn1.running_var'] + 1e-5)
+        w = tensors['conv1.weight']
+        np.testing.assert_allclose(folded['conv1.weight'], w * s.reshape((-1,) + (1,) * (w.ndim - 1)),
+                                   rtol=1e-6, atol=1e-7)
+        b = (tensors.get('conv1.bias', 0.0) - tensors['bn1.running_mean']) * s + tensors['bn1.bias']
+        np.testing.assert_allclose(folded['conv1.bias'], b, rtol=1e-6, atol=1e-7)
 
     def test_every_batchnorm_is_folded_in_every_model(self):
         for path in CHECKPOINTS:

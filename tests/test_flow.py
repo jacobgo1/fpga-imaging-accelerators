@@ -35,7 +35,13 @@ class KernelTests(unittest.TestCase):
         self.assertEqual(kernel['directives'], ROOT / 'config/matmul.tcl')
 
     def test_config_can_rename_the_top_function(self):
-        self.assertEqual(flow.find_kernel('relu_golden')['top'], 'relu_golden_top')
+        saved = dict(flow.CONFIG['kernels'])
+        flow.CONFIG['kernels']['matmul'] = {'top': 'matmul_top'}
+        try:
+            self.assertEqual(flow.find_kernel('matmul')['top'], 'matmul_top')
+        finally:
+            flow.CONFIG['kernels'].clear()
+            flow.CONFIG['kernels'].update(saved)
 
     def test_unknown_or_escaping_kernel_is_rejected(self):
         for name in ('no_such_kernel', '../hls', ''):
@@ -46,7 +52,7 @@ class KernelTests(unittest.TestCase):
         result = cli('kernels')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('matmul\n  top        matmul', result.stdout)
-        self.assertIn('top        relu_golden_top', result.stdout)
+        self.assertIn('justounetsimple_opt\n  top        justounetsimple_opt', result.stdout)
 
     def test_a_stage_needs_a_kernel(self):
         result = cli('csim')

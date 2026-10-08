@@ -57,7 +57,7 @@
 // silently misbehave, via the static_asserts below.
 //
 // Intermediate feature maps are "static": large ones don't belong on the
-// call stack (see half_unet_golden.hpp).
+// call stack (see conv2d_padded_golden.hpp).
 template<typename data_t, int H, int W, int IN_CH, int BASE_CH, int OUT_CH, int K>
 void justounet2d_golden(
     data_t din[H][W][IN_CH],
