@@ -81,6 +81,10 @@ those are the user's, on the lab server, every time.
   (ping-pong halves, line buffers).
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
+- Two int8 multiplies fit in one DSP when they share an operand
+  (`src/optimized/conv3x3_packed.hpp`, AMD WP486): it needs activations in
+  -127..127 and the UltraScale+ DSP48E2, so not on the Zynq-7030. Check the DSP
+  count in the csynth report: about 864 for conv1 means the packing mapped.
 - Generated files must stay in sync:
   - `src/hls/justounetsimple_opt/justounetsimple_prep.hpp` comes from
     `python tools/justounetsimple_model.py`, and a test checks it;

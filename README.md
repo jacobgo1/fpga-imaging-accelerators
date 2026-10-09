@@ -74,8 +74,11 @@ build/KERNEL/latest/
 
 [config/project.json](config/project.json): the `boards` (each with its FPGA
 part and board script: `zcu104`, the default, and `zynq7030`, HYPSO-2's FPGA;
-pick one with `--board`), `clock_ns`, `jobs` (Vivado threads), and
-top-function names. Use the same AMD release everywhere you build.
+pick one with `--board`), `clock_ns`, `jobs`, and top-function names.
+`jobs` is how many Vivado runs go at once (the block design's IPs synthesize in
+parallel), each with up to 8 threads (Vivado's limit). `"nproc"`, the default,
+means every core the build may use, as `nproc` counts them; a number sets it,
+e.g. to leave cores for others on a shared server. Use the same AMD release everywhere you build.
 On Linux, `fpga_env` sources Vivado's `settings64.sh`. On Windows, run the
 `settings64.bat` files in **cmd.exe** and build from that same window (calling a
 `.bat` from PowerShell doesn't keep its PATH). `main.py` uses `vitis-run` if it's

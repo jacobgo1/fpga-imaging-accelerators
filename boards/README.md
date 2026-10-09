@@ -20,13 +20,15 @@ default end in `-BOARD` (`build/K/DATE-bitstream-zynq7030/`).
 
 - `s_axi_control` (the kernel's AXI-Lite registers) on the processor's
   general-purpose master port, through a SmartConnect;
-- each `m_axi` port on its own high-performance (HP) port to DDR, through its own
-  SmartConnect, in name order (`gmem0` -> HP0, ...): at most 4;
+- each `m_axi` port on its own port to DDR, through its own SmartConnect, in
+  name order (`gmem0` -> HP0, ...): on the ZCU104 the four high-performance (HP)
+  ports, then the two HPC ports, at most 6; on the 7030 the four HP ports;
 - one clock from the processor at the HLS target (`clock_ns`), checked to be no
   faster than that target; a `proc_sys_reset` for the reset; the interrupt.
 
 So a kernel works on any board as long as it uses that interface: AXI-Lite
-control and at most four `m_axi` ports. An AXI-Stream kernel with a DMA, or one
+control and no more `m_axi` ports than the board has ports to DDR (6 on the
+ZCU104, 4 on the 7030). An AXI-Stream kernel with a DMA, or one
 with its own pins, would need the board script extended.
 
 ## What differs: the chip
@@ -41,10 +43,11 @@ with its own pins, would need the board script extended.
 | Processor | 4 × Cortex-A53 | 2 × Cortex-A9 |
 
 A kernel sized for one does not automatically fit the other.
-`justounetsimple_opt` uses about 1,100 multipliers and UltraRAM: it is a ZCU104
-design. On the 7030 the same code needs fewer bands per cycle in conv1 (e.g. 4
-instead of 16, a quarter of the multipliers) and its patch buffer in block RAM
-(3.7 Mb fits). `matmul` and the golden `justounetsimple` are small enough that
+`justounetsimple_opt` uses about 1,100 DSPs, UltraRAM, five `m_axi` ports and
+two multiplies per DSP in conv1 (which needs the UltraScale+ DSP48E2's 27-bit
+input): it is a ZCU104 design. On the 7030 the same model needs fewer bands per
+cycle in conv1 (e.g. 4 instead of 32, one multiply per DSP: 216 DSPs), at most
+four ports, and its patch buffer in block RAM. `matmul` and the golden `justounetsimple` are small enough that
 they should fit either chip as they are (not yet built for the 7030).
 
 ## The Zynq-7030 processor configuration

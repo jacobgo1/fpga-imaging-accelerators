@@ -2,14 +2,20 @@
 //
 // A small raw cube (40 x 50 pixels x 120 bands, uint16 like a capture): 2 x 2
 // patches, the bottom and right ones partly outside the image, so the edge
-// repetition is tested too. Two references, patch by patch, cut out the way
-// the notebook used to (last row and column repeated):
+// repetition is tested too. Three checks, patch by patch, cut out the way the
+// notebook used to (last row and column repeated):
 //  - exact: the kernel's integer arithmetic written as plain loops -- the
-//    integer z-score, then the four layers. Integer sums do not depend on the
-//    order they are added in, so the kernel must match it bit for bit.
-//  - golden: the float kernel (src/hls/justounetsimple/) on the float z-score.
-//    The difference is the fixed-point rounding; it must stay small.
-// The dropped bands (raw 0-7 and 118-119) hold 65535: they must not count.
+//    integer z-score, then the four layers, with one multiply per product.
+//    Integer sums do not depend on the order they are added in, so the kernel
+//    (two products per multiply in conv1) must match it bit for bit, and its
+//    class must be the first highest of these scores.
+//  - the integer z-score within one unit of the float one (saturated alike).
+//  - golden: the float kernel (src/hls/justounetsimple/) on the same int8
+//    input, as floats. The difference is the rounding between the layers; it
+//    must stay small.
+// The z-scores are spread over -5 .. 5, so a fifth of the inputs saturate at
+// +-127, the largest products conv1's packing has to hold. The dropped bands
+// (raw 0-7 and 118-119) hold 65535: they must not count.
 #include "justounetsimple_opt.hpp"
 #include "justounetsimple_prep.hpp"
 #include "../../src/hls/justounetsimple/justounetsimple.cpp"
@@ -22,6 +28,7 @@ constexpr int IMG_H = 40, IMG_W = 50;  // matches the m_axi depth pragmas
 constexpr int H = JOPT_H, W = JOPT_W, IC = JOPT_IN_CH, B = JOPT_BASE_CH, OC = JOPT_OUT_CH;
 constexpr int RAW = JOPT_RAW_BANDS, PB = JOPT_PORT_BANDS, FIRST = justounetsimple_prep::FIRST_BAND;
 constexpr float SCORE_TOLERANCE = 0.02f;   // fixed point against float, in score units
+constexpr int LANES = 4;                   // a pixel of dout: 3 scores and the class
 static_assert(H == JUNETS_H && W == JUNETS_W && IC == JUNETS_IN_CH && OC == JUNETS_OUT_CH,
               "the optimized and golden kernels must have the same geometry");
 
@@ -101,7 +108,7 @@ static void exact_reference(const int32_t x[H][W][IC], int32_t scores[H][W][OC])
                                     : (c4[y][xx][o] + (int64_t(1) << (shift - 1))) >> shift);
 }
 
-// The largest |sum| an int16 input can make in conv1: 32767 * sum of |q|.
+// The largest |sum| conv1's int8 input can make: 127 * sum of |q|.
 static double worst_conv1_sum() {
     double worst = 0;
     for (int o = 0; o < B; o++) {
@@ -109,7 +116,7 @@ static double worst_conv1_sum() {
         for (int i = 0; i < IC; i++)
             for (int ki = 0; ki < 3; ki++)
                 for (int kj = 0; kj < 3; kj++)
-                    s += 32767.0 * std::fabs(q::conv1_weight[o][i][ki][kj]);
+                    s += prep::IN_MAX * std::fabs(q::conv1_weight[o][i][ki][kj]);
         if (s > worst) worst = s;
     }
     return worst;
@@ -118,7 +125,7 @@ static double worst_conv1_sum() {
 // ---------------------------------------------------------------- test
 static uint16_t cube[IMG_H][IMG_W][RAW];
 static jopt_raw_t din[IMG_H * IMG_W * RAW / PB];   // the same cube, as the kernel's words
-static int32_t dout[IMG_H][IMG_W][OC];
+static jopt_out_t dout[IMG_H * IMG_W];
 static int32_t exact[IMG_H][IMG_W][OC];
 static float golden[IMG_H][IMG_W][OC];
 
@@ -129,9 +136,9 @@ int main()
         return 1;
     }
 
-    // Raw values whose z-score is uniform in -3 .. 3, roughly like a capture.
+    // Raw values whose z-score is uniform in -5 .. 5.
     std::mt19937 rng(1);
-    std::uniform_real_distribution<float> dist(-3.0f, 3.0f);
+    std::uniform_real_distribution<float> dist(-5.0f, 5.0f);
     for (int y = 0; y < IMG_H; y++)
         for (int x = 0; x < IMG_W; x++)
             for (int r = 0; r < RAW; r++) {
@@ -146,6 +153,7 @@ int main()
             }
 
     // The references, patch by patch.
+    int z_far = 0;
     static int32_t xq[H][W][IC];
     static float xf[H][W][IC];
     static int32_t ps[H][W][OC];
@@ -159,8 +167,12 @@ int main()
                     for (int k = 0; k < IC; k++) {
                         const uint16_t dn = cube[yy][xx][FIRST + k];
                         const int64_t s = ((int64_t)dn * prep::A[k] + prep::B[k]) >> prep::FRAC;
-                        xq[y][x][k] = (int32_t)(s > 32767 ? 32767 : s < -32768 ? -32768 : s);
-                        xf[y][x][k] = ((float)dn - prep::MEAN[k]) * prep::INV_STD[k];
+                        xq[y][x][k] = (int32_t)(s > prep::IN_MAX ? prep::IN_MAX : s < -prep::IN_MAX ? -prep::IN_MAX : s);
+                        xf[y][x][k] = std::ldexp((float)xq[y][x][k], -JOPT_IN_FRAC);
+                        const float z = ((float)dn - prep::MEAN[k]) * prep::INV_STD[k];
+                        const long zr = std::lround(std::ldexp(z, JOPT_IN_FRAC));
+                        const long zs = zr > prep::IN_MAX ? prep::IN_MAX : zr < -prep::IN_MAX ? -prep::IN_MAX : zr;
+                        if (std::labs(zs - xq[y][x][k]) > 1) z_far++;
                     }
                 }
             exact_reference(xq, ps);
@@ -173,28 +185,40 @@ int main()
                     }
         }
 
-    justounetsimple_opt(din, din, &dout[0][0][0], IMG_H, IMG_W);
+    justounetsimple_opt(din, din, din, din, dout, IMG_H, IMG_W);
 
     int errors = 0, far = 0;
     float worst = 0;
-    const int32_t *a = &dout[0][0][0], *e = &exact[0][0][0];
-    const float *g = &golden[0][0][0];
-    constexpr int count = IMG_H * IMG_W * OC;
     const float out_scale = std::ldexp(1.0f, -JOPT_OUT_FRAC);
-    for (int i = 0; i < count; i++) {
-        if (a[i] != e[i]) {
-            if (errors < 5) printf("mismatch at [%d]: got %d, exact reference %d\n", i, a[i], e[i]);
-            errors++;
+    for (int y = 0; y < IMG_H; y++)
+        for (int x = 0; x < IMG_W; x++) {
+            const jopt_out_t& a = dout[y * IMG_W + x];
+            const int32_t *e = exact[y][x];
+            int best = 0;
+            for (int o = 1; o < OC; o++)
+                if (e[o] > e[best]) best = o;
+            for (int o = 0; o < LANES; o++) {
+                const int32_t want = o < OC ? e[o] : best;
+                if (a[o] != want) {
+                    if (errors < 5) printf("mismatch at (%d, %d) lane %d: got %d, exact reference %d\n",
+                                           y, x, o, a[o], want);
+                    errors++;
+                }
+            }
+            for (int o = 0; o < OC; o++) {
+                const float diff = std::fabs(a[o] * out_scale - golden[y][x][o]);
+                if (diff > worst) worst = diff;
+                if (diff > SCORE_TOLERANCE) far++;
+            }
         }
-        const float diff = std::fabs(a[i] * out_scale - g[i]);
-        if (diff > worst) worst = diff;
-        if (diff > SCORE_TOLERANCE) far++;
-    }
-    if (errors == 0 && far == 0)
+    constexpr int count = IMG_H * IMG_W * LANES;
+    const bool pass = errors == 0 && far == 0 && z_far == 0;
+    if (pass)
         printf("PASS  (%d x %d raw image, %d outputs bit-exact; against float: worst difference %g)\n",
                IMG_H, IMG_W, count, (double)worst);
     else
-        printf("FAIL  (%d mismatches with the exact reference, %d outputs further than %g from float)\n",
-               errors, far, (double)SCORE_TOLERANCE);
-    return errors == 0 && far == 0 ? 0 : 1;
+        printf("FAIL  (%d mismatches with the exact reference, %d scores further than %g from float, "
+               "%d z-scores more than one unit from float)\n",
+               errors, far, (double)SCORE_TOLERANCE, z_far);
+    return pass ? 0 : 1;
 }

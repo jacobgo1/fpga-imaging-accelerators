@@ -8,7 +8,10 @@ Writes, into --out:
     cube.npy               the raw L1a cube (H x W x 120; uint16 when the values are raw
                            counts), what the board classifies
     reference_scores.npy   the numpy model's scores (H x W x 3) for the same 32 x 32 patches,
-                           which the notebook checks the FPGA against
+                           in float: what the model computes
+    reference_fixed.npy    what justounetsimple_opt writes, bit for bit (H x W x 4 int32: the
+                           scores * 2^16, then the class), from the integer numpy model;
+                           only for raw counts (uint16). Its notebook checks the FPGA against it
     labels.npy             the labels, remapped as in training (if --labels)
     meta.json              where it came from, and the RGB bands for the picture
 
@@ -112,6 +115,10 @@ def prepare(args):
     print(f'{cube.shape[0]} x {cube.shape[1]} pixels, {patching.count(cube.shape)} patches; '
           'running the numpy model for the reference ...')
     np.save(out / 'reference_scores.npy', reference_scores(cube, kept, mean, inv_std, layers))
+    if cube.dtype == np.uint16:
+        print('... and the integer model, for justounetsimple_opt ...')
+        fixed = model.classify_fixed(cube, model.load_quantized(args.weights), model.prep_constants(args.mu_sd))
+        np.save(out / 'reference_fixed.npy', model.with_class(fixed))
     (out / 'meta.json').write_text(json.dumps({
         'cube': str(args.cube), 'crop': [row, col, height, width],
         'rgb_bands': args.rgb or rgb_default or DEFAULT_RGB}, indent=2))

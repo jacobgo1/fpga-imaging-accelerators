@@ -134,6 +134,15 @@ def native(kernel, run):
 
 # ------------------------------------------------------------------ 4b. Vitis HLS and Vivado
 
+def job_count(setting=None):
+    """config "jobs": a number, or "nproc": every core this process may use, as `nproc` counts
+    them (the CPUs it is allowed on, not just the CPUs the machine has)."""
+    setting = CONFIG['jobs'] if setting is None else setting
+    if setting == 'nproc':
+        return len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count() or 1
+    return int(setting)
+
+
 def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
     """settings.tcl: everything the Tcl scripts need to know, as the Tcl array cfg(...)."""
     target = CONFIG['boards'][board or CONFIG['board']]
@@ -145,7 +154,7 @@ def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
 
     settings = {
         'root': ROOT, 'run_dir': run, 'stage': stage, 'top': kernel['top'],
-        'board': board or CONFIG['board'], 'part': target['part'], 'clock_ns': clock_ns, 'jobs': CONFIG['jobs'],
+        'board': board or CONFIG['board'], 'part': target['part'], 'clock_ns': clock_ns, 'jobs': job_count(),
         'skip_cosim': int(skip_cosim), 'board_script': ROOT / target['script'],
         'directives': kernel['directives'] or '',
     }
@@ -282,7 +291,7 @@ def main():
     run = new_run_folder(args.kernel, args.stage, args.board)
     part = CONFIG['boards'][args.board]['part']
     print(f'{args.stage} {args.kernel}: {args.board} ({part}), clock {args.clock_ns} ns, '
-          f'in {show(run)}/')
+          f'{job_count()} jobs, in {show(run)}/')
     commit = subprocess.run(['git', 'describe', '--always', '--dirty'], cwd=ROOT, capture_output=True,
                             text=True).stdout.strip() if shutil.which('git') else None
     record = {'kernel': args.kernel, 'stage': args.stage, 'git': commit, 'board': args.board, 'part': part,

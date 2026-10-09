@@ -11,6 +11,6 @@
     }
   },
   "clock_ns": 10.0,
-  "jobs": 10,
+  "jobs": "nproc",
   "kernels": {}
 }

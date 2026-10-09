@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import os
 import pathlib
 import shutil
 import subprocess
@@ -112,6 +113,13 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(list(sources), [(ROOT / 'src/hls/matmul/matmul.cpp').as_posix()])
             self.assertEqual(tcl.getvar('cfg(board)'), 'zcu104')
             self.assertEqual(tcl.getvar('cfg(board_script)'), (ROOT / 'boards/zcu104/system.tcl').as_posix())
+            self.assertEqual(int(tcl.getvar('cfg(jobs)')), flow.job_count())
+
+    def test_jobs_nproc_is_every_core_this_process_may_use(self):
+        cores = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+        self.assertEqual(flow.job_count('nproc'), cores)
+        self.assertEqual(flow.job_count(3), 3)
+        self.assertEqual(flow.job_count('4'), 4)
 
     def test_board_picks_the_part_and_the_board_script(self):
         with tempfile.TemporaryDirectory() as tmp:

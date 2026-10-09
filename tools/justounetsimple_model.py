@@ -8,6 +8,7 @@ classify_fixed  the optimized kernel (justounetsimple_opt) bit for bit: the raw 
                 cube in, int32 scores out. It preprocesses in integers itself
                 (preprocess_fixed), cuts the image into patches like the notebook
                 (forward_patch_fixed per patch) and puts the scores back.
+                with_class adds the class, as the kernel writes it.
 
 The golden kernel (justounetsimple) does no preprocessing: its notebook does it, the
 same way as preprocess here. justounetsimple_opt does it in hardware, in integers, as
@@ -25,10 +26,15 @@ MU_SD = ROOT / 'mu_sd.txt'
 RAW_BANDS = 120
 DROPPED_BANDS = [0, 1, 2, 3, 4, 5, 6, 7, 118, 119]
 # justounetsimple_opt's fixed-point formats (JOPT_*_FRAC in justounetsimple_opt.hpp):
-# its input is x * 2^IN_FRAC as int16, its activations have ACT_FRAC fraction bits,
-# its scores are int32 with OUT_FRAC. Its z-score is (dn * A + B) >> PREP_FRAC
-# (prep_constants), written into justounetsimple_prep.hpp by `python tools/justounetsimple_model.py`.
-IN_FRAC, ACT_FRAC, OUT_FRAC, PREP_FRAC = 11, 11, 16, 16
+# its input is x * 2^IN_FRAC as int8, saturated at +-IN_MAX (z-scores -3.97 .. 3.97;
+# never -128, so two products can share a DSP, see src/optimized/conv3x3_packed.hpp),
+# its activations have ACT_FRAC fraction bits (int16), its scores are int32 with
+# OUT_FRAC. Its z-score is (dn * A + B) >> PREP_FRAC (prep_constants), written into
+# justounetsimple_prep.hpp by `python tools/justounetsimple_model.py`.
+# On the aegean capture, int8 input changes 0.04% of the pixels' classes (against the
+# float model) and leaves the accuracy against the labels the same (96.20%).
+IN_FRAC, ACT_FRAC, OUT_FRAC, PREP_FRAC = 5, 11, 16, 22
+IN_MAX = 127
 PREP_HEADER = ROOT / 'src/hls/justounetsimple_opt/justounetsimple_prep.hpp'
 
 
@@ -104,9 +110,9 @@ def load_quantized(path=WEIGHTS):
 
 
 def quantize_input(x):
-    """Preprocessed patches (float) -> int16 with IN_FRAC fraction bits, rounded."""
+    """Preprocessed patches (float) -> int8 with IN_FRAC fraction bits, rounded, saturated."""
     return np.clip(np.rint(np.asarray(x, dtype=np.float32) * np.float32(2.0 ** IN_FRAC)),
-                   -32768, 32767).astype(np.int16)
+                   -IN_MAX, IN_MAX).astype(np.int8)
 
 
 def prep_constants(mu_sd=MU_SD):
@@ -129,10 +135,10 @@ def prep_constants(mu_sd=MU_SD):
 
 
 def preprocess_fixed(raw, prep=None):
-    """Raw L1a values (..., 120, integers) -> the kernel's int16 input (..., 110)."""
+    """Raw L1a values (..., 120, integers) -> the kernel's int8 input (..., 110)."""
     a, b = prep if prep is not None else prep_constants()
     dn = np.asarray(raw).astype(np.int64)[..., 8:118]
-    return np.clip((dn * a[:110] + b[:110]) >> PREP_FRAC, -32768, 32767).astype(np.int16)
+    return np.clip((dn * a[:110] + b[:110]) >> PREP_FRAC, -IN_MAX, IN_MAX).astype(np.int8)
 
 
 def _conv_int(x, w, b, bias_shift):
@@ -156,7 +162,7 @@ def _requant_relu(s, shift):
 
 
 def forward_patch_fixed(xq, qlayers):
-    """One H x W x 110 int16 patch -> H x W x 3 int32 scores (score * 2^OUT_FRAC), exactly
+    """One H x W x 110 int8 patch -> H x W x 3 int32 scores (score * 2^OUT_FRAC), exactly
     what justounetsimple_opt computes."""
     (w1, f1, b1, g1), (w2, f2, b2, g2), (w3, f3, b3, g3), (w4, f4, b4, g4) = qlayers
     s1, s2, s3, s4 = IN_FRAC + f1, ACT_FRAC + f2, ACT_FRAC + f3, ACT_FRAC + f4  # fraction bits of the sums
@@ -179,6 +185,12 @@ def classify_fixed(cube, qlayers=None, prep=None):
     return scores
 
 
+def with_class(scores):
+    """H x W x 3 int32 scores -> H x W x 4, what justounetsimple_opt writes: the scores,
+    then the class (their argmax, the first one on a tie)."""
+    return np.concatenate([scores, scores.argmax(-1)[..., None].astype(np.int32)], axis=-1)
+
+
 def prep_header(mu_sd=MU_SD):
     """The text of justounetsimple_prep.hpp."""
     a, b = prep_constants(mu_sd)
@@ -198,7 +210,7 @@ def prep_header(mu_sd=MU_SD):
 // justounetsimple_opt's preprocessing in integers. Kept band k is raw band 8 + k (bands
 // 0-7 and 118-119 are dropped); 110 and 111 are raw bands 118 and 119, zeroed by A = B = 0:
 //     x * 2^IN_FRAC = round((dn - mean) / std * 2^IN_FRAC) = (dn * A[k] + B[k]) >> FRAC
-// (to within one unit), saturated to int16.
+// (to within one unit), saturated to +-IN_MAX (int8, never -128).
 #ifndef JUSTOUNETSIMPLE_PREP_HPP
 #define JUSTOUNETSIMPLE_PREP_HPP
 
@@ -206,6 +218,7 @@ def prep_header(mu_sd=MU_SD):
 
 namespace justounetsimple_prep {{
 constexpr int IN_FRAC = {IN_FRAC};
+constexpr int IN_MAX = {IN_MAX};
 constexpr int FRAC = {PREP_FRAC};
 constexpr int FIRST_BAND = 8;
 

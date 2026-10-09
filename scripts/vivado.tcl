@@ -25,13 +25,24 @@ proc run_and_check {run args} {
 
 if {[catch {
     source settings.tcl
-    set_param general.maxThreads [expr {min(8, $cfg(jobs))}]
+    # Cores: cfg(jobs) runs at once (launch_runs -jobs: the block design's IPs
+    # are synthesized as separate runs, in parallel), each with up to 8 threads,
+    # Vivado's limit. set_param holds only in the process that runs it, and
+    # launch_runs starts each run as a new one: they source threads.tcl first.
+    set threads [expr {min(8, $cfg(jobs))}]
+    set_param general.maxThreads $threads
+    set threads_tcl [file join $cfg(run_dir) threads.tcl]
+    set f [open $threads_tcl w]
+    puts $f "set_param general.maxThreads $threads"
+    close $f
 
     # 1. An empty project, with the kernel's IP in its catalog.
     set ip_repo [file join $cfg(run_dir) hls solution impl ip]
     create_project system [file join $cfg(run_dir) vivado] -part $cfg(part) -force
     set_property ip_repo_paths [list $ip_repo] [current_project]
     update_ip_catalog
+    set_property STEPS.SYNTH_DESIGN.TCL.PRE $threads_tcl [get_runs synth_1]
+    set_property STEPS.INIT_DESIGN.TCL.PRE  $threads_tcl [get_runs impl_1]
 
     # 2. The block design: boards/BOARD/system.tcl. It leaves system_wrapper as the top.
     source $cfg(board_script)

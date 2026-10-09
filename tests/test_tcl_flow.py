@@ -148,9 +148,18 @@ class TclFlowTests(unittest.TestCase):
         smartconnect_inputs = [props[i + 1] for i, p in enumerate(props) if p == 'CONFIG.NUM_SI']
         self.assertEqual(smartconnect_inputs, ['1'] * 4, 'ctrl, then one per master')
 
-    def test_zcu104_rejects_more_masters_than_hp_ports(self):
-        with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):
-            self.wire_zcu104([f'm_axi_gmem{i}' for i in range(5)])
+    def test_zcu104_puts_the_fifth_and_sixth_master_on_the_hpc_ports(self):
+        wires, props = self.wire_zcu104([f'm_axi_gmem{i}' for i in range(6)])
+        for i, port in enumerate(('HP0', 'HP1', 'HP2', 'HP3', 'HPC0', 'HPC1')):
+            self.assertIn(f'kernel/m_axi_gmem{i} => data{i}/S00_AXI', wires)
+            self.assertIn(f'data{i}/M00_AXI => ps/S_AXI_{port}_FPD', wires)
+            self.assertIn(f'ps/pl_clk0 -> ps/saxi{port.lower()}_fpd_aclk', wires)
+        used = [props[props.index(f'CONFIG.PSU__USE__S_AXI_GP{gp}') + 1] for gp in (2, 3, 4, 5, 0, 1)]
+        self.assertEqual(used, ['1'] * 6)
+
+    def test_zcu104_rejects_more_masters_than_ports_to_ddr(self):
+        with self.assertRaisesRegex(tkinter.TclError, '6 ports to DDR'):
+            self.wire_zcu104([f'm_axi_gmem{i}' for i in range(7)])
 
     def test_zcu104_without_masters_has_no_data_path(self):
         wires, props = self.wire_zcu104([])
@@ -207,13 +216,28 @@ class TclFlowTests(unittest.TestCase):
             (run / 'board.tcl').write_text('lappend ::calls board_script\n')
             with self.assertRaises(tkinter.TclError):
                 tcl.eval(script)
-            return int(tcl.getvar('exit_code')), [tcl.splitlist(c)[0] for c in tcl.splitlist(tcl.getvar('calls'))]
+            calls = [list(map(str, tcl.splitlist(c))) for c in tcl.splitlist(tcl.getvar('calls'))]
+            self.threads_tcl = (run / 'threads.tcl').read_text() if (run / 'threads.tcl').exists() else None
+            self.vivado_calls = calls
+            return int(tcl.getvar('exit_code')), [c[0] for c in calls]
 
     def test_vivado_builds_the_design_then_synthesizes_then_implements(self):
         code, calls = self.execute_vivado()
         self.assertEqual(code, 0)
         steps = [c for c in calls if c in ('create_project', 'board_script', 'launch_runs')]
         self.assertEqual(steps, ['create_project', 'board_script', 'launch_runs', 'launch_runs'])
+
+    def test_vivado_runs_get_the_thread_count(self):
+        """launch_runs starts new Vivado processes: set_param must reach them through a pre-step script."""
+        code, _ = self.execute_vivado()
+        self.assertEqual(code, 0)
+        threads = min(8, flow.job_count())
+        self.assertEqual(self.threads_tcl.strip(), f'set_param general.maxThreads {threads}')
+        hooks = {c[1]: c[2] for c in self.vivado_calls if c[0] == 'set_property' and c[1].endswith('.TCL.PRE')}
+        self.assertEqual(set(hooks), {'STEPS.SYNTH_DESIGN.TCL.PRE', 'STEPS.INIT_DESIGN.TCL.PRE'})
+        self.assertTrue(all(path.endswith('threads.tcl') for path in hooks.values()))
+        launches = [c for c in self.vivado_calls if c[0] == 'launch_runs']
+        self.assertTrue(all(c[c.index('-jobs') + 1] == str(flow.job_count()) for c in launches))
 
     def test_failed_synthesis_stops_vivado(self):
         code, calls = self.execute_vivado(progress='0%')

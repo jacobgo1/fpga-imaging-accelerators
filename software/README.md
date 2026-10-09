@@ -57,14 +57,17 @@ python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l
 fpga_zip aegean_unet               # upload aegean_unet.zip next to the notebook
 ```
 
-It writes `cube.npy` (the raw cube, uint16), `reference_scores.npy` (the numpy
-model's scores for the same patches), `labels.npy` and `meta.json`. Reading a
+It writes `cube.npy` (the raw cube, uint16), `reference_scores.npy` (the float
+numpy model's scores for the same patches), `reference_fixed.npy` (what
+`justounetsimple_opt` must write, bit for bit, from the integer model),
+`labels.npy` and `meta.json`. Reading a
 `.nc` capture needs `pip install hypso`, as in training; a raw `(H, W, 120)`
 `.npy` works too. `--crop ROW COL HEIGHT WIDTH` takes a region only. The same
 image folder works for both notebooks.
 
 The `justounetsimple_opt` notebook loads the cube into DDR, self-tests on the
 first patch, classifies the whole image in one start and prints the wall-clock
-and FPGA times, checks the scores against the reference and the labels
+and FPGA times, checks its output bit for bit against `reference_fixed.npy`, its
+classes against the float model's, and against the labels
 (accuracy, IoU per class), and draws the picture, the classes, the labels and
 where they differ.

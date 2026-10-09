@@ -47,15 +47,19 @@ nothing added automatically:
    pl_clk0  ───────────────────────────────┬──► every clock pin below (100 MHz)
    pl_resetn0 ──► rst (proc_sys_reset) ────┴──► every reset pin below
    M_AXI_HPM0_FPD ──► ctrl (SmartConnect)  ──► kernel/s_axi_control   registers
-   S_AXI_HP0_FPD  ◄── data0 (SmartConnect) ◄── kernel/m_axi_gmem0     reads input (bands 0-7 of each chunk)
-   S_AXI_HP1_FPD  ◄── data1 (SmartConnect) ◄── kernel/m_axi_gmem1     reads input (bands 8-15)
-   S_AXI_HP2_FPD  ◄── data2 (SmartConnect) ◄── kernel/m_axi_gmem2     writes output to DDR
+   S_AXI_HP0_FPD  ◄── data0 (SmartConnect) ◄── kernel/m_axi_gmem0     reads input (rows 0, 4, 8, ... of each patch)
+   S_AXI_HP1_FPD  ◄── data1 (SmartConnect) ◄── kernel/m_axi_gmem1     reads input (rows 1, 5, 9, ...)
+   S_AXI_HP2_FPD  ◄── data2 (SmartConnect) ◄── kernel/m_axi_gmem2     reads input (rows 2, 6, 10, ...)
+   S_AXI_HP3_FPD  ◄── data3 (SmartConnect) ◄── kernel/m_axi_gmem3     reads input (rows 3, 7, 11, ...)
+   S_AXI_HPC0_FPD ◄── data4 (SmartConnect) ◄── kernel/m_axi_gmem4     writes output to DDR
    pl_ps_irq0     ◄── kernel/interrupt                                (not used)
 ```
 
-Every `m_axi` port gets an HP port of its own (up to four), in name order. An
-HP port moves 128 bits per clock cycle, so a kernel that needs more than that
-from DDR splits its input over several `m_axi` bundles.
+Every `m_axi` port gets a port to DDR of its own, in name order: the four HP
+ports, then the two HPC ports (up to six). Each moves 128 bits per clock cycle,
+so a kernel that needs more than that from DDR splits its input over several
+`m_axi` bundles. Four reading at once at 200 MHz is 12.8 GB/s, near what the
+ZCU104's DDR4 can give (19.2 GB/s peak).
 
 The kernel's ports come from the `INTERFACE` pragmas on its top function:
 
@@ -101,8 +105,8 @@ The board runs PYNQ (Linux), with Jupyter at `http://BOARD:9090`. After
    and arguments such as `n`. The offsets come from `xK_hw.h`, which HLS
    generated.
 4. `AP_CTRL = 1` starts the kernel. It reads its input from DDR through
-   `m_axi_gmem0` → `data0` → HP0 (and `gmem1` → HP1) and writes the result
-   back through `gmem2` → HP2.
+   `m_axi_gmem0` → `data0` → HP0 (and `gmem1`-`gmem3` → HP1-HP3) and writes the result
+   back through `gmem4` → HPC0.
 5. The notebook polls `AP_CTRL` bit 1 (done), calls `invalidate()` so the CPU
    doesn't read stale cache, and reads the result buffer.
 
