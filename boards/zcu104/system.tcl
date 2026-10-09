@@ -118,7 +118,7 @@ connect_bd_intf_net [get_bd_intf_pins ctrl/M00_AXI]      [get_bd_intf_pins kerne
 # Data path (masters in name order: m_axi_gmem0 -> HP0, m_axi_gmem1 -> HP1, ...,
 # m_axi_gmem4 -> HPC0).
 set i 0
-foreach master [lsort $ ] {
+foreach master [lsort $masters] {
     set port [lindex $ddr_ports $i 1]
     puts "INFO: [get_property NAME $master] -> data$i -> $port"
     connect_bd_intf_net $master [get_bd_intf_pins data$i/S00_AXI]
