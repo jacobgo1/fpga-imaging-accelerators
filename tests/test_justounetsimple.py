@@ -6,6 +6,7 @@ That checks the register traffic, the patching and the comparison -- not PYNQ or
 """
 import gc
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -387,6 +388,31 @@ int main(int, char** argv) {
     def test_opt_notebook_shows_a_wrong_kernel(self):
         _, (ns, _) = self.run_opt(40, 40, broken=True)
         self.assertFalse(ns['close'].all())
+
+    def test_fixed_adds_the_kernel_reference_to_an_old_folder_or_zip(self):
+        cube = self.raw_cube(40, 35, counts=True).astype(np.uint16)
+        want = self.model.with_class(self.model.classify_fixed(cube))
+        old = self.dir / 'old'
+        old.mkdir()
+        np.save(old / 'cube.npy', cube)
+        with zipfile.ZipFile(self.dir / 'old.zip', 'w') as z:
+            z.write(old / 'cube.npy', 'old/cube.npy')
+
+        def fixed(image):
+            saved, sys.argv = sys.argv, ['justounetsimple_image.py', 'fixed', str(image)]
+            try:
+                self.assertEqual(self.tool.main(), 0)
+            finally:
+                sys.argv = saved
+
+        fixed(old)
+        np.testing.assert_array_equal(np.load(old / 'reference_fixed.npy'), want)
+        fixed(self.dir / 'old.zip')
+        with zipfile.ZipFile(self.dir / 'old.zip') as z:
+            self.assertEqual(sorted(z.namelist()), ['old/cube.npy', 'old/reference_fixed.npy'])
+            np.testing.assert_array_equal(np.load(io.BytesIO(z.read('old/reference_fixed.npy'))), want)
+        with self.assertRaises(SystemExit):
+            fixed(self.dir / 'old.zip')          # already there: not added twice
 
     def test_notebook_padding_matches_the_reference_tiling(self):
         cube = self.raw_cube(37, 45)

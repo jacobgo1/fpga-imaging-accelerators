@@ -85,6 +85,14 @@ those are the user's, on the lab server, every time.
   (`src/optimized/conv3x3_packed.hpp`, AMD WP486): it needs activations in
   -127..127 and the UltraScale+ DSP48E2, so not on the Zynq-7030. Check the DSP
   count in the csynth report: about 864 for conv1 means the packing mapped.
+  Pack the weights once at load, not next to the multiply: HLS put that addition
+  in the DSP pre-adder and the RTL was slightly wrong (csim passed, cosim failed).
+- csim passing does not prove the RTL. After changing arithmetic, ask the user
+  for a cosim (`python3 main.py cosim --kernel K`); a mismatch there is
+  reproducible in minutes, a mismatch on the board is not.
+- HLS knows the weights' values (loaded once from constant arrays) and sizes
+  each multiplier for its weight: small weights become LUT shift-adds, zero
+  weights vanish. That is why DSP counts can be far below the multiply count.
 - Generated files must stay in sync:
   - `src/hls/justounetsimple_opt/justounetsimple_prep.hpp` comes from
     `python tools/justounetsimple_model.py`, and a test checks it;

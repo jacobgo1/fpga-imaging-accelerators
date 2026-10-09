@@ -212,19 +212,19 @@ static void patch_buffer(hls::stream<jopt_raw_t> raw[PORTS],
 // multiply-adds per cycle, two per DSP: 864 DSPs.
 static void conv_a(hls::stream<vec_t<act8_t, P1> >& in, hls::stream<vec_t<acc_t, B> >& out,
                    int height, int width) {
-    wgt_t wl[B][INP][3][3];
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=wl type=cyclic factor=P1 dim=2
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
+    pack_w_t wp[B / 2][INP][3][3];             // channel pairs, packed
+    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=wp type=cyclic factor=P1 dim=2
+    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=3
+    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=4
     acc_t bl[B];
     #pragma HLS ARRAY_PARTITION variable=bl type=complete
 
-    load_conv_weights<B, IN, INP>(q::conv1_weight, q::conv1_bias, SUM1 - q::conv1_bias_frac, wl, bl);
+    load_packed_weights<B, IN, INP>(q::conv1_weight, q::conv1_bias, SUM1 - q::conv1_bias_frac, wp, bl);
     const int n = patch_rows(height) * patch_cols(width);
     patches: for (int k = 0; k < n; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_packed<H, W, INP, B, P1>(in, wl, bl, out);
+        conv3x3_packed<H, W, INP, B, P1>(in, wp, bl, out);
     }
 }
 

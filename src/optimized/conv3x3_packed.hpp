@@ -9,7 +9,7 @@
 // same activation a, so their weights are packed into one 27-bit number,
 //     (w[oc + 1] * 2^18 + w[oc]) * a = w[oc + 1] * a * 2^18 + w[oc] * a,
 // and one multiply gives both products: the low one in the bottom 18 bits, the
-// high one above (the DSP's pre-adder does the packing). A sum of such products
+// high one above. A sum of such products
 // is the two channels' sums the same way, as long as the low sum stays inside
 // 18 signed bits: |a| <= 127 and |w| <= 128 make a product at most 16256, so
 // 8 of them (PACK_GROUP) stay below 2^17. Each group of 8 is split into its two
@@ -19,6 +19,13 @@
 // This needs a's -128 never to occur (the producer saturates at +-127) and the
 // DSP48E2's 27-bit input: on the 7-series DSP48E1 (25 x 18, the Zynq-7030)
 // the two products do not fit.
+//
+// The packed weights are computed once, when the layer starts
+// (load_packed_weights), not next to the multiply. There HLS (2025.2) put the
+// packing addition into the DSP's pre-adder, sized for the two weights' own
+// widths, and the hardware's sums came out slightly wrong in co-simulation
+// while the C++ was right. A finished 27-bit number times a is a plain
+// multiply-add, which it gets right.
 //
 // Everything else is conv3x3_stream with STEPS = 1 (read that first): P
 // channels a cycle, chunk by chunk, OUT_CH (even) outputs per pixel in the
@@ -53,11 +60,33 @@ static inline acc_t pack_high(int64_t s) {
     return (acc_t)(s >> PACK_SHIFT) + (acc_t)((s >> (PACK_SHIFT - 1)) & 1);
 }
 
-// Partition wl as for conv3x3_stream with STEPS = 1: complete in dims 1, 3, 4,
-// cyclic by P in dim 2.
+// load_conv_weights for conv3x3_packed: output channels 2j and 2j + 1 packed
+// into wp[j], w[2j + 1] * 2^18 + w[2j]; IN_PAD > IN_CH pads with zeros.
+template<int OUT_CH, int IN_CH, int IN_PAD>
+void load_packed_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH], int bias_shift,
+                         pack_w_t wp[OUT_CH / 2][IN_PAD][3][3], acc_t bl[OUT_CH]) {
+    static_assert(IN_PAD >= IN_CH && OUT_CH % 2 == 0, "IN_PAD >= IN_CH, output channels in pairs");
+    load_w: for (int j = 0; j < OUT_CH / 2; j++)
+        for (int ic = 0; ic < IN_PAD; ic++)
+            for (int ki = 0; ki < 3; ki++)
+                for (int kj = 0; kj < 3; kj++) {
+                    #pragma HLS PIPELINE II=1
+                    const int src = ic < IN_CH ? ic : IN_CH - 1;   // never read past w
+                    const wgt_t hi = ic < IN_CH ? w[2 * j + 1][src][ki][kj] : (wgt_t)0;
+                    const wgt_t lo = ic < IN_CH ? w[2 * j][src][ki][kj] : (wgt_t)0;
+                    wp[j][ic][ki][kj] = (pack_w_t)hi * (pack_w_t)(1 << PACK_SHIFT) + (pack_w_t)lo;
+                }
+    load_b: for (int oc = 0; oc < OUT_CH; oc++) {
+        #pragma HLS PIPELINE II=1
+        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << bias_shift);
+    }
+}
+
+// Partition wp as wl for conv3x3_stream with STEPS = 1: complete in dims 1, 3,
+// 4, cyclic by P in dim 2.
 template<int H, int W, int IN_CH, int OUT_CH, int P>
 void conv3x3_packed(hls::stream<vec_t<act8_t, P> >& in,
-                    const wgt_t wl[OUT_CH][IN_CH][3][3], const acc_t bl[OUT_CH],
+                    const pack_w_t wp[OUT_CH / 2][IN_CH][3][3], const acc_t bl[OUT_CH],
                     hls::stream<vec_t<acc_t, OUT_CH> >& out) {
     static_assert(IN_CH % P == 0, "IN_CH must be a multiple of P");
     static_assert(P % PACK_GROUP == 0, "P must be a multiple of PACK_GROUP");
@@ -123,10 +152,7 @@ void conv3x3_packed(hls::stream<vec_t<act8_t, P> >& in,
                             for (int p = p0; p < p0 + PACK_GROUP; p++) {
                                 #pragma HLS UNROLL
                                 const act8_t a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][p] : (act8_t)0;
-                                const int c = chunk * P + p;
-                                const pack_w_t w = (pack_w_t)wl[2 * j + 1][c][ki][kj] * (pack_w_t)(1 << PACK_SHIFT)
-                                                 + (pack_w_t)wl[2 * j][c][ki][kj];
-                                sum += w * a;
+                                sum += wp[j][chunk * P + p][ki][kj] * a;
                             }
                             lo += pack_low((int64_t)sum);
                             hi += pack_high((int64_t)sum);
