@@ -92,8 +92,9 @@ fpga.sh            short commands for the lab server
 config/            project.json, optional HLS directives per kernel
 src/hls/KERNEL/    synthesizable C++, one folder per kernel
 src/golden/        reference layers and models: plain loops, what is computed
-src/optimized/     streaming, fixed-point building blocks: how it is computed fast
-src/common/        C++ shared between kernels (hls::stream for plain g++)
+src/optimized/     streaming, fixed-point building blocks: how it is computed fast;
+                   shared/ for every board, zcu104/ and zynq7030/ for one
+src/common/        C++ shared between kernels (hls::stream, hls::vector for plain g++)
 tb/KERNEL/         self-checking testbenches
 scripts/           hls.tcl (Vitis HLS), vivado.tcl (Vivado)
 boards/zcu104/     system.tcl: the block design around the kernel

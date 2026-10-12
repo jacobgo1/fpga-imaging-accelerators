@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../common/hls_stream_shim.hpp"
+#include "../../common/hls_stream_shim.hpp"
 
 // The numbers every block in src/optimized/ shares, in integer fixed point.
 // An activation is an int16 a meaning a * 2^-F (F fraction bits, set by the

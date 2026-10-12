@@ -2,7 +2,7 @@
 #define JUSTOUNETSIMPLE_OPT_HLS_HPP
 
 #include <stdint.h>
-#include "../../optimized/hls_vector_shim.hpp"
+#include "../../common/hls_vector_shim.hpp"
 
 // The quantized 2D-JustoUNet (the same model as src/hls/justounetsimple/, the
 // golden baseline) on a whole raw capture: one start classifies every pixel.
@@ -39,9 +39,9 @@
 // 1-14 are the kept bands (raw 8-117) plus raw 118-119, which the z-score
 // zeroes: four words per chunk of conv1, no shuffling (the last chunk has two,
 // and zeros). Word 0 (raw 0-7) is dropped.
-// dout: [height][width][4] int32: the 3 scores (score * 2^OUT_FRAC), then the
-// class (0 cloud, 1 land, 2 sea; the first highest score). Four, not three, so
-// that a pixel is one 128-bit word.
+// dout: [height][width][3] int32 scores, score * 2^OUT_FRAC (0 cloud, 1 land,
+// 2 sea; the class is their argmax). Only the scores: the ARM reads them as one
+// contiguous array.
 // Any height and width (>= 1). A strip of a larger image works the same way:
 // point din at its first row and dout at that row's scores.
 
@@ -63,11 +63,9 @@
 
 // One word of the cube: 8 bands of a pixel, 128 bits.
 typedef hls::vector<uint16_t, JOPT_PORT_BANDS> jopt_raw_t;
-// One pixel of dout: 3 scores and the class, 128 bits.
-typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
                          const jopt_raw_t *din2, const jopt_raw_t *din3,
-                         jopt_out_t *dout, int height, int width);
+                         int32_t *dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP

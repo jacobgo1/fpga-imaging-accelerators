@@ -8,7 +8,6 @@ classify_fixed  the optimized kernel (justounetsimple_opt) bit for bit: the raw 
                 cube in, int32 scores out. It preprocesses in integers itself
                 (preprocess_fixed), cuts the image into patches like the notebook
                 (forward_patch_fixed per patch) and puts the scores back.
-                with_class adds the class, as the kernel writes it.
 
 The golden kernel (justounetsimple) does no preprocessing: its notebook does it, the
 same way as preprocess here. justounetsimple_opt does it in hardware, in integers, as
@@ -27,7 +26,7 @@ RAW_BANDS = 120
 DROPPED_BANDS = [0, 1, 2, 3, 4, 5, 6, 7, 118, 119]
 # justounetsimple_opt's fixed-point formats (JOPT_*_FRAC in justounetsimple_opt.hpp):
 # its input is x * 2^IN_FRAC as int8, saturated at +-IN_MAX (z-scores -3.97 .. 3.97;
-# never -128, so two products can share a DSP, see src/optimized/conv3x3_packed.hpp),
+# never -128, so two products can share a DSP, see src/optimized/zcu104/conv3x3_packed.hpp),
 # its activations have ACT_FRAC fraction bits (int16), its scores are int32 with
 # OUT_FRAC. Its z-score is (dn * A + B) >> PREP_FRAC (prep_constants), written into
 # justounetsimple_prep.hpp by `python tools/justounetsimple_model.py`.
@@ -183,12 +182,6 @@ def classify_fixed(cube, qlayers=None, prep=None):
     for patch, tile in patching.iter_patches(cube, pad_mode='edge'):
         patching.place(scores, forward_patch_fixed(preprocess_fixed(patch, prep), qlayers), tile)
     return scores
-
-
-def with_class(scores):
-    """H x W x 3 int32 scores -> H x W x 4, what justounetsimple_opt writes: the scores,
-    then the class (their argmax, the first one on a tie)."""
-    return np.concatenate([scores, scores.argmax(-1)[..., None].astype(np.int32)], axis=-1)
 
 
 def prep_header(mu_sd=MU_SD):

@@ -6,7 +6,7 @@
 // The golden/ templates say *what* is computed; this says *how fast*: it reads
 // its input from an hls::stream in the order it consumes it, keeps only two
 // lines of it on chip, and does many multiply-adds per clock cycle. The layer
-// modules (conv3x3_narrow, conv3x3_wide) run it once per patch.
+// modules (conv3x3_narrow, the boards' conv3x3_wide) run it once per patch.
 
 // Copy one conv layer's weights from ROM into a local array, and its biases
 // shifted left to the scale of the sums (bias_shift = the sums' fraction bits
@@ -52,8 +52,11 @@ void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH]
 // (wl partitioned complete in dims 2-4, not in dim 1, when STEPS > 1). With
 // STEPS = 1 the caller partitions wl complete in dims 1, 3, 4 and cyclic by P
 // in dim 2.
-template<int H, int W, int IN_CH, int OUT_CH, int P, int STEPS>
-void conv3x3_stream(hls::stream<vec_t<act_t, P> >& in,
+//
+// A_T, the activations' type, comes from the input stream: act_t, or act8_t
+// for a first layer.
+template<int H, int W, int IN_CH, int OUT_CH, int P, int STEPS, typename A_T>
+void conv3x3_stream(hls::stream<vec_t<A_T, P> >& in,
                     const wgt_t wl[OUT_CH][IN_CH][3][3], const acc_t bl[OUT_CH],
                     hls::stream<vec_t<acc_t, OUT_CH> >& out) {
     static_assert(IN_CH % P == 0, "IN_CH must be a multiple of P");
@@ -64,10 +67,10 @@ void conv3x3_stream(hls::stream<vec_t<act_t, P> >& in,
     // Partial sums between chunks (not needed, and 1 x 1, with one chunk).
     acc_t acc[CHUNKS > 1 ? H : 1][CHUNKS > 1 ? W : 1][OUT_CH];
     #pragma HLS ARRAY_PARTITION variable=acc type=complete dim=3
-    act_t lb[2][W][P];       // the two previous input lines
+    A_T lb[2][W][P];         // the two previous input lines
     #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=1
     #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=3
-    act_t win[3][3][P];      // the 3x3 window, in registers
+    A_T win[3][3][P];        // the 3x3 window, in registers
     #pragma HLS ARRAY_PARTITION variable=win type=complete dim=0
     acc_t pix[OUT_CH];       // the finished sums of one pixel, filled over STEPS
     #pragma HLS ARRAY_PARTITION variable=pix type=complete
@@ -94,12 +97,12 @@ void conv3x3_stream(hls::stream<vec_t<act_t, P> >& in,
         if (first_step) {
             // A new window column: input rows r-2, r-1, r at column s.
             const bool have = g < VECTORS;
-            vec_t<act_t, P> v;
+            vec_t<A_T, P> v;
             if (have) v = in.read();
             for (int p = 0; p < P; p++) {
                 #pragma HLS UNROLL
-                const act_t up2 = lb[0][s][p], up1 = lb[1][s][p];
-                const act_t now = have ? v.v[p] : (act_t)0;
+                const A_T up2 = lb[0][s][p], up1 = lb[1][s][p];
+                const A_T now = have ? v.v[p] : (A_T)0;
                 lb[0][s][p] = up1;
                 lb[1][s][p] = now;
                 for (int ki = 0; ki < 3; ki++) {
@@ -129,7 +132,7 @@ void conv3x3_stream(hls::stream<vec_t<act_t, P> >& in,
                         #pragma HLS UNROLL
                         for (int kj = 0; kj < 3; kj++) {
                             #pragma HLS UNROLL
-                            const act_t a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][p] : (act_t)0;
+                            const A_T a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][p] : (A_T)0;
                             sum += (acc_t)a * (acc_t)wl[oc][chunk * P + p][ki][kj];
                         }
                     }

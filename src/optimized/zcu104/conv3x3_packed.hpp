@@ -1,6 +1,6 @@
 #pragma once
 
-#include "conv3x3_stream.hpp"
+#include "../shared/conv3x3_stream.hpp"
 
 // conv3x3_stream for int8 activations, two multiplies per DSP (AMD white paper
 // WP486, "Deep Learning with INT8 Optimization on Xilinx Devices").

@@ -134,7 +134,7 @@ class FakeImageKernel(FakeKernel):
             scores = self.model.classify_fixed(cube, self.qlayers, self.prep)
             if self.broken:
                 scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
-            self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = self.model.with_class(scores)
+            self.view(self.address(OPT_DOUT), (h, w, 3), np.int32)[:] = scores
             self.runs.append((h, w))
             self.done = True
         else:
@@ -270,37 +270,43 @@ int main(int, char** argv) {
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
-        """classify_fixed predicts the board's answers: it must be the optimized kernel's
-        arithmetic bit for bit, the z-score and the edge patches included."""
-        source = self.dir / 'run_opt.cpp'
-        source.write_text("""
-#include "justounetsimple_opt.hpp"
+        """classify_fixed predicts the board's answers: it must be the optimized kernels'
+        arithmetic bit for bit (the ZCU104's and the Zynq-7030's), the z-score and the edge
+        patches included."""
+        h, w = 37, 45                                     # 2 x 2 patches, the edge ones partial
+        cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
+        cube.tofile(self.dir / 'in.bin')
+        want = self.model.classify_fixed(cube)
+        kernels = {'justounetsimple_opt': 'justounetsimple_opt(d, d, d, d, dout.data(), h, w)',
+                   'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
+        for name, call in kernels.items():
+            with self.subTest(kernel=name):
+                source_dir = ROOT / 'src/hls' / name
+                source = self.dir / f'run_{name}.cpp'
+                source.write_text(f"""
+#include "{name}.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-int main(int, char** argv) {
+int main(int, char** argv) {{
     const int h = atoi(argv[3]), w = atoi(argv[4]);
     std::vector<jopt_raw_t> din(h * w * JOPT_RAW_BANDS / JOPT_PORT_BANDS);
-    std::vector<jopt_out_t> dout(h * w);
+    std::vector<int32_t> dout(h * w * JOPT_OUT_CH);
     FILE* f = fopen(argv[1], "rb");
     if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
     fclose(f);
     const jopt_raw_t *d = din.data();
-    justounetsimple_opt(d, d, d, d, dout.data(), h, w);
-    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jopt_out_t), dout.size(), f); fclose(f);
-}
+    {call};
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(int32_t), dout.size(), f); fclose(f);
+}}
 """)
-        exe = self.dir / 'run_opt.exe'
-        subprocess.run([CXX, '-std=c++14', '-O2', f'-I{OPT_SOURCE}', f'-I{ROOT / "src/common"}',
-                        str(source), str(OPT_SOURCE / 'justounetsimple_opt.cpp'), '-o', str(exe)], check=True)
-        h, w = 37, 45                                     # 2 x 2 patches, the edge ones partial
-        cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
-        cube.tofile(self.dir / 'in.bin')
-        subprocess.run([str(exe), str(self.dir / 'in.bin'), str(self.dir / 'out.bin'), str(h), str(w)],
-                       check=True)
-        cpp = np.fromfile(self.dir / 'out.bin', dtype=np.int32).reshape(h, w, 4)
-        want = self.model.classify_fixed(cube)
-        np.testing.assert_array_equal(cpp, self.model.with_class(want))
+                exe = self.dir / f'run_{name}.exe'
+                subprocess.run([CXX, '-std=c++14', '-O2', f'-I{source_dir}', f'-I{ROOT / "src/common"}',
+                                str(source), str(source_dir / f'{name}.cpp'), '-o', str(exe)], check=True)
+                out = self.dir / f'out_{name}.bin'
+                subprocess.run([str(exe), str(self.dir / 'in.bin'), str(out), str(h), str(w)], check=True)
+                cpp = np.fromfile(out, dtype=np.int32).reshape(h, w, 3)
+                np.testing.assert_array_equal(cpp, want)
         # The float model on the same int8 input: only the rounding between the layers differs.
         scores = want * 2.0 ** -self.model.OUT_FRAC
         floats = np.zeros((h, w, 3), dtype=np.float32)
@@ -309,11 +315,6 @@ int main(int, char** argv) {
             self.patching.place(floats, self.model.forward_patch(x, self.layers), tile)
         np.testing.assert_allclose(scores, floats, atol=0.02)
         self.assertGreater(float(scores.max() - scores.min()), 1.0, 'the reference should not be constant')
-
-    def test_with_class_picks_the_first_highest_score(self):
-        scores = np.array([[[5, 7, 7], [9, 1, 9], [-3, -2, -4]]], dtype=np.int32)
-        np.testing.assert_array_equal(self.model.with_class(scores)[..., 3], [[1, 0, 1]])
-        np.testing.assert_array_equal(self.model.with_class(scores)[..., :3], scores)
 
     def test_kernel_input_is_int8_and_never_minus_128(self):
         """conv1 packs two products per DSP, which needs |input| <= 127."""
@@ -345,11 +346,11 @@ int main(int, char** argv) {
 
         setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
         ns = {}
-        exec(re.search(r'^BANDS, OUT_FRAC, LANES = .*$', setup, re.M).group(0), ns)
+        exec(re.search(r'^BANDS, OUT_FRAC, SCORES = .*$', setup, re.M).group(0), ns)
         self.assertEqual(ns['BANDS'], define('RAW_BANDS'))
         self.assertEqual(ns['OUT_FRAC'], define('OUT_FRAC'))
-        self.assertEqual(ns['LANES'], 4, 'jopt_out_t: 3 scores and the class')
-        self.assertIn('hls::vector<int32_t, 4> jopt_out_t', header)
+        self.assertEqual(ns['SCORES'], define('OUT_CH'))
+        self.assertIn('int32_t *dout', header)
         for name in ('IN_FRAC', 'ACT_FRAC', 'OUT_FRAC'):
             self.assertEqual(getattr(self.model, name), define(name), name)
 
@@ -365,7 +366,7 @@ int main(int, char** argv) {
         self.assertEqual(ns['scores'].shape, (70, 50, 3))
         self.assertTrue(ns['close'].all())
         self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        np.testing.assert_array_equal(ns['classes'], ns['raw_scores'][..., :3].argmax(-1))
+        np.testing.assert_array_equal(ns['classes'], ns['raw_scores'].argmax(-1))
         self.assertTrue((board / 'aegean_unet/reference_fixed.npy').is_file())
         self.assertIsNone(ns['strips'])
         # the self-test patch, the whole image, then 5 timed runs of the whole image
@@ -391,7 +392,7 @@ int main(int, char** argv) {
 
     def test_fixed_adds_the_kernel_reference_to_an_old_folder_or_zip(self):
         cube = self.raw_cube(40, 35, counts=True).astype(np.uint16)
-        want = self.model.with_class(self.model.classify_fixed(cube))
+        want = self.model.classify_fixed(cube)
         old = self.dir / 'old'
         old.mkdir()
         np.save(old / 'cube.npy', cube)

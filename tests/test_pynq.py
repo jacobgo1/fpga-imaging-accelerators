@@ -145,7 +145,7 @@ class FpgaShellTests(unittest.TestCase):
         for command in ('fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
-                                 ['justounetsimple', 'justounetsimple_opt'])
+                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),

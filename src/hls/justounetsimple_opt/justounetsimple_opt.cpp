@@ -1,13 +1,13 @@
 #include "justounetsimple_opt.hpp"
 #include "justounetsimple_prep.hpp"
-#include "../../optimized/read_rows.hpp"
-#include "../../optimized/patch_buffer.hpp"
-#include "../../optimized/conv3x3_wide.hpp"
-#include "../../optimized/conv3x3_narrow.hpp"
-#include "../../optimized/relu_pool.hpp"
-#include "../../optimized/relu_pool_up.hpp"
-#include "../../optimized/relu_up.hpp"
-#include "../../optimized/store_scores.hpp"
+#include "../../optimized/shared/read_rows.hpp"
+#include "../../optimized/zcu104/patch_buffer.hpp"
+#include "../../optimized/zcu104/conv3x3_wide.hpp"
+#include "../../optimized/shared/conv3x3_narrow.hpp"
+#include "../../optimized/shared/relu_pool.hpp"
+#include "../../optimized/shared/relu_pool_up.hpp"
+#include "../../optimized/shared/relu_up.hpp"
+#include "../../optimized/shared/store_scores.hpp"
 #include <type_traits>
 
 // The quantized weights, as the int8 integers q they are (value q * 2^-frac):
@@ -31,7 +31,6 @@ static_assert(JOPT_RAW_BANDS % PB == 0 && P1 % PB == 0, "a chunk is whole words"
 static_assert(prep::FIRST_BAND % PB == 0 && KEPT * PB >= IN && KEPT * PB <= INP &&
               sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PB,
               "the kept bands must be whole words, to the end of each pixel");
-static_assert(OUT + 1 == 4, "a pixel of dout is 3 scores and the class");
 
 // Fraction bits: each layer's sums carry its input's plus its weights'.
 constexpr int SUM1 = JOPT_IN_FRAC + q::conv1_weight_frac;
@@ -50,7 +49,7 @@ static_assert(SUM1 > JOPT_ACT_FRAC && SUM2 > JOPT_ACT_FRAC && SUM3 > JOPT_ACT_FR
 
 void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
                          const jopt_raw_t *din2, const jopt_raw_t *din3,
-                         jopt_out_t *dout, int height, int width)
+                         int32_t *dout, int height, int width)
 {
     // Five AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
     // four read the cube in parallel (point all of them at it) through HP0-3,
@@ -60,7 +59,7 @@ void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
     #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din2 bundle=gmem2 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din3 bundle=gmem3 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=2000 max_write_burst_length=32
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=6000 max_write_burst_length=128
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din2   bundle=control

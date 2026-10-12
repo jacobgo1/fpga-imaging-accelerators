@@ -1,0 +1,56 @@
+#ifndef JUSTOUNETSIMPLE_OPT_ZYNQ7030_HLS_HPP
+#define JUSTOUNETSIMPLE_OPT_ZYNQ7030_HLS_HPP
+
+#include <stdint.h>
+#include "../../common/hls_vector_shim.hpp"
+
+// justounetsimple_opt (read its header first) sized for the Zynq-7030, HYPSO-2's
+// FPGA: build it with --board zynq7030. The same model, the same integer
+// arithmetic, the same answers bit for bit, the same raw cube in and scores
+// out; what changes is what fits on the chip (boards/README.md):
+//
+//   read_rows<0> ─┬─► patch_buffer ─► conv1 ─► pool ─► conv2 ─► pool+up ─►
+//   read_rows<1> ─┘   z-score, BRAM          conv3 ─► up ─► conv4 ─► store (HP2)
+//
+// - 400 DSPs, and the DSP48E1 cannot do two multiplies at once: conv1 takes 4
+//   bands per cycle, one multiply per DSP (6 x 4 x 9 = 216 DSPs), 28 x 32 x 32
+//   + 33 cycles per patch. conv2-4 do one input x one output channel per
+//   cycle (conv3x3_serial, 9 multipliers each) and still finish their patch
+//   in under 20 000 cycles, before conv1 has the next one.
+// - 64-bit HP ports: a word of the cube is 4 bands, so a pixel is 30 words.
+//   Two read ports (HP0, HP1) each take every other row of a patch: 15 360
+//   cycles a patch, well under conv1's. The scores go out through HP2.
+// - No UltraRAM: the patch buffer is in block RAM.
+// At 100 MHz that is about 0.29 ms per patch, against 0.04 ms on the ZCU104.
+//
+// din0, din1: the same raw cube, [height][width][120] uint16. The 120 bands
+// of a pixel are 30 words of 4; words 2-29 are the kept bands (raw 8-117)
+// plus raw 118-119, which the z-score zeroes: one word per cycle of conv1.
+// Words 0-1 (raw 0-7) are dropped.
+// dout: [height][width][3] int32 scores, as justounetsimple_opt's
+// (score * 2^OUT_FRAC; 0 cloud, 1 land, 2 sea).
+// Any height and width (>= 1).
+
+#define JOPT_H           32    // patch size
+#define JOPT_W           32
+#define JOPT_RAW_BANDS   120   // bands in the cube
+#define JOPT_IN_CH       110   // bands the model uses: raw 8-117
+#define JOPT_BASE_CH     6
+#define JOPT_OUT_CH      3
+#define JOPT_PORTS       2     // read ports, each half of the rows
+#define JOPT_P1          4     // bands per cycle into conv1
+#define JOPT_PORT_BANDS  4     // bands per 64-bit word
+// IN_CH rounded up to a multiple of P1: 112 bands, the last 2 zero.
+#define JOPT_IN_PAD      ((JOPT_IN_CH + JOPT_P1 - 1) / JOPT_P1 * JOPT_P1)
+
+#define JOPT_IN_FRAC     5     // conv1's input: z-score * 2^5 (int8: -3.97 .. +3.97)
+#define JOPT_ACT_FRAC    11    // activations between the blocks (int16: -16 .. +16)
+#define JOPT_OUT_FRAC    16    // dout = score * 2^16
+
+// One word of the cube: 4 bands of a pixel, 64 bits.
+typedef hls::vector<uint16_t, JOPT_PORT_BANDS> jopt_raw_t;
+
+void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
+                                  int32_t *dout, int height, int width);
+
+#endif // JUSTOUNETSIMPLE_OPT_ZYNQ7030_HLS_HPP

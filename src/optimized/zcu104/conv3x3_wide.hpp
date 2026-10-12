@@ -1,7 +1,7 @@
 #pragma once
 
 #include "conv3x3_packed.hpp"
-#include "patch_grid.hpp"
+#include "../shared/patch_grid.hpp"
 
 // conv3x3_wide: a 3x3 conv layer for many input channels (the bands, in the
 // first layer): P input channels x every output channel per cycle, chunk by

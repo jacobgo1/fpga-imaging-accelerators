@@ -31,8 +31,11 @@ main.py              the build: python3 main.py STAGE --kernel K [--board B]
 fpga.sh              short commands for the server (Tab completes kernels, runs, boards)
 src/hls/K/           one folder per kernel; tb/K/ its self-checking testbench
 src/golden/          plain-loop reference layers and models (what is computed)
-src/optimized/       streaming, integer fixed-point building blocks (how it is done fast)
-src/common/          hls::stream shim so kernels compile with plain g++
+src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
+                     one module per file: shared/ works on every board; zcu104/ and
+                     zynq7030/ hold each board's version of the modules that differ
+                     (patch_buffer: UltraRAM or BRAM; conv3x3_wide: 2 or 1 multiplies per DSP)
+src/common/          hls::stream and hls::vector shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/K/     the notebook for kernel K
 tools/               weights, numpy reference models, image preparation (tools/README.md)
@@ -40,7 +43,9 @@ tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does
 ```
 
-Kernels now: `justounetsimple` (golden baseline), `justounetsimple_opt` (fast),
+Kernels now: `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
+ZCU104), `justounetsimple_opt_zynq7030` (the same, sized for the 7030: build it
+with `--board zynq7030`; same answers, shares the testbench's checks),
 `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
@@ -82,7 +87,7 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/conv3x3_packed.hpp`, AMD WP486): it needs activations in
+  (`src/optimized/zcu104/conv3x3_packed.hpp`, AMD WP486): it needs activations in
   -127..127 and the UltraScale+ DSP48E2, so not on the Zynq-7030. Check the DSP
   count in the csynth report: about 864 for conv1 means the packing mapped.
   Pack the weights once at load, not next to the multiply: HLS put that addition

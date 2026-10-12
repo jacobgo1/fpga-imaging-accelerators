@@ -45,10 +45,15 @@ with its own pins, would need the board script extended.
 A kernel sized for one does not automatically fit the other.
 `justounetsimple_opt` uses about 1,100 DSPs, UltraRAM, five `m_axi` ports and
 two multiplies per DSP in conv1 (which needs the UltraScale+ DSP48E2's 27-bit
-input): it is a ZCU104 design. On the 7030 the same model needs fewer bands per
-cycle in conv1 (e.g. 4 instead of 32, one multiply per DSP: 216 DSPs), at most
-four ports, and its patch buffer in block RAM. `matmul` and the golden `justounetsimple` are small enough that
-they should fit either chip as they are (not yet built for the 7030).
+input): it is a ZCU104 design. `justounetsimple_opt_zynq7030` is the same model
+for the 7030, with the same answers: 4 bands per cycle in conv1, one multiply
+per DSP (216 DSPs), conv2-4 one input x one output channel per cycle, two
+64-bit read ports and one write port, and the patch buffer in block RAM; about
+7x slower per patch. Build it with `--board zynq7030`. The modules that differ
+between the boards are in `src/optimized/zcu104/` and `src/optimized/zynq7030/`,
+the rest in `src/optimized/shared/`. `matmul` and the golden `justounetsimple`
+are small enough that they should fit either chip as they are (not yet built
+for the 7030).
 
 ## The Zynq-7030 processor configuration
 

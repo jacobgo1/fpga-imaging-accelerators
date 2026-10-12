@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../common/hls_stream_shim.hpp"
+#include "../../common/hls_stream_shim.hpp"
 #include "patch_grid.hpp"
 
 // read_rows: DDR -> stream, the raw words of every PORTS-th row of each patch.
