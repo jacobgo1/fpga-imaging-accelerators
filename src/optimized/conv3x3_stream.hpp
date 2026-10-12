@@ -1,28 +1,12 @@
 #pragma once
 
-#include <stdint.h>
-#include "../common/hls_stream_shim.hpp"
+#include "fixed_point.hpp"
 
-// Optimized building blocks for streaming CNN kernels, in integer fixed point.
-// The golden/ templates say *what* is computed; these say *how fast*: they read
-// their input from an hls::stream in the order they consume it, keep only two
-// lines of it on chip, and do many multiply-adds per clock cycle.
-//
-// Numbers: an activation is an int16 a meaning a * 2^-F (F fraction bits, set
-// by the kernel), a weight is the quantized int8 q meaning q * 2^-frac, so a
-// product is exact in an int32 with F + frac fraction bits, and so is a sum of
-// them. No floating point anywhere: a 16 x 8 bit multiply is one DSP, against
-// about five for a float multiply-add.
-
-typedef int16_t act_t;   // an activation (fixed point, F fraction bits)
-typedef int8_t  wgt_t;   // a quantized weight q
-typedef int32_t acc_t;   // a sum of products, and a bias at the same scale
-
-// P values that travel together through a stream (P channels of one pixel).
-template<typename T, int P>
-struct vec_t {
-    T v[P];
-};
+// The convolution engine of the streaming CNN kernels, on one image (a patch).
+// The golden/ templates say *what* is computed; this says *how fast*: it reads
+// its input from an hls::stream in the order it consumes it, keeps only two
+// lines of it on chip, and does many multiply-adds per clock cycle. The layer
+// modules (conv3x3_narrow, conv3x3_wide) run it once per patch.
 
 // Copy one conv layer's weights from ROM into a local array, and its biases
 // shifted left to the scale of the sums (bias_shift = the sums' fraction bits

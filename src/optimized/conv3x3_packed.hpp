@@ -40,8 +40,6 @@ typedef int64_t pack_w_t;      // plain g++: wide enough for the same values,
 typedef int64_t pack_s_t;      // products included
 #endif
 
-typedef int8_t act8_t;         // an int8 activation, -127 .. 127
-
 constexpr int PACK_SHIFT = 18;
 constexpr int PACK_GROUP = 8;
 static_assert(PACK_GROUP * 127 * 128 < (1 << (PACK_SHIFT - 1)),
