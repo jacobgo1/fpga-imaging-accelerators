@@ -19,34 +19,34 @@ namespace prep = justounetsimple_prep;
 static_assert(std::is_same<std::remove_const<std::remove_all_extents<
                   decltype(q::conv1_weight)>::type>::type, wgt_t>::value,
               "the weights must be int8; did the header's element type change?");
-static_assert(prep::IN_FRAC == JOPT_IN_FRAC && prep::IN_MAX == 127,
+static_assert(prep::IN_FRAC == IN_FRAC && prep::IN_MAX == 127,
               "justounetsimple_prep.hpp is out of date: run python tools/justounetsimple_model.py");
 
-constexpr int H = JOPT_H, W = JOPT_W, IN = JOPT_IN_CH, B = JOPT_BASE_CH, OUT = JOPT_OUT_CH;
-constexpr int P1 = JOPT_P1, INP = JOPT_IN_PAD, PB = JOPT_PORT_BANDS, PORTS = JOPT_PORTS;
-constexpr int WORDS = JOPT_RAW_BANDS / PB;      // 30 words per pixel in the cube
-constexpr int FIRST = prep::FIRST_BAND / PB;    // words 0-1 (raw bands 0-7) are dropped
-constexpr int KEPT = WORDS - FIRST;             // words 2-29: kept bands 0-111
-static_assert(JOPT_RAW_BANDS % PB == 0 && P1 == PB, "conv1 takes one word per cycle");
-static_assert(prep::FIRST_BAND % PB == 0 && KEPT * PB == INP &&
-              sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PB,
+constexpr int WORDS = RAW_BANDS / PORT_BANDS;           // 30 words per pixel in the cube
+constexpr int FIRST = prep::FIRST_BAND / PORT_BANDS;    // words 0-1 (raw bands 0-7) are dropped
+constexpr int KEPT = WORDS - FIRST;                      // words 2-29: kept bands 0-111
+static_assert(RAW_BANDS % PORT_BANDS == 0 && P1 == PORT_BANDS, "conv1 takes one word per cycle");
+static_assert(prep::FIRST_BAND % PORT_BANDS == 0 && KEPT * PORT_BANDS == IN_PAD &&
+              sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PORT_BANDS,
               "the kept bands must be whole words, to the end of each pixel, and conv1's input");
 
+static_assert(OUT_CH + 1 == 4, "a pixel of dout is 3 scores and the class");
+
 // Fraction bits: each layer's sums carry its input's plus its weights'.
-constexpr int SUM1 = JOPT_IN_FRAC + q::conv1_weight_frac;
-constexpr int SUM2 = JOPT_ACT_FRAC + q::conv2_weight_frac;
-constexpr int SUM3 = JOPT_ACT_FRAC + q::conv3_weight_frac;
-constexpr int SUM4 = JOPT_ACT_FRAC + q::conv4_weight_frac;
+constexpr int SUM1 = IN_FRAC + q::conv1_weight_frac;
+constexpr int SUM2 = ACT_FRAC + q::conv2_weight_frac;
+constexpr int SUM3 = ACT_FRAC + q::conv3_weight_frac;
+constexpr int SUM4 = ACT_FRAC + q::conv4_weight_frac;
 static_assert(SUM1 >= q::conv1_bias_frac && SUM2 >= q::conv2_bias_frac &&
               SUM3 >= q::conv3_bias_frac && SUM4 >= q::conv4_bias_frac,
               "a bias has more fraction bits than its layer's sums");
-static_assert(SUM1 > JOPT_ACT_FRAC && SUM2 > JOPT_ACT_FRAC && SUM3 > JOPT_ACT_FRAC &&
-              SUM4 >= JOPT_OUT_FRAC, "a requantization would have to add bits");
+static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
+              SUM4 >= OUT_FRAC, "a requantization would have to add bits");
 // int32 never overflows, as in justounetsimple_opt: the testbench checks
 // every sum it sees.
 
 void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                                  int32_t *dout, int height, int width)
+                                  jopt_out_t *dout, int height, int width)
 {
     // Three AXI masters, each on its own 64-bit HP port to DDR
     // (boards/zynq7030/system.tcl): two read the cube in parallel (point both
@@ -54,7 +54,7 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
     // depth is only for co-simulation: the testbench's 40 x 50 image.
     #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=6000 max_write_burst_length=128
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=2000 max_write_burst_length=32
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
@@ -65,13 +65,13 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
 
     hls::stream<jopt_raw_t> s_raw[PORTS];
     hls::stream<vec_t<act8_t, P1> > s_in("s_in");
-    hls::stream<vec_t<acc_t, B> > s_conv1("s_conv1");
-    hls::stream<vec_t<act_t, B> > s_a("s_a");
-    hls::stream<vec_t<acc_t, 2 * B> > s_conv2("s_conv2");
-    hls::stream<vec_t<act_t, 2 * B> > s_b("s_b");
-    hls::stream<vec_t<acc_t, B> > s_conv3("s_conv3");
-    hls::stream<vec_t<act_t, B> > s_c("s_c");
-    hls::stream<vec_t<acc_t, OUT> > s_conv4("s_conv4");
+    hls::stream<vec_t<acc_t, BASE_CH> > s_conv1("s_conv1");
+    hls::stream<vec_t<act_t, BASE_CH> > s_a("s_a");
+    hls::stream<vec_t<acc_t, 2 * BASE_CH> > s_conv2("s_conv2");
+    hls::stream<vec_t<act_t, 2 * BASE_CH> > s_b("s_b");
+    hls::stream<vec_t<acc_t, BASE_CH> > s_conv3("s_conv3");
+    hls::stream<vec_t<act_t, BASE_CH> > s_c("s_c");
+    hls::stream<vec_t<acc_t, OUT_CH> > s_conv4("s_conv4");
     // The readers pause between rows (a new burst); let them run ahead.
     #pragma HLS STREAM variable=s_raw depth=64
     #pragma HLS STREAM variable=s_in depth=64
@@ -85,23 +85,23 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
     // Every process walks the same grid of H x W patches, one after another.
     read_rows<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
     read_rows<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    patch_buffer<H, W, WORDS, FIRST, PB, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B>(
+    patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B>(
         s_raw, s_in, height, width);
     // conv1: 110 -> 6 at 32 x 32, 4 bands per cycle (112 with the zero ones),
     // 6 x 4 x 9 = 216 multiply-adds per cycle, one per DSP.
-    conv3x3_wide<H, W, H, W, IN, B, P1, SUM1 - q::conv1_bias_frac, q::conv1_weight, q::conv1_bias>(
-        s_in, s_conv1, height, width);
-    relu_pool<H, W, H, W, SUM1 - JOPT_ACT_FRAC>(s_conv1, s_a, height, width);              // -> 16 x 16
+    conv3x3_wide<H, W, H, W, IN_CH, BASE_CH, P1, SUM1 - q::conv1_bias_frac,
+                 q::conv1_weight, q::conv1_bias>(s_in, s_conv1, height, width);
+    relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width);              // -> 16 x 16
     // conv2: 6 -> 12 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, B, 2 * B, SUM2 - q::conv2_bias_frac, q::conv2_weight, q::conv2_bias>(
-        s_a, s_conv2, height, width);
-    relu_pool_up<H, W, H / 2, W / 2, SUM2 - JOPT_ACT_FRAC>(s_conv2, s_b, height, width);   // 16 x 16
+    conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, SUM2 - q::conv2_bias_frac,
+                   q::conv2_weight, q::conv2_bias>(s_a, s_conv2, height, width);
+    relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width);   // 16 x 16
     // conv3: 12 -> 6 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, 2 * B, B, SUM3 - q::conv3_bias_frac, q::conv3_weight, q::conv3_bias>(
-        s_b, s_conv3, height, width);
-    relu_up<H, W, H / 2, W / 2, SUM3 - JOPT_ACT_FRAC>(s_conv3, s_c, height, width);        // -> 32 x 32
+    conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, SUM3 - q::conv3_bias_frac,
+                   q::conv3_weight, q::conv3_bias>(s_b, s_conv3, height, width);
+    relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width);        // -> 32 x 32
     // conv4: 6 -> 3 at 32 x 32, no activation, 18 cycles per pixel.
-    conv3x3_serial<H, W, H, W, B, OUT, SUM4 - q::conv4_bias_frac, q::conv4_weight, q::conv4_bias>(
-        s_c, s_conv4, height, width);
-    store_scores<H, W, SUM4 - JOPT_OUT_FRAC>(s_conv4, dout, height, width);
+    conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, SUM4 - q::conv4_bias_frac,
+                   q::conv4_weight, q::conv4_bias>(s_c, s_conv4, height, width);
+    store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width);
 }

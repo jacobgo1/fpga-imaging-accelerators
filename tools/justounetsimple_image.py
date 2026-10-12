@@ -10,8 +10,8 @@ Writes, into --out:
                            counts), what the board classifies
     reference_scores.npy   the numpy model's scores (H x W x 3) for the same 32 x 32 patches,
                            in float: what the model computes
-    reference_fixed.npy    what justounetsimple_opt writes, bit for bit (H x W x 3 int32:
-                           the scores * 2^16), from the integer numpy model;
+    reference_fixed.npy    what justounetsimple_opt writes, bit for bit (H x W x 4 int32: the
+                           scores * 2^16, then the class), from the integer numpy model;
                            only for raw counts (uint16). Its notebook checks the FPGA against it
     labels.npy             the labels, remapped as in training (if --labels)
     meta.json              where it came from, and the RGB bands for the picture
@@ -132,7 +132,8 @@ def prepare(args):
 
 def kernel_reference(cube, weights=model.WEIGHTS, mu_sd=model.MU_SD):
     """reference_fixed.npy: what justounetsimple_opt writes for this raw cube."""
-    return model.classify_fixed(cube, model.load_quantized(weights), model.prep_constants(mu_sd))
+    fixed = model.classify_fixed(cube, model.load_quantized(weights), model.prep_constants(mu_sd))
+    return model.with_class(fixed)
 
 
 def add_fixed(args):

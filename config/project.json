@@ -10,7 +10,7 @@
       "script": "boards/zynq7030/system.tcl"
     }
   },
-  "clock_ns": 10.0,
+  "clock_ns": 5.0,
   "jobs": "nproc",
   "kernels": {}
 }

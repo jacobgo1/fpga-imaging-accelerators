@@ -39,33 +39,37 @@
 // 1-14 are the kept bands (raw 8-117) plus raw 118-119, which the z-score
 // zeroes: four words per chunk of conv1, no shuffling (the last chunk has two,
 // and zeros). Word 0 (raw 0-7) is dropped.
-// dout: [height][width][3] int32 scores, score * 2^OUT_FRAC (0 cloud, 1 land,
-// 2 sea; the class is their argmax). Only the scores: the ARM reads them as one
-// contiguous array.
+// dout: [height][width][4] int32: the 3 scores (score * 2^OUT_FRAC), then the
+// class (0 cloud, 1 land, 2 sea; the first highest score). Four, not three, so
+// that a pixel is one 128-bit word: one write per pixel, not three.
 // Any height and width (>= 1). A strip of a larger image works the same way:
 // point din at its first row and dout at that row's scores.
 
-#define JOPT_H           32    // patch size
-#define JOPT_W           32
-#define JOPT_RAW_BANDS   120   // bands in the cube
-#define JOPT_IN_CH       110   // bands the model uses: raw 8-117
-#define JOPT_BASE_CH     6
-#define JOPT_OUT_CH      3
-#define JOPT_PORTS       4     // read ports, each a quarter of the rows
-#define JOPT_P1          32    // bands per cycle into conv1
-#define JOPT_PORT_BANDS  8     // bands per 128-bit word
+// The kernel's sizes and formats, used as they are by the .cpp and the testbench.
+// constexpr, not #define: a macro H would also rewrite every template
+// parameter called H in src/optimized/; a constant is just hidden by it.
+constexpr int H = 32, W = 32;    // patch size
+constexpr int RAW_BANDS = 120;   // bands in the cube
+constexpr int IN_CH = 110;       // bands the model uses: raw 8-117
+constexpr int BASE_CH = 6;
+constexpr int OUT_CH = 3;
+constexpr int PORTS = 4;         // read ports, each a quarter of the rows
+constexpr int P1 = 32;           // bands per cycle into conv1
+constexpr int PORT_BANDS = 8;    // bands per 128-bit word
 // IN_CH rounded up to a multiple of P1: 128 bands, the last 18 zero.
-#define JOPT_IN_PAD      ((JOPT_IN_CH + JOPT_P1 - 1) / JOPT_P1 * JOPT_P1)
+constexpr int IN_PAD = (IN_CH + P1 - 1) / P1 * P1;
 
-#define JOPT_IN_FRAC     5     // conv1's input: z-score * 2^5 (int8: -3.97 .. +3.97)
-#define JOPT_ACT_FRAC    11    // activations between the blocks (int16: -16 .. +16)
-#define JOPT_OUT_FRAC    16    // dout = score * 2^16
+constexpr int IN_FRAC = 5;       // conv1's input: z-score * 2^5 (int8: -3.97 .. +3.97)
+constexpr int ACT_FRAC = 11;     // activations between the blocks (int16: -16 .. +16)
+constexpr int OUT_FRAC = 16;     // dout = score * 2^16
 
 // One word of the cube: 8 bands of a pixel, 128 bits.
-typedef hls::vector<uint16_t, JOPT_PORT_BANDS> jopt_raw_t;
+typedef hls::vector<uint16_t, PORT_BANDS> jopt_raw_t;
+// One pixel of dout: 3 scores and the class, 128 bits.
+typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
                          const jopt_raw_t *din2, const jopt_raw_t *din3,
-                         int32_t *dout, int height, int width);
+                         jopt_out_t *dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP
