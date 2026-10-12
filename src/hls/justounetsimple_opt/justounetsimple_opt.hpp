@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "../../common/hls_vector_shim.hpp"
+#include "../../common/hls_burst_maxi_shim.hpp"
 
 // The quantized 2D-JustoUNet (the same model as src/hls/justounetsimple/, the
 // golden baseline) on a whole raw capture: one start classifies every pixel.
@@ -70,6 +71,6 @@ typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
                          const jopt_raw_t *din2, const jopt_raw_t *din3,
-                         jopt_out_t *dout, int height, int width);
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP

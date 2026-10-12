@@ -1,5 +1,5 @@
 // justounetsimple_opt_check.hpp  --  the testbench of the optimized kernels
-// (justounetsimple_opt, justounetsimple_opt_zynq7030): the same model, the
+// (justounetsimple_opt and its _zynq7020, _zynq7030 versions): the same model, the
 // same answers. A kernel's testbench includes its header, defines
 // run_kernel(din, dout, height, width) (how its ports take the cube), then
 // includes this for main().
@@ -11,8 +11,9 @@
 //  - exact: the kernel's integer arithmetic written as plain loops -- the
 //    integer z-score, then the four layers, with one multiply per product.
 //    Integer sums do not depend on the order they are added in, so the kernel
-//    (two products per multiply in the ZCU104's conv1, one input channel at
-//    a time in the 7030's conv2-4) must match it bit for bit, and its class
+//    (two products per multiply in the ZCU104's and the 7020's conv1, one or
+//    two input channels at a time in the Zynq-7000s' conv2-4) must match it
+//    bit for bit, and its class
 //    must be the first highest of these scores.
 //  - the integer z-score within one unit of the float one (saturated alike).
 //  - golden: the float kernel (src/hls/justounetsimple/) on the same int8

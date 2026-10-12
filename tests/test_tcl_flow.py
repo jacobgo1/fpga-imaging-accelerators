@@ -84,7 +84,7 @@ class TclFlowTests(unittest.TestCase):
     def test_scripts_have_complete_tcl_syntax(self):
         tcl = tkinter.Tcl()
         for path in ('scripts/hls.tcl', 'scripts/vivado.tcl', 'boards/zcu104/system.tcl',
-                     'boards/zynq7030/system.tcl'):
+                     'boards/zynq7020/system.tcl', 'boards/zynq7030/system.tcl'):
             self.assertEqual(int(tcl.call('info', 'complete', (ROOT / path).read_text(encoding='utf-8'))), 1)
 
     def test_every_configured_board_has_its_script(self):
@@ -104,7 +104,7 @@ class TclFlowTests(unittest.TestCase):
                 (Path(tmp) / 'boards' / board).mkdir(parents=True)
                 (Path(tmp) / 'boards' / board / 'ps7_preset.tcl').write_text(preset)
             tcl = tkinter.Tcl()
-            tcl.eval(f'set cfg(top) k; set cfg(clock_ns) 10.0; set cfg(run_dir) {{{tmp}}}; '
+            tcl.eval(f'set cfg(top) k; set cfg(board) {board}; set cfg(clock_ns) 10.0; set cfg(run_dir) {{{tmp}}}; '
                      f'set cfg(root) {{{tmp}}}; set ip_repo {{{tmp}}}; set wires {{}}; set props {{}}')
             tcl.eval(f'set masters {{{" ".join("kernel/" + m for m in masters)}}}')
             for name in ('set_property', 'current_project', 'create_bd_design', 'apply_bd_automation',
@@ -190,6 +190,12 @@ class TclFlowTests(unittest.TestCase):
         self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
         _, props = self.wire_board('zynq7030', [])
         self.assertNotIn('CONFIG.PCW_X', props)
+
+    def test_zynq7020_is_the_7030_block_design_with_its_own_ps_preset(self):
+        masters = ['m_axi_gmem0', 'm_axi_gmem1', 'm_axi_gmem2']
+        self.assertEqual(self.wire_board('zynq7020', masters), self.wire_board('zynq7030', masters))
+        _, props = self.wire_board('zynq7020', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
+        self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
 
     def test_zynq7030_rejects_more_masters_than_hp_ports(self):
         with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):

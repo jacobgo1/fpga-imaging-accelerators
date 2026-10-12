@@ -9,12 +9,15 @@ is a property of the kernel (see below).
 | Board | `--board` | Part | Why |
 | --- | --- | --- | --- |
 | ZCU104 | `zcu104` (default) | `xczu7ev-ffvc1156-2-e` | Zynq UltraScale+, the family HYPSO-3 will fly; runs PYNQ in the lab |
+| Zynq-7020 | `zynq7020` | `xc7z020clg400-1` | Zynq-7000, the PYNQ-Z2 in the lab (also the Zybo Z7-20; a ZedBoard is `xc7z020clg484-1`). Its `system.tcl` is the 7030's block design |
 | Zynq-7030 | `zynq7030` | `xc7z030sbg485-1` | Zynq-7000, HYPSO-2's FPGA. Check the package and speed grade against HYPSO-2's hardware and change it in `config/project.json` if needed |
 
 Pick the board when building: `fpga_build K --board zynq7030`, or
 `python3 main.py bitstream --kernel K --board zynq7030`. The part and script per
 board are in `config/project.json` (`boards`). Runs for a board other than the
-default end in `-BOARD` (`build/K/DATE-bitstream-zynq7030/`).
+default end in `-BOARD` (`build/K/DATE-bitstream-zynq7030/`). A board's own
+`clock_ns` in the config sets its default clock (10 ns, 100 MHz, on both
+Zynq-7000s; `--clock-ns` still overrides it).
 
 ## What every board script does with a kernel
 
@@ -22,40 +25,52 @@ default end in `-BOARD` (`build/K/DATE-bitstream-zynq7030/`).
   general-purpose master port, through a SmartConnect;
 - each `m_axi` port on its own port to DDR, through its own SmartConnect, in
   name order (`gmem0` -> HP0, ...): on the ZCU104 the four high-performance (HP)
-  ports, then the two HPC ports, at most 6; on the 7030 the four HP ports;
+  ports, then the two HPC ports, at most 6; on the 7020 and 7030 the four HP ports;
 - one clock from the processor at the HLS target (`clock_ns`), checked to be no
   faster than that target; a `proc_sys_reset` for the reset; the interrupt.
 
 So a kernel works on any board as long as it uses that interface: AXI-Lite
 control and no more `m_axi` ports than the board has ports to DDR (6 on the
-ZCU104, 4 on the 7030). An AXI-Stream kernel with a DMA, or one
+ZCU104, 4 on the Zynq-7000s). An AXI-Stream kernel with a DMA, or one
 with its own pins, would need the board script extended.
 
 ## What differs: the chip
 
-| | ZU7EV (ZCU104) | 7Z030 (HYPSO-2) |
-| --- | --- | --- |
-| DSPs | 1,728 | 400 |
-| Block RAM | 312 × 36 Kb (11 Mb) | 265 × 36 Kb (9.3 Mb) |
-| UltraRAM | 96 × 288 Kb (27 Mb) | none |
-| LUTs | 230 K | 79 K |
-| HP port width | 128 bits | 64 bits |
-| Processor | 4 × Cortex-A53 | 2 × Cortex-A9 |
+| | ZU7EV (ZCU104) | 7Z030 (HYPSO-2) | 7Z020 (PYNQ-Z2) |
+| --- | --- | --- | --- |
+| DSPs | 1,728 (DSP48E2, 27 × 18) | 400 (DSP48E1, 25 × 18) | 220 (DSP48E1) |
+| Block RAM | 312 × 36 Kb (11 Mb) | 265 × 36 Kb (9.3 Mb) | 140 × 36 Kb (4.9 Mb) |
+| UltraRAM | 96 × 288 Kb (27 Mb) | none | none |
+| LUTs | 230 K | 79 K | 53 K |
+| HP port width | 128 bits | 64 bits | 64 bits |
+| Processor | 4 × Cortex-A53 | 2 × Cortex-A9 | 2 × Cortex-A9 |
 
 A kernel sized for one does not automatically fit the other.
-`justounetsimple_opt` uses about 1,100 DSPs, UltraRAM, five `m_axi` ports and
-two multiplies per DSP in conv1 (which needs the UltraScale+ DSP48E2's 27-bit
-input): it is a ZCU104 design. `justounetsimple_opt_zynq7030` is the same model
+`justounetsimple_opt` uses about 1,100 DSPs, UltraRAM and five `m_axi` ports:
+it is a ZCU104 design. `justounetsimple_opt_zynq7030` is the same model
 for the 7030, with the same answers: 4 bands per cycle in conv1, one multiply
 per DSP (216 DSPs), conv2-4 one input x one output channel per cycle, two
 64-bit read ports and one write port, and the patch buffer in block RAM; about
-7x slower per patch. Build it with `--board zynq7030`. The modules that differ
-between the boards are in `src/optimized/zcu104/` and `src/optimized/zynq7030/`,
-the rest in `src/optimized/shared/`. `matmul` and the golden `justounetsimple`
-are small enough that they should fit either chip as they are (not yet built
-for the 7030).
+7x slower per patch. Build it with `--board zynq7030`.
 
-## The Zynq-7030 processor configuration
+`justounetsimple_opt_zynq7020` is the same model again, for the 7020's 220 DSPs:
+conv1 takes 216 of them at 8 bands per cycle, **two multiplies per DSP** (the
+same packing as the ZCU104's, 16 bits apart instead of 18 to fit the DSP48E1's
+25-bit input), and every other multiply is in LUTs
+(`config/justounetsimple_opt_zynq7020.tcl`): conv2-4 at 2 input x one output
+channel per cycle, the z-score, the address arithmetic. Two 64-bit read ports
+and one write port, the patch buffer in block RAM (56 BRAM36). The two read
+ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
+0.16 ms per patch at 100 MHz, 4x the ZCU104's. Build it with
+`--board zynq7020`; its zip carries `justounetsimple_opt`'s notebook, which
+finds the kernel and its ports from the files next to it.
+
+The modules that differ between the boards are in `src/optimized/zcu104/`,
+`zynq7020/` and `zynq7030/`, the rest in `src/optimized/shared/`. `matmul` and
+the golden `justounetsimple` are small enough that they should fit any of the
+chips as they are (not yet built for the Zynq-7000s).
+
+## The Zynq-7000 processor configuration
 
 There are no Vivado board files for HYPSO-2, so `zynq7030/system.tcl` cannot
 take the processor's DDR, MIO and clock settings from a board preset. Put
@@ -66,6 +81,11 @@ Without it the build still works and warns: those settings are not in the
 bitstream (the boot loader configures the processor), but HYPSO-2's boot
 configuration must give the FPGA what the design assumes: `FCLK_CLK0` at the HLS
 clock and the HP ports in use enabled at 64 bits.
+
+The Zynq-7020 uses the same script (`zynq7020/system.tcl` sources it), with its
+preset, if any, in `zynq7020/ps7_preset.tcl`. On the PYNQ-Z2 none is needed:
+the PYNQ image boots the processor, and loading the overlay sets `FCLK_CLK0`
+from the `.hwh`.
 
 ## Writing a board script
 

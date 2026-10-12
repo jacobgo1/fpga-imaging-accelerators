@@ -50,7 +50,7 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 
 void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
                          const jopt_raw_t *din2, const jopt_raw_t *din3,
-                         jopt_out_t *dout, int height, int width)
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width)
 {
     // Five AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
     // four read the cube in parallel (point all of them at it) through HP0-3,
@@ -60,7 +60,7 @@ void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
     #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din2 bundle=gmem2 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din3 bundle=gmem3 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=2000 max_write_burst_length=32
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din2   bundle=control

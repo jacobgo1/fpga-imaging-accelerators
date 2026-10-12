@@ -71,6 +71,15 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as zip_file:
             self.assertEqual(sorted(zip_file.namelist()), sorted(f'justounetsimple_pynq/{n}' for n in PACKAGE))
 
+    def test_zynq7020_package_takes_the_zcu104_notebook(self):
+        kernel = 'justounetsimple_opt_zynq7020'
+        run = make_build(self.dir, kernel, '#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_AP_CTRL 0x0\n')
+        out, _ = self.package(run, kernel)
+        self.assertEqual(sorted(p.name for p in out.iterdir()),
+                         sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'justounetsimple_opt.ipynb']))
+        self.assertEqual((out / 'justounetsimple_opt.ipynb').read_bytes(),
+                         (ROOT / 'software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb').read_bytes())
+
     def test_missing_hwh_is_named(self):
         with self.assertRaisesRegex(SystemExit, 'block design description'):
             self.package(make_build(self.dir, hwh=False), 'justounetsimple')
@@ -145,9 +154,10 @@ class FpgaShellTests(unittest.TestCase):
         for command in ('fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
-                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7030'])
+                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7020',
+                                  'justounetsimple_opt_zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
                          ['--board', '--clock-ns'])
 

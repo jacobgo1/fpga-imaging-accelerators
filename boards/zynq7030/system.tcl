@@ -22,6 +22,10 @@
 #   - The device is much smaller: about 400 DSPs (1,728 on the ZU7EV), 265 BRAM36
 #     and no UltraRAM. A kernel sized for the ZCU104 must be sized down for it.
 #
+# boards/zynq7020/system.tcl sources this one: the 7020 has the same processor
+# and ports. The PS preset and the XDC below come from the folder of the board
+# being built ($cfg(board)), so each board keeps its own.
+#
 # The PS: there are no Vivado board files for HYPSO-2, so its DDR, MIO and clock
 # settings cannot come from a board preset. If boards/zynq7030/ps7_preset.tcl
 # exists, it is sourced here with the PS block in $ps: put HYPSO-2's own PS
@@ -36,13 +40,13 @@
 create_bd_design system
 
 set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7 ps]
-set preset [file join $cfg(root) boards zynq7030 ps7_preset.tcl]
+set preset [file join $cfg(root) boards $cfg(board) ps7_preset.tcl]
 if {[file exists $preset]} {
     puts "INFO: PS configuration from $preset"
     source $preset
 } else {
-    puts "WARNING: no boards/zynq7030/ps7_preset.tcl: the PS keeps Vivado's default DDR/MIO settings.\
-          The bitstream does not depend on them, but HYPSO-2's boot configuration must match\
+    puts "WARNING: no boards/$cfg(board)/ps7_preset.tcl: the PS keeps Vivado's default DDR/MIO settings.\
+          The bitstream does not depend on them, but the board's boot configuration must match\
           the clock and HP ports below."
 }
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
@@ -145,6 +149,6 @@ set_property top system_wrapper [get_filesets sources_1]
 update_compile_order -fileset sources_1
 
 # DDR and FIXED_IO are the PS's own pins; the PL uses no pins, so no XDC is
-# needed. If you add PL pins, put them in boards/zynq7030/system.xdc.
-set xdc [file join $cfg(root) boards zynq7030 system.xdc]
+# needed. If you add PL pins, put them in boards/BOARD/system.xdc.
+set xdc [file join $cfg(root) boards $cfg(board) system.xdc]
 if {[file exists $xdc]} { add_files -fileset constrs_1 -norecurse $xdc }

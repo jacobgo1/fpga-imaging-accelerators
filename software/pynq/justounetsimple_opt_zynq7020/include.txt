@@ -1,0 +1,3 @@
+# The ZCU104 kernel's notebook: it finds the kernel (and how many ports it reads
+# through) from the .bit and x..._hw.h next to it.
+software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb

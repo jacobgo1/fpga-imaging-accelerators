@@ -143,6 +143,12 @@ def job_count(setting=None):
     return int(setting)
 
 
+def board_clock_ns(board):
+    """The default clock period for BOARD: its own "clock_ns" in the config, else the global one
+    (a 7-series Zynq does not reach what the ZCU104 does)."""
+    return float(CONFIG['boards'][board].get('clock_ns', CONFIG['clock_ns']))
+
+
 def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
     """settings.tcl: everything the Tcl scripts need to know, as the Tcl array cfg(...)."""
     target = CONFIG['boards'][board or CONFIG['board']]
@@ -234,7 +240,8 @@ def package_pynq(run, name):
             zip_file.write(file, f'{name}_pynq/{file.name}')
     print(f'\nFor the board: {show(archive)}')
     print(f'  Upload it in Jupyter (http://BOARD:9090), run  !unzip -o {name}_pynq.zip  in a cell,')
-    print(f'  then open {name}_pynq/{name}.ipynb and run it from the top.')
+    for notebook_file in sorted(out.glob('*.ipynb')):   # its own, or one include.txt names
+        print(f'  then open {name}_pynq/{notebook_file.name} and run it from the top.')
     return archive
 
 
@@ -265,8 +272,9 @@ def main():
     parser.add_argument('stage', choices=STAGES + ('pynq', 'kernels'))
     parser.add_argument('--kernel', help='folder name in src/hls/')
     parser.add_argument('--skip-cosim', action='store_true', help='bitstream: leave out cosim (slow)')
-    parser.add_argument('--clock-ns', type=float, default=CONFIG['clock_ns'],
-                        help=f'clock period target (default {CONFIG["clock_ns"]} from the config)')
+    parser.add_argument('--clock-ns', type=float,
+                        help='clock period target (default: the board\'s "clock_ns" in the config, '
+                             f'else {CONFIG["clock_ns"]})')
     parser.add_argument('--run', help='pynq: which build/KERNEL/ folder (default: the newest bitstream)')
     parser.add_argument('--board', choices=sorted(CONFIG['boards']), default=CONFIG['board'],
                         help=f'which FPGA: its part and board script (default {CONFIG["board"]} from the config)')
@@ -286,6 +294,8 @@ def main():
             raise SystemExit(f'No bitstream run {args.run or ""} in build/{args.kernel}/')
         return package_pynq(runs[-1], args.kernel)
 
+    if args.clock_ns is None:
+        args.clock_ns = board_clock_ns(args.board)
     if args.clock_ns <= 0:
         raise SystemExit('--clock-ns must be positive')
     run = new_run_folder(args.kernel, args.stage, args.board)

@@ -82,6 +82,11 @@ class RunFolderTests(unittest.TestCase):
         self.assertTrue(second.name.startswith(first.name))
         self.assertEqual(first.parent, flow.ROOT / 'build' / 'k')
 
+    def test_a_7_series_board_has_its_own_default_clock(self):
+        self.assertEqual(flow.board_clock_ns('zynq7020'), 10.0)
+        self.assertEqual(flow.board_clock_ns('zynq7030'), 10.0)
+        self.assertEqual(flow.board_clock_ns('zcu104'), flow.CONFIG['clock_ns'])
+
     def test_a_run_for_another_board_says_so_in_its_name(self):
         default = flow.new_run_folder('k', 'bitstream', flow.CONFIG['board'])
         other = flow.new_run_folder('k', 'bitstream', 'zynq7030')

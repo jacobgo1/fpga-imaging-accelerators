@@ -73,8 +73,9 @@ build/KERNEL/latest/
 ## Settings
 
 [config/project.json](config/project.json): the `boards` (each with its FPGA
-part and board script: `zcu104`, the default, and `zynq7030`, HYPSO-2's FPGA;
-pick one with `--board`), `clock_ns`, `jobs`, and top-function names.
+part and board script: `zcu104`, the default, `zynq7020`, the PYNQ-Z2, and
+`zynq7030`, HYPSO-2's FPGA; pick one with `--board`), `clock_ns` (a board's own
+`clock_ns` overrides it: 10 ns on the Zynq-7000s), `jobs`, and top-function names.
 `jobs` is how many Vivado runs go at once (the block design's IPs synthesize in
 parallel), each with up to 8 threads (Vivado's limit). `"nproc"`, the default,
 means every core the build may use, as `nproc` counts them; a number sets it,
@@ -93,11 +94,11 @@ config/            project.json, optional HLS directives per kernel
 src/hls/KERNEL/    synthesizable C++, one folder per kernel
 src/golden/        reference layers and models: plain loops, what is computed
 src/optimized/     streaming, fixed-point building blocks: how it is computed fast;
-                   shared/ for every board, zcu104/ and zynq7030/ for one
-src/common/        C++ shared between kernels (hls::stream, hls::vector for plain g++)
+                   shared/ for every board, zcu104/, zynq7020/ and zynq7030/ for one
+src/common/        C++ shared between kernels (hls::stream, hls::vector, hls::burst_maxi for plain g++)
 tb/KERNEL/         self-checking testbenches
 scripts/           hls.tcl (Vitis HLS), vivado.tcl (Vivado)
-boards/zcu104/     system.tcl: the block design around the kernel
+boards/BOARD/      system.tcl: the block design around the kernel (zcu104, zynq7020, zynq7030)
 software/pynq/     a notebook per kernel, packed into the zip for the board
 tools/             Python: weights, quantization, image preparation (tools/README.md)
 tests/             tests of all the above, no AMD tools or board needed

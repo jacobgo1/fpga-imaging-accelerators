@@ -3,13 +3,15 @@
 ## What this project is
 
 Neural networks for HYPSO hyperspectral images (cloud / land / sea per pixel),
-turned into FPGA accelerators with Vitis HLS. Two targets:
+turned into FPGA accelerators with Vitis HLS. Targets:
 
 - **ZCU104** (Zynq UltraScale+ ZU7EV), the default board: the family HYPSO-3
   will fly, and what runs in the lab (PYNQ).
 - **Zynq-7030** (`--board zynq7030`): HYPSO-2's FPGA. Much smaller (400 DSPs, no
   UltraRAM, 64-bit HP ports), so kernels must be sized for it. See
   `boards/README.md`.
+- **Zynq-7020** (`--board zynq7020`): the PYNQ-Z2 in the lab now. Smaller still
+  (220 DSPs, 140 BRAM36, 53 K LUTs); same PS and ports as the 7030.
 
 Trained models are the `.pt` files in `weights/fp32/`. **Never delete them**: all
 weights are extracted from them on demand.
@@ -32,10 +34,11 @@ fpga.sh              short commands for the server (Tab completes kernels, runs,
 src/hls/K/           one folder per kernel; tb/K/ its self-checking testbench
 src/golden/          plain-loop reference layers and models (what is computed)
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
-                     one module per file: shared/ works on every board; zcu104/ and
-                     zynq7030/ hold each board's version of the modules that differ
-                     (patch_buffer: UltraRAM or BRAM; conv3x3_wide: 2 or 1 multiplies per DSP)
-src/common/          hls::stream and hls::vector shims so kernels compile with plain g++
+                     one module per file: shared/ works on every board; zcu104/,
+                     zynq7020/ and zynq7030/ hold each board's version of the modules that
+                     differ (patch_buffer: UltraRAM or BRAM; conv3x3_wide: 2 multiplies per
+                     DSP, packed for the board's DSP width, or 1)
+src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/K/     the notebook for kernel K
 tools/               weights, numpy reference models, image preparation (tools/README.md)
@@ -44,8 +47,9 @@ docs/framework.md    what each build step does
 ```
 
 Kernels now: `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
-ZCU104), `justounetsimple_opt_zynq7030` (the same, sized for the 7030: build it
-with `--board zynq7030`; same answers, shares the testbench's checks),
+ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
+same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
+answers, they share the testbench's checks; the 7020 one also the notebook),
 `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
@@ -87,9 +91,11 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/zcu104/conv3x3_packed.hpp`, AMD WP486): it needs activations in
-  -127..127 and the UltraScale+ DSP48E2, so not on the Zynq-7030. Check the DSP
-  count in the csynth report: about 864 for conv1 means the packing mapped.
+  (`src/optimized/shared/conv3x3_packed.hpp`, AMD WP486): it needs activations in
+  -127..127. The DSP's wide input sets the spacing: 18 bits on the UltraScale+
+  DSP48E2 (27-bit input), 16 on the 7-series DSP48E1 (25-bit). Check the DSP
+  count in the csynth report: about 864 for the ZCU104's conv1, 216 for the
+  7020's, means the packing mapped.
   Pack the weights once at load, not next to the multiply: HLS put that addition
   in the DSP pre-adder and the RTL was slightly wrong (csim passed, cosim failed).
 - csim passing does not prove the RTL. After changing arithmetic, ask the user

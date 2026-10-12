@@ -46,7 +46,7 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 // every sum it sees.
 
 void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                                  jopt_out_t *dout, int height, int width)
+                                  hls::burst_maxi<jopt_out_t> dout, int height, int width)
 {
     // Three AXI masters, each on its own 64-bit HP port to DDR
     // (boards/zynq7030/system.tcl): two read the cube in parallel (point both
@@ -54,7 +54,7 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
     // depth is only for co-simulation: the testbench's 40 x 50 image.
     #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=2000 max_write_burst_length=32
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
@@ -93,15 +93,15 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
                  q::conv1_weight, q::conv1_bias>(s_in, s_conv1, height, width);
     relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width);              // -> 16 x 16
     // conv2: 6 -> 12 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, SUM2 - q::conv2_bias_frac,
+    conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, 1, SUM2 - q::conv2_bias_frac,
                    q::conv2_weight, q::conv2_bias>(s_a, s_conv2, height, width);
     relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width);   // 16 x 16
     // conv3: 12 -> 6 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, SUM3 - q::conv3_bias_frac,
+    conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, 1, SUM3 - q::conv3_bias_frac,
                    q::conv3_weight, q::conv3_bias>(s_b, s_conv3, height, width);
     relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width);        // -> 32 x 32
     // conv4: 6 -> 3 at 32 x 32, no activation, 18 cycles per pixel.
-    conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, SUM4 - q::conv4_bias_frac,
+    conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, 1, SUM4 - q::conv4_bias_frac,
                    q::conv4_weight, q::conv4_bias>(s_c, s_conv4, height, width);
     store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width);
 }

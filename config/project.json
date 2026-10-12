@@ -5,9 +5,15 @@
       "part": "xczu7ev-ffvc1156-2-e",
       "script": "boards/zcu104/system.tcl"
     },
+    "zynq7020": {
+      "part": "xc7z020clg400-1",
+      "script": "boards/zynq7020/system.tcl",
+      "clock_ns": 10.0
+    },
     "zynq7030": {
       "part": "xc7z030sbg485-1",
-      "script": "boards/zynq7030/system.tcl"
+      "script": "boards/zynq7030/system.tcl",
+      "clock_ns": 10.0
     }
   },
   "clock_ns": 5.0,

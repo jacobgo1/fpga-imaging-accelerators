@@ -271,13 +271,14 @@ int main(int, char** argv) {
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
         """classify_fixed predicts the board's answers: it must be the optimized kernels'
-        arithmetic bit for bit (the ZCU104's and the Zynq-7030's), the z-score and the edge
+        arithmetic bit for bit (the ZCU104's and the Zynq-7000s'), the z-score and the edge
         patches included."""
         h, w = 37, 45                                     # 2 x 2 patches, the edge ones partial
         cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
         cube.tofile(self.dir / 'in.bin')
         want = self.model.classify_fixed(cube)
         kernels = {'justounetsimple_opt': 'justounetsimple_opt(d, d, d, d, dout.data(), h, w)',
+                   'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
             with self.subTest(kernel=name):
@@ -374,6 +375,8 @@ int main(int, char** argv) {{
         np.testing.assert_array_equal(ns['classes'], ns['raw_scores'][..., :3].argmax(-1))
         self.assertTrue((board / 'aegean_unet/reference_fixed.npy').is_file())
         self.assertIsNone(ns['strips'])
+        self.assertEqual(ns['NAME'], 'justounetsimple_opt')
+        self.assertEqual(ns['DINS'], list(DINS), 'the input ports, from the register map')
         # the self-test patch, the whole image, then 5 timed runs of the whole image
         self.assertEqual(kernel.runs, [(32, 32)] + [(70, 50)] * 6)
         for din in DINS:

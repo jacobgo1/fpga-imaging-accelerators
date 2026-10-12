@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "../../common/hls_vector_shim.hpp"
+#include "../../common/hls_burst_maxi_shim.hpp"
 
 // justounetsimple_opt (read its header first) sized for the Zynq-7030, HYPSO-2's
 // FPGA: build it with --board zynq7030. The same model, the same integer
@@ -55,6 +56,6 @@ typedef hls::vector<uint16_t, PORT_BANDS> jopt_raw_t;
 typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                                  jopt_out_t *dout, int height, int width);
+                                  hls::burst_maxi<jopt_out_t> dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_ZYNQ7030_HLS_HPP
