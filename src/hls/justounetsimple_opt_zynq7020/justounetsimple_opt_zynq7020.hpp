@@ -17,7 +17,7 @@
 //   per DSP (zynq7020/conv3x3_wide.hpp: the 7-series DSP48E1 is 2 bits
 //   narrower than the ZCU104's, so the packing differs), 3 channel pairs x 8 x
 //   9 = 216 DSPs, 14 x 32 x 32 + 33 = 14 369 cycles per patch.
-// - Every other multiply is in LUTs (config/justounetsimple_opt_zynq7020.tcl):
+// - Every other multiply is in LUTs (DSP = false in the .cpp):
 //   conv2-4 do 2 input x one output channel per cycle (conv3x3_serial, 18
 //   multipliers each) and take 9 216 cycles a patch each; the z-score's 8
 //   multipliers; the address arithmetic.
@@ -35,7 +35,7 @@
 // Words 0-1 (raw 0-7) are dropped.
 // dout: [height][width][4] int32, as justounetsimple_opt's: the 3 scores
 // (score * 2^OUT_FRAC), then the class (0 cloud, 1 land, 2 sea).
-// Any height and width (>= 1).
+// Any height and width from 1 to 65535 (the index arithmetic is 16-bit).
 
 // The kernel's sizes and formats, used as they are by the .cpp and the testbench.
 // constexpr, not #define: a macro H would also rewrite every template

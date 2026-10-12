@@ -45,3 +45,27 @@ static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE
     return a > b ? a : b;
 }
+
+// a * b in R, built from a DSP (DSP = true) or from LUTs (false; HLS calls
+// them "fabric"), said with a pragma instead of left to HLS. BIND_OP's impl
+// takes only a literal word, not a template argument, so each choice has its
+// own branch; HLS keeps the one DSP picks. The modules with multipliers take
+// DSP as a template argument, so a kernel's top function shows where each
+// process's go; the index arithmetic (patch counts, row addresses) is always
+// LUTs. The csynth report's "Bind Op Report" lists what HLS built. A multiply
+// by a constant needs neither: HLS turns it into shifts and adds.
+template<bool DSP, typename R, typename A, typename B>
+R mul(A a, B b) {
+    #pragma HLS INLINE
+    R p;
+    if (DSP) {
+        const R d = (R)a * (R)b;
+        #pragma HLS BIND_OP variable=d op=mul impl=dsp
+        p = d;
+    } else {
+        const R f = (R)a * (R)b;
+        #pragma HLS BIND_OP variable=f op=mul impl=fabric
+        p = f;
+    }
+    return p;
+}

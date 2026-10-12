@@ -9,12 +9,13 @@
 // modules (conv3x3_narrow, the boards' conv3x3_wide) run it once per patch.
 
 // Copy one conv layer's weights from ROM into a local array, and its biases
-// shifted left to the scale of the sums (bias_shift = the sums' fraction bits
-// minus the bias's). The caller partitions wl/bl as conv3x3_stream needs.
+// shifted left to the scale of the sums (BIAS_SHIFT = the sums' fraction bits
+// minus the bias's; a constant, so the shift is no multiplier). The caller
+// partitions wl/bl as conv3x3_stream needs.
 // IN_PAD > IN_CH pads the input channels with zero weights, so a layer can take
 // IN_PAD channels at P per cycle when P does not divide IN_CH.
-template<int OUT_CH, int IN_CH, int IN_PAD = IN_CH>
-void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH], int bias_shift,
+template<int OUT_CH, int IN_CH, int BIAS_SHIFT, int IN_PAD = IN_CH>
+void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH],
                        wgt_t wl[OUT_CH][IN_PAD][3][3], acc_t bl[OUT_CH]) {
     static_assert(IN_PAD >= IN_CH, "IN_PAD must be at least IN_CH");
     load_w: for (int oc = 0; oc < OUT_CH; oc++)
@@ -27,7 +28,7 @@ void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH]
                 }
     load_b: for (int oc = 0; oc < OUT_CH; oc++) {
         #pragma HLS PIPELINE II=1
-        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << bias_shift);
+        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << BIAS_SHIFT);
     }
 }
 
@@ -53,9 +54,10 @@ void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH]
 // STEPS = 1 the caller partitions wl complete in dims 1, 3, 4 and cyclic by P
 // in dim 2.
 //
-// A_T, the activations' type, comes from the input stream: act_t, or act8_t
-// for a first layer.
-template<int H, int W, int IN_CH, int OUT_CH, int P, int STEPS, typename A_T>
+// DSP: the multipliers in DSPs, or in LUTs (mul, fixed_point.hpp). A_T, the
+// activations' type, comes from the input stream: act_t, or act8_t for a
+// first layer.
+template<int H, int W, int IN_CH, int OUT_CH, int P, int STEPS, bool DSP, typename A_T>
 void conv3x3_stream(hls::stream<vec_t<A_T, P> >& in,
                     const wgt_t wl[OUT_CH][IN_CH][3][3], const acc_t bl[OUT_CH],
                     hls::stream<vec_t<acc_t, OUT_CH> >& out) {
@@ -133,7 +135,7 @@ void conv3x3_stream(hls::stream<vec_t<A_T, P> >& in,
                         for (int kj = 0; kj < 3; kj++) {
                             #pragma HLS UNROLL
                             const A_T a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][p] : (A_T)0;
-                            sum += (acc_t)a * (acc_t)wl[oc][chunk * P + p][ki][kj];
+                            sum += mul<DSP, acc_t>(a, wl[oc][chunk * P + p][ki][kj]);
                         }
                     }
                 }

@@ -104,6 +104,13 @@ those are the user's, on the lab server, every time.
 - HLS knows the weights' values (loaded once from constant arrays) and sizes
   each multiplier for its weight: small weights become LUT shift-adds, zero
   weights vanish. That is why DSP counts can be far below the multiply count.
+- Say where every multiplier goes; do not leave it to HLS. A multiply whose
+  operands are only known at run time goes through `mul<DSP>`
+  (`src/optimized/shared/fixed_point.hpp`): a `BIND_OP` pragma, `impl=dsp` or
+  `impl=fabric` (LUTs). `impl` takes only a literal word, so each choice is its
+  own branch. The modules take `bool DSP` as their last template argument, so
+  each kernel's top function shows it per process. Index arithmetic is always
+  LUTs. Check the csynth report's Bind Op Report against it.
 - Generated files must stay in sync:
   - `src/hls/justounetsimple_opt/justounetsimple_prep.hpp` comes from
     `python tools/justounetsimple_model.py`, and a test checks it;

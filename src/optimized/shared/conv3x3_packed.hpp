@@ -29,8 +29,9 @@
 // while the C++ was right. A finished packed number times a is a plain
 // multiply-add, which it gets right.
 //
-// Each multiply is bound to a DSP here, so a kernel can send every other
-// multiply to LUTs (config_op mul -impl fabric, as the Zynq-7020's does).
+// So it has no DSP switch: in LUTs, a packed multiply and its split cost more
+// than two plain ones (conv3x3_stream with DSP = false). Each multiply is
+// bound to a DSP.
 //
 // Everything else is conv3x3_stream with STEPS = 1 (read that first): P
 // channels a cycle, chunk by chunk, OUT_CH (even) outputs per pixel in the
@@ -62,8 +63,8 @@ acc_t pack_high(int64_t s) {
 
 // load_conv_weights for conv3x3_packed: output channels 2j and 2j + 1 packed
 // into wp[j], w[2j + 1] * 2^SHIFT + w[2j]; IN_PAD > IN_CH pads with zeros.
-template<int OUT_CH, int IN_CH, int IN_PAD, int SHIFT>
-void load_packed_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH], int bias_shift,
+template<int OUT_CH, int IN_CH, int IN_PAD, int SHIFT, int BIAS_SHIFT>
+void load_packed_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH],
                          pack_w_t<SHIFT> wp[OUT_CH / 2][IN_PAD][3][3], acc_t bl[OUT_CH]) {
     static_assert(IN_PAD >= IN_CH && OUT_CH % 2 == 0, "IN_PAD >= IN_CH, output channels in pairs");
     load_w: for (int j = 0; j < OUT_CH / 2; j++)
@@ -78,7 +79,7 @@ void load_packed_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_C
                 }
     load_b: for (int oc = 0; oc < OUT_CH; oc++) {
         #pragma HLS PIPELINE II=1
-        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << bias_shift);
+        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << BIAS_SHIFT);
     }
 }
 
@@ -204,7 +205,7 @@ void conv3x3_packed_layer(hls::stream<vec_t<act8_t, P> >& in, hls::stream<vec_t<
     acc_t bl[OUT];
     #pragma HLS ARRAY_PARTITION variable=bl type=complete
 
-    load_packed_weights<OUT, IN, IN_PAD, SHIFT>(WEIGHT, BIAS, BIAS_SHIFT, wp, bl);
+    load_packed_weights<OUT, IN, IN_PAD, SHIFT, BIAS_SHIFT>(WEIGHT, BIAS, wp, bl);
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665

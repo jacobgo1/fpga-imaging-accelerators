@@ -8,7 +8,7 @@
     "zynq7020": {
       "part": "xc7z020clg400-1",
       "script": "boards/zynq7020/system.tcl",
-      "clock_ns": 10.0
+      "clock_ns": 12.8
     },
     "zynq7030": {
       "part": "xc7z030sbg485-1",

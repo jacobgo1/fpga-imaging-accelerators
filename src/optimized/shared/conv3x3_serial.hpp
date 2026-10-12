@@ -14,7 +14,7 @@
 // of them by one output channel's 9 weights each, adding to a running sum.
 // The weights: [output][input group][PI][3][3], one memory per (PI, tap),
 // addressed by (output, input group).
-template<int H, int W, int IN_CH, int OUT_CH, int PI>
+template<int H, int W, int IN_CH, int OUT_CH, int PI, bool DSP>
 void conv3x3_serial_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                           const wgt_t wl[OUT_CH][IN_CH / PI][PI][3][3], const acc_t bl[OUT_CH],
                           hls::stream<vec_t<acc_t, OUT_CH> >& out) {
@@ -79,7 +79,7 @@ void conv3x3_serial_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                     for (int kj = 0; kj < 3; kj++) {
                         #pragma HLS UNROLL
                         const act_t a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][ig * PI + p] : (act_t)0;
-                        sum += (acc_t)a * (acc_t)wl[oc][ig][p][ki][kj];
+                        sum += mul<DSP, acc_t>(a, wl[oc][ig][p][ki][kj]);
                     }
                 }
             }
@@ -118,9 +118,10 @@ void conv3x3_serial_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
 // The layer: the image is cut into PH x PW patches (patch_grid.hpp); the layer
 // is H x W of each. WEIGHT and BIAS: the layer's quantized int8 arrays,
 // template arguments so that they stay a constant ROM inside this process.
-// BIAS_SHIFT: the sums' fraction bits minus the bias's.
+// BIAS_SHIFT: the sums' fraction bits minus the bias's. DSP: the PI x 9
+// multipliers in DSPs, or in LUTs.
 template<int PH, int PW, int H, int W, int IN, int OUT, int PI, int BIAS_SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT]>
+         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP>
 void conv3x3_serial(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
                     int height, int width) {
     wgt_t wl[OUT][IN / PI][PI][3][3];
@@ -143,6 +144,6 @@ void conv3x3_serial(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t,
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_serial_patch<H, W, IN, OUT, PI>(in, wl, bl, out);
+        conv3x3_serial_patch<H, W, IN, OUT, PI, DSP>(in, wl, bl, out);
     }
 }

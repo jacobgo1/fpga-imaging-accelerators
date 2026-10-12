@@ -56,9 +56,9 @@ per DSP (216 DSPs), conv2-4 one input x one output channel per cycle, two
 `justounetsimple_opt_zynq7020` is the same model again, for the 7020's 220 DSPs:
 conv1 takes 216 of them at 8 bands per cycle, **two multiplies per DSP** (the
 same packing as the ZCU104's, 16 bits apart instead of 18 to fit the DSP48E1's
-25-bit input), and every other multiply is in LUTs
-(`config/justounetsimple_opt_zynq7020.tcl`): conv2-4 at 2 input x one output
-channel per cycle, the z-score, the address arithmetic. Two 64-bit read ports
+25-bit input), and every other multiply is in LUTs (`DSP = false` in its
+top function): conv2-4 at 2 input x one output channel per cycle, the
+z-score, the address arithmetic. Two 64-bit read ports
 and one write port, the patch buffer in block RAM (56 BRAM36). The two read
 ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
 0.16 ms per patch at 100 MHz, 4x the ZCU104's. Build it with

@@ -55,7 +55,7 @@ void store_scores(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> do
                     // Wait for the oldest burst only when IN_FLIGHT are out.
                     if (pending == IN_FLIGHT) dout.write_response();
                     else pending++;
-                    dout.write_request((uint64_t)y * width + x0, n);
+                    dout.write_request(mul<false, uint32_t>((uint16_t)y, (uint16_t)width) + x0, n);
                 }
                 put: for (int x = 0; x < n; x++) {
                     #pragma HLS PIPELINE II=1

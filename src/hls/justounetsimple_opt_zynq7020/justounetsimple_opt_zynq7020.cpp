@@ -85,7 +85,7 @@ void justounetsimple_opt_zynq7020(const jopt_raw_t *din0, const jopt_raw_t *din1
     // Every process walks the same grid of H x W patches, one after another.
     read_rows<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
     read_rows<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B>(
+    patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, false>(
         s_raw, s_in, height, width);
     // conv1: 110 -> 6 at 32 x 32, 8 bands per cycle (112 with the zero ones),
     // 6 x 8 x 9 = 432 multiply-adds per cycle, two per DSP: 216 DSPs.
@@ -94,14 +94,14 @@ void justounetsimple_opt_zynq7020(const jopt_raw_t *din0, const jopt_raw_t *din1
     relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width);         // -> 16 x 16
     // conv2: 6 -> 12 at 16 x 16, 36 cycles per pixel.
     conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, P2, SUM2 - q::conv2_bias_frac,
-                   q::conv2_weight, q::conv2_bias>(s_a, s_conv2, height, width);
+                   q::conv2_weight, q::conv2_bias, false>(s_a, s_conv2, height, width);
     relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width);    // 16 x 16
     // conv3: 12 -> 6 at 16 x 16, 36 cycles per pixel.
     conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, P2, SUM3 - q::conv3_bias_frac,
-                   q::conv3_weight, q::conv3_bias>(s_b, s_conv3, height, width);
+                   q::conv3_weight, q::conv3_bias, false>(s_b, s_conv3, height, width);
     relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width);         // -> 32 x 32
     // conv4: 6 -> 3 at 32 x 32, no activation, 9 cycles per pixel.
     conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, P2, SUM4 - q::conv4_bias_frac,
-                   q::conv4_weight, q::conv4_bias>(s_c, s_conv4, height, width);
+                   q::conv4_weight, q::conv4_bias, false>(s_c, s_conv4, height, width);
     store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width);
 }

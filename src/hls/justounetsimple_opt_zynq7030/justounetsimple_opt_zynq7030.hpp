@@ -30,7 +30,7 @@
 // Words 0-1 (raw 0-7) are dropped.
 // dout: [height][width][4] int32, as justounetsimple_opt's: the 3 scores
 // (score * 2^OUT_FRAC), then the class (0 cloud, 1 land, 2 sea).
-// Any height and width (>= 1).
+// Any height and width from 1 to 65535 (the index arithmetic is 16-bit).
 
 // The kernel's sizes and formats, used as they are by the .cpp and the testbench.
 // constexpr, not #define: a macro H would also rewrite every template

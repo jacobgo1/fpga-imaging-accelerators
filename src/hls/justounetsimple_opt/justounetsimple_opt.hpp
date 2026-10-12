@@ -43,8 +43,9 @@
 // dout: [height][width][4] int32: the 3 scores (score * 2^OUT_FRAC), then the
 // class (0 cloud, 1 land, 2 sea; the first highest score). Four, not three, so
 // that a pixel is one 128-bit word: one write per pixel, not three.
-// Any height and width (>= 1). A strip of a larger image works the same way:
-// point din at its first row and dout at that row's scores.
+// Any height and width from 1 to 65535 (the index arithmetic is 16-bit). A
+// strip of a larger image works the same way: point din at its first row and
+// dout at that row's scores.
 
 // The kernel's sizes and formats, used as they are by the .cpp and the testbench.
 // constexpr, not #define: a macro H would also rewrite every template

@@ -16,6 +16,7 @@
 // ones before them dropped. Kept band k becomes
 //     round((dn - mean) / std * 2^F) = (dn * ZA[k] + ZB[k]) >> FRAC,
 // saturated at +-IN_MAX (127: never -128, which conv3x3_wide's packing needs).
+// DSP: its PORTS x LANES z-score multipliers in DSPs, or in LUTs.
 // Out: P kept bands of a pixel per cycle, in conv3x3_wide's order: chunk by
 // chunk, each in raster order. The last chunk's bands past the kept ones are
 // zero.
@@ -24,16 +25,16 @@
 // other; then the buffers swap. n patches take n + 1 rounds of
 // max(FILL, EMIT) cycles: the words of one patch per port, or the chunks
 // times the pixels.
-template<int FRAC, int IN_MAX>
+template<int FRAC, int IN_MAX, bool DSP>
 act8_t z_score(uint16_t dn, int32_t a, int32_t b) {
     #pragma HLS INLINE
-    const int64_t s = ((int64_t)dn * a + b) >> FRAC;
+    const int64_t s = (mul<DSP, int64_t>(dn, a) + b) >> FRAC;
     return (act8_t)(s > IN_MAX ? IN_MAX : s < -IN_MAX ? -IN_MAX : s);
 }
 
 template<int PH, int PW, int WORDS, int FIRST, int LANES, int P, int PORTS, int FRAC, int IN_MAX,
          const int32_t (&ZA)[(WORDS - FIRST) * LANES], const int32_t (&ZB)[(WORDS - FIRST) * LANES],
-         typename WORD_T>
+         bool DSP, typename WORD_T>
 void patch_buffer(hls::stream<WORD_T> raw[PORTS], hls::stream<vec_t<act8_t, P> >& out,
                   int height, int width) {
     static_assert(FIRST >= 0 && FIRST < WORDS, "at least one word of a pixel is kept");
@@ -103,7 +104,7 @@ void patch_buffer(hls::stream<WORD_T> raw[PORTS], hls::stream<vec_t<act8_t, P> >
                 word_t z;
                 for (int p = 0; p < LANES; p++) {
                     #pragma HLS UNROLL
-                    z.v[p] = z_score<FRAC, IN_MAX>(w[r][p], za[kw][p], zb[kw][p]);
+                    z.v[p] = z_score<FRAC, IN_MAX, DSP>(w[r][p], za[kw][p], zb[kw][p]);
                 }
                 for (int q = 0; q < PER_CHUNK; q++) {
                     #pragma HLS UNROLL

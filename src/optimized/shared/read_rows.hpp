@@ -24,7 +24,9 @@ void read_rows(const WORD_T *din, hls::stream<WORD_T>& out, int height, int widt
                 const int y = pr * PH + PORTS * i + PORT;
                 const int x0 = pc * PW;
                 const int n = width - x0 < PW ? width - x0 : PW;   // pixels inside the image
-                const WORD_T *src = din + ((uint32_t)(y < height ? y : height - 1) * width + x0) * WORDS;
+                const uint32_t row = mul<false, uint32_t>((uint16_t)(y < height ? y : height - 1),
+                                                          (uint16_t)width);   // in LUTs
+                const WORD_T *src = din + (row + x0) * WORDS;
                 WORD_T last[WORDS];                                // the last pixel read
                 #pragma HLS ARRAY_PARTITION variable=last type=complete
                 int w = 0;
