@@ -1,15 +1,20 @@
 #!/bin/bash
 # Everything a board needs to run jopt_driver, as one archive:
-#   software/driver/scripts/package.sh zynq7030
-#   software/driver/scripts/package.sh zcu104
-#   software/driver/scripts/package.sh zynq7020      (the PYNQ-Z2)
-# takes the newest bitstream run of that board's kernel (justounetsimple_opt
-# for the ZCU104, justounetsimple_opt_zynq7030 for HYPSO-2,
-# justounetsimple_opt_zynq7020 for the PYNQ-Z2) (or the run
-# folder given as a second argument) and writes
+#   software/driver/scripts/package.sh zcu104       ZCU104 with PYNQ
+#   software/driver/scripts/package.sh zynq7030     HYPSO-2
+#   software/driver/scripts/package.sh zynq7020     ZedBoard with Petalinux
+# takes the newest bitstream run of that board's kernel (justounetsimple_opt,
+# justounetsimple_opt_zynq7030, justounetsimple_opt_zynq7020), or the run folder
+# given as a second argument, and writes
 #   software/driver/build-BOARD/jopt_driver_BOARD.tar.gz
-# with the driver, the register header and bitstream of that run, the device
-# tree snippet; for HYPSO-2 process-capture.sh, for the PYNQ boards jopt_driver.ipynb. Cross-compile first (cross-compile.sh).
+# with the driver and the register header of that run, and its firmware as the
+# board loads it:
+#   zcu104    the .bit and .hwh for PYNQ, and jopt_driver.ipynb
+#   zynq7030  the .bit, the device tree snippet and process-capture.sh
+#   zynq7020  the .bit.bin and .dtbo for fpgautil (made here with bootgen and
+#             dtc, as driver_ntnu's build-firmware.sh makes them with
+#             Petalinux), and zedboard-run.sh
+# Cross-compile first (cross-compile.sh).
 set -e
 board=$1
 case "$board" in
@@ -39,13 +44,45 @@ rm -rf "$out"
 mkdir -p "$out"
 cp "$driver/build-$board/jopt_driver" "$out/"
 cp "$(ls "$run"/hls/solution/impl/ip/drivers/*/src/*_hw.h | head -n 1)" "$out/"
-cp "$(ls "$run"/vivado/system.runs/impl_1/*.bit | head -n 1)" "$out/$kernel.bit"
-# PYNQ's Overlay wants the .hwh next to the .bit, by the same name.
+bit=$(ls "$run"/vivado/system.runs/impl_1/*.bit | head -n 1)
 hwh=$(find "$run/vivado" -path '*hw_handoff/system.hwh' | head -n 1)
-[ -n "$hwh" ] && cp "$hwh" "$out/$kernel.hwh"
-[ -f "$driver/firmware/$board.dtsi" ] && cp "$driver/firmware/$board.dtsi" "$out/"
-[ "$board" = zynq7030 ] && cp "$driver/scripts/process-capture.sh" "$out/"
-# The ZCU104 and the PYNQ-Z2 run PYNQ: a notebook that loads the bitstream and runs the driver.
-[ "$board" != zynq7030 ] && cp "$driver/jopt_driver.ipynb" "$out/"
+
+# A tool from PATH, else from the AMD install (bootgen and dtc come with Vitis).
+tool() {
+    command -v "$1" 2>/dev/null || find /opt /tools -path '*/bin/*' -name "$1" -type f 2>/dev/null | sort | tail -n 1
+}
+
+case "$board" in
+    zcu104)
+        # PYNQ's Overlay wants the .hwh next to the .bit, by the same name.
+        cp "$bit" "$out/$kernel.bit"
+        cp "$hwh" "$out/$kernel.hwh"
+        cp "$driver/jopt_driver.ipynb" "$out/"
+        ;;
+    zynq7030)
+        cp "$bit" "$out/$kernel.bit"
+        cp "$driver/firmware/zynq7030.dtsi" "$driver/scripts/process-capture.sh" "$out/"
+        ;;
+    zynq7020)
+        [ -n "$hwh" ] || { echo "no system.hwh in $run/vivado" >&2; exit 1; }
+        bootgen=$(tool bootgen)
+        dtc=$(tool dtc)
+        [ -n "$bootgen" ] && [ -n "$dtc" ] || { echo "need bootgen and dtc (they come with Vitis)" >&2; exit 1; }
+        read -r regs clock_hz < <(python3 "$driver/scripts/hwh_values.py" "$hwh")
+        echo "kernel registers at 0x$regs, FCLK_CLK0 $clock_hz Hz (from $hwh)"
+        # The .bit.bin: the bitstream without its header, what the FPGA manager loads.
+        work=$(mktemp -d)
+        cp "$bit" "$work/$kernel.bit"
+        printf 'all:\n{\n    %s.bit\n}\n' "$kernel" > "$work/$kernel.bif"
+        (cd "$work" && "$bootgen" -image "$kernel.bif" -arch zynq -process_bitstream bin -w on >/dev/null)
+        cp "$work/$kernel.bit.bin" "$out/"
+        rm -rf "$work"
+        # The .dtbo: firmware/zynq7020-overlay.dts with this build's values.
+        sed -e "s/@FIRMWARE@/$kernel.bit.bin/" -e "s/@REGS@/$regs/g" -e "s/@CLOCK_HZ@/$clock_hz/" \
+            "$driver/firmware/zynq7020-overlay.dts" > "$out/$kernel.dts"
+        "$dtc" -@ -q -I dts -O dtb -o "$out/$kernel.dtbo" "$out/$kernel.dts"
+        cp "$driver/scripts/zedboard-run.sh" "$out/"
+        ;;
+esac
 tar -C "$driver/build-$board" -czf "$out.tar.gz" "jopt_driver_$board"
 echo "for the board: $out.tar.gz"

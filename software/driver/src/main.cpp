@@ -222,15 +222,21 @@ static int run(const Options &o) {
             << " read ports; " << starts << (starts == 1 ? " start" : " starts of " +
                std::to_string(plan.strip_rows) + " rows") << "\n";
 
-  // One strip of the cube in the ARM's memory at a time; the scores of all.
-  std::vector<uint64_t> strip((plan.strip_rows * cube.row_bytes() + 7) / 8);
+  // The cube goes from the file into DDR CHUNK rows at a time, so that the ARM
+  // holds a few MB of it, not a strip (the ZedBoard's Linux has 256 MB in all).
+  // The scores of the whole image stay in memory: 16 bytes a pixel.
+  constexpr uint32_t CHUNK = 32;
+  std::vector<uint64_t> chunk((CHUNK * cube.row_bytes() + 7) / 8);
   std::vector<int32_t> scores(size_t(height) * width * 4);
   double load_ms = 0, fpga_ms = 0, read_ms = 0;
   auto rows_of = [&](uint32_t s) { return std::min(plan.strip_rows, height - s * plan.strip_rows); };
   auto fill = [&](uint32_t s) {
     const auto t = Clock::now();
-    cube.read_rows(s * plan.strip_rows, rows_of(s), strip.data());
-    copy_to(*memory, plan.in(s % plan.buffers), strip.data(), rows_of(s) * cube.row_bytes());
+    for (uint32_t done = 0; done < rows_of(s); done += CHUNK) {
+      const uint32_t rows = std::min(CHUNK, rows_of(s) - done);
+      cube.read_rows(s * plan.strip_rows + done, rows, chunk.data());
+      copy_to(*memory, plan.in(s % plan.buffers) + done * cube.row_bytes(), chunk.data(), rows * cube.row_bytes());
+    }
     load_ms += ms_since(t);
   };
 

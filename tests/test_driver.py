@@ -5,7 +5,7 @@ jopt_driver_sim is the driver with a kernel's own C++ in place of the FPGA
 copies and the files against classify_fixed -- not the board's UIO or DDR.
 Once for each kernel the driver serves: justounetsimple_opt (ZCU104) and, where
 they exist, justounetsimple_opt_zynq7030 (HYPSO-2) and justounetsimple_opt_zynq7020
-(PYNQ-Z2).
+(ZedBoard).
 """
 import importlib.util
 from pathlib import Path

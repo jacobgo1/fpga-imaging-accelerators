@@ -1,0 +1,59 @@
+// ZedBoard (Zynq-7020) with Petalinux: the device tree overlay that loads the
+// bitstream and gives jopt_driver its two UIO devices, as Petalinux's own
+// overlay does for driver_ntnu on HYPSO-2. scripts/package.sh fills in the
+// @...@ values from the build's .hwh and compiles it with dtc into the .dtbo;
+// on the board, fpgautil -b BITSTREAM.bit.bin -o BITSTREAM.dtbo loads both.
+//
+// The bootargs must contain uio_pdrv_genirq.of_id=generic-uio (they do).
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    // The bitstream, from /lib/firmware (fpgautil puts it there).
+    fragment@0 {
+        target = <&fpga_full>;
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <1>;
+            firmware-name = "@FIRMWARE@";
+        };
+    };
+
+    fragment@1 {
+        target = <&amba>;
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            // FCLK_CLK0 at the frequency the kernel was built for: fpgautil
+            // loads the bitstream but does not set clocks; this node does.
+            jopt_clock: jopt_clock {
+                compatible = "xlnx,fclk";
+                #clock-cells = <0>;
+                clocks = <&clkc 15>;
+                assigned-clocks = <&clkc 15>;
+                assigned-clock-rates = <@CLOCK_HZ@>;
+                clock-output-names = "fabric_clk";
+            };
+
+            // The kernel's registers, where the block design put them ("kernel"
+            // on GP0).
+            justounetsimple_opt@@REGS@ {
+                compatible = "generic-uio";
+                linux,uio-name = "justounetsimple_opt";
+                reg = <0x@REGS@ 0x10000>;
+                clocks = <&clkc 15>;
+            };
+
+            // DDR for the cube and the scores: the upper 256 MB of the ZedBoard's
+            // 512 MB, which this Linux does not use (its System RAM ends at
+            // 0x0fffffff).
+            jopt_memory@10000000 {
+                compatible = "generic-uio";
+                linux,uio-name = "jopt_memory";
+                reg = <0x10000000 0x10000000>;
+            };
+        };
+    };
+};

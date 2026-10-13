@@ -7,7 +7,7 @@
 #   1. the quantized weights, if they are missing (not in git)
 #   2. the driver's tests (tests/test_driver.py)
 #   3. the bitstreams: justounetsimple_opt (ZCU104), justounetsimple_opt_zynq7030 (HYPSO-2),
-#      justounetsimple_opt_zynq7020 (PYNQ-Z2)
+#      justounetsimple_opt_zynq7020 (ZedBoard)
 #   4. the cross compilers and cmake, if missing, then the driver for each board's ARM
 #   5. the packages: software/driver/build-BOARD/jopt_driver_BOARD.tar.gz for
 #      zcu104, zynq7030 and zynq7020

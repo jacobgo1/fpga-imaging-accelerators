@@ -2,7 +2,7 @@
 # Cross-compile jopt_driver for a board's ARM:
 #   software/driver/scripts/cross-compile.sh zynq7030     -> software/driver/build-zynq7030/jopt_driver
 #   software/driver/scripts/cross-compile.sh zcu104       -> software/driver/build-zcu104/jopt_driver
-#   software/driver/scripts/cross-compile.sh zynq7020     -> software/driver/build-zynq7020/jopt_driver (PYNQ-Z2)
+#   software/driver/scripts/cross-compile.sh zynq7020     -> software/driver/build-zynq7020/jopt_driver (ZedBoard)
 # Uses the cross compiler on PATH if there is one (Ubuntu: apt install
 # g++-arm-linux-gnueabihf g++-aarch64-linux-gnu), else the Docker image built
 # from scripts/Dockerfile.

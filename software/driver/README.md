@@ -3,7 +3,7 @@
 What the `justounetsimple_opt` notebook does, as one C++ program for the board's
 ARM, without Python or PYNQ: the same program for the ZCU104 (64-bit ARM,
 kernel `justounetsimple_opt`), HYPSO-2 (Zynq-7030, 32-bit ARM, kernel
-`justounetsimple_opt_zynq7030`) and the lab's PYNQ-Z2 (Zynq-7020, 32-bit ARM,
+`justounetsimple_opt_zynq7030`) and the lab's ZedBoard (Zynq-7020, Petalinux, 32-bit ARM,
 kernel `justounetsimple_opt_zynq7020`). Modelled on `driver_ntnu/cnn-1d-picobob`, the
 1D CNN driver flown on HYPSO-2:
 
@@ -123,14 +123,32 @@ buffer ("Operation not permitted": a kernel built with `STRICT_DEVMEM`), reserve
 DDR at boot instead: `mem=1536M` on the kernel command line leaves
 `0x6000_0000`–`0x7FFF_FFFF` to the driver (`--devmem-memory 0x60000000:0x20000000`).
 
-## PYNQ-Z2 (Zynq-7020)
+## ZedBoard (Zynq-7020) with Petalinux
 
-The same as the ZCU104 with PYNQ, with `justounetsimple_opt_zynq7020` (2 read ports,
-like the 7030's) and the 32-bit driver: `package.sh zynq7020` packs the newest
-`build/justounetsimple_opt_zynq7020/*-bitstream-zynq7020` run with the notebook.
-`jopt_driver.ipynb` takes the kernel's register address from the overlay
-(`0x4000_0000` here) and lends the driver as much DDR as PYNQ can spare, up to
-128 MB; the Z2 has 512 MB in all, so a full capture may run in strips.
+The `driver_ntnu` way, as on HYPSO-2: `fpgautil` loads the bitstream (`.bit.bin`)
+and a device tree overlay (`.dtbo`), the overlay sets the FPGA clock and gives
+the kernel's registers and the DDR to UIO, and the driver finds both by name.
+`package.sh zynq7020` makes the two files from the newest
+`build/justounetsimple_opt_zynq7020/*-bitstream-zynq7020` run: the `.bit.bin` with
+`bootgen`, the `.dtbo` from `firmware/zynq7020-overlay.dts` with `dtc`, the
+kernel's address and clock taken from the run's `.hwh` (`scripts/hwh_values.py`).
+Driver_ntnu makes them with Petalinux's tools; these two come with Vitis.
+
+The DDR is the upper half of the ZedBoard's 512 MB (`0x1000_0000`, 256 MB): this
+Linux's System RAM ends at `0x0fff_ffff`, so no memory has to be reserved. A whole
+598 x 1092 capture fits in one start; the driver reads the cube from the file in
+32-row pieces, so it never holds more than a few MB of it in the ARM's 256 MB.
+
+On the board:
+
+```sh
+./zedboard-run.sh /home/root/zed_test/cube.npy /home/root/zed_test/reference_fixed.npy
+```
+
+The project's 7020 target is the PYNQ-Z2's package, `xc7z020clg400-1`; the
+ZedBoard's is `xc7z020clg484-1`, the same die. The design uses no PL pins, so a
+clg400 bitstream should load; if `fpgautil` refuses it, set the zynq7020 part in
+`config/project.json` to `xc7z020clg484-1` and rebuild.
 
 ## ZCU104 with Petalinux
 
