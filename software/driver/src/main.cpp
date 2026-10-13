@@ -54,7 +54,7 @@ Hardware
   --uio-memory NAME      UIO name of the reserved DDR (default jopt_memory)
   --devmem-memory A:S    /dev/mem instead of UIO: reserved DDR at physical address A, S bytes
   --devmem-regs A        with --devmem-memory: the kernel's registers (default by --board)
-  --board B              zcu104 (registers at 0xa0000000, the default) or zynq7030 (0x40000000)
+  --board B              zcu104 (registers at 0xa0000000, the default), zynq7030 or zynq7020 (0x40000000)
   --strip-rows N         rows per start, a multiple of 32 (default: as many as fit)
   --timeout S            seconds per start before giving up (default 60)
 )";
@@ -133,8 +133,8 @@ static Options parse(int argc, char **argv) {
   }
   if (o.header.empty()) o.header = find_header(fs::path(argv[0]).parent_path());
   if (o.input.empty()) throw std::runtime_error("--input is required (--help lists the options)");
-  if (o.board != "zcu104" && o.board != "zynq7030") {
-    throw std::runtime_error("--board is zcu104 or zynq7030, not " + o.board);
+  if (o.board != "zcu104" && o.board != "zynq7030" && o.board != "zynq7020") {
+    throw std::runtime_error("--board is zcu104, zynq7030 or zynq7020, not " + o.board);
   }
   if (o.strip_rows % PATCH) {
     throw std::runtime_error("--strip-rows must be a multiple of 32, so that the strips cut whole patches");
@@ -202,7 +202,7 @@ static int run(const Options &o) {
   std::cout << "simulation: the kernel's C++ on this CPU, " << o.sim_memory << " bytes of \"DDR\"\n";
 #else
   if (o.devmem_phys) {
-    const uint64_t regs = o.devmem_regs ? *o.devmem_regs : (o.board == "zynq7030" ? 0x40000000 : 0xa0000000);
+    const uint64_t regs = o.devmem_regs ? *o.devmem_regs : (o.board == "zcu104" ? 0xa0000000 : 0x40000000);
     memory.emplace(Region::devmem(*o.devmem_phys, o.devmem_size));
     registers = std::make_unique<MmioRegisters>(Region::devmem(regs, 0x1000));
     std::cout << "/dev/mem: registers at " << hex(regs) << ", ";

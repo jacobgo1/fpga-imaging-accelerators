@@ -12,7 +12,7 @@ option(JOPT_STATIC "Link statically (Linux targets)" ON)
 # jopt_driver_sim: the kernel's C++ instead of the FPGA, for testing on a PC.
 option(JOPT_SIM "Also build jopt_driver_sim" OFF)
 set(JOPT_SIM_KERNEL justounetsimple_opt CACHE STRING
-    "The kernel jopt_driver_sim runs: justounetsimple_opt or justounetsimple_opt_zynq7030")
+    "The kernel jopt_driver_sim runs: justounetsimple_opt, justounetsimple_opt_zynq7030 or justounetsimple_opt_zynq7020")
 
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(DRIVER_SOURCES
@@ -39,6 +39,8 @@ if(JOPT_SIM)
   target_compile_definitions(jopt_driver_sim PRIVATE JOPT_SIM _FILE_OFFSET_BITS=64)
   if(JOPT_SIM_KERNEL STREQUAL "justounetsimple_opt_zynq7030")
     target_compile_definitions(jopt_driver_sim PRIVATE JOPT_SIM_ZYNQ7030)
+  elseif(JOPT_SIM_KERNEL STREQUAL "justounetsimple_opt_zynq7020")
+    target_compile_definitions(jopt_driver_sim PRIVATE JOPT_SIM_ZYNQ7020)
   endif()
   target_compile_options(jopt_driver_sim PRIVATE -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-label)
 endif()

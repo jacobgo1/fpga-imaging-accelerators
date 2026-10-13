@@ -2,15 +2,16 @@
 # Cross-compile jopt_driver for a board's ARM:
 #   software/driver/scripts/cross-compile.sh zynq7030     -> software/driver/build-zynq7030/jopt_driver
 #   software/driver/scripts/cross-compile.sh zcu104       -> software/driver/build-zcu104/jopt_driver
+#   software/driver/scripts/cross-compile.sh zynq7020     -> software/driver/build-zynq7020/jopt_driver (PYNQ-Z2)
 # Uses the cross compiler on PATH if there is one (Ubuntu: apt install
 # g++-arm-linux-gnueabihf g++-aarch64-linux-gnu), else the Docker image built
 # from scripts/Dockerfile.
 set -e
 board=$1
 case "$board" in
-    zynq7030) cxx=arm-linux-gnueabihf-g++ ;;
+    zynq7030|zynq7020) cxx=arm-linux-gnueabihf-g++ ;;
     zcu104)   cxx=aarch64-linux-gnu-g++ ;;
-    *) echo "usage: $0 zynq7030|zcu104" >&2; exit 1 ;;
+    *) echo "usage: $0 zcu104|zynq7030|zynq7020" >&2; exit 1 ;;
 esac
 driver=$(cd "$(dirname "$0")/.." && pwd)
 build="cmake -S . -B build-$board -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-$board.cmake && cmake --build build-$board -j"

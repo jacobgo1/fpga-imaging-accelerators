@@ -4,7 +4,8 @@ jopt_driver_sim is the driver with a kernel's own C++ in place of the FPGA
 (software/driver/src/sim.cpp): it checks the register map, the strips, the
 copies and the files against classify_fixed -- not the board's UIO or DDR.
 Once for each kernel the driver serves: justounetsimple_opt (ZCU104) and, where
-it exists, justounetsimple_opt_zynq7030 (HYPSO-2).
+they exist, justounetsimple_opt_zynq7030 (HYPSO-2) and justounetsimple_opt_zynq7020
+(PYNQ-Z2).
 """
 import importlib.util
 from pathlib import Path
@@ -152,6 +153,12 @@ class ZCU104DriverTests(DriverTests, unittest.TestCase):
 @unittest.skipUnless((ROOT / 'src/hls/justounetsimple_opt_zynq7030').is_dir(), 'no justounetsimple_opt_zynq7030 kernel')
 class Zynq7030DriverTests(DriverTests, unittest.TestCase):
     KERNEL, PORTS, DEFINES = 'justounetsimple_opt_zynq7030', 2, ['-DJOPT_SIM_ZYNQ7030']
+
+
+@unittest.skipUnless(CXX and np is not None, 'needs a C++ compiler and numpy')
+@unittest.skipUnless((ROOT / 'src/hls/justounetsimple_opt_zynq7020').is_dir(), 'no justounetsimple_opt_zynq7020 kernel')
+class Zynq7020DriverTests(DriverTests, unittest.TestCase):
+    KERNEL, PORTS, DEFINES = 'justounetsimple_opt_zynq7020', 2, ['-DJOPT_SIM_ZYNQ7020']
 
 
 if __name__ == '__main__':

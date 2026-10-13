@@ -3,8 +3,10 @@
 #include "formats.hpp"
 
 // Which kernel stands in for the FPGA: CMake's JOPT_SIM_KERNEL.
-#ifdef JOPT_SIM_ZYNQ7030
+#if defined(JOPT_SIM_ZYNQ7030)
 #include "justounetsimple_opt_zynq7030.hpp"
+#elif defined(JOPT_SIM_ZYNQ7020)
+#include "justounetsimple_opt_zynq7020.hpp"
 #else
 #include "justounetsimple_opt.hpp"
 #endif
@@ -57,8 +59,10 @@ void SimRegisters::run() {
   }
   auto *dout = const_cast<jopt_out_t *>(
       static_cast<const jopt_out_t *>(pointer(value(map_.dout), pixels * OUT_PIXEL)));
-#ifdef JOPT_SIM_ZYNQ7030
+#if defined(JOPT_SIM_ZYNQ7030)
   justounetsimple_opt_zynq7030(din[0], din[1], dout, height, width);
+#elif defined(JOPT_SIM_ZYNQ7020)
+  justounetsimple_opt_zynq7020(din[0], din[1], dout, height, width);
 #else
   justounetsimple_opt(din[0], din[1], din[2], din[3], dout, height, width);
 #endif

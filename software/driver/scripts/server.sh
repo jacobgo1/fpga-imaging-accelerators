@@ -1,15 +1,16 @@
 #!/bin/bash
-# Everything the lab server does for the driver, in order, for both boards:
+# Everything the lab server does for the driver, in order, for every board:
 #
 #   software/driver/scripts/server.sh                     all of it, bitstreams included
 #   software/driver/scripts/server.sh --skip-bitstreams   use the newest bitstreams already built
 #
 #   1. the quantized weights, if they are missing (not in git)
 #   2. the driver's tests (tests/test_driver.py)
-#   3. the bitstreams: justounetsimple_opt (ZCU104), justounetsimple_opt_zynq7030 (HYPSO-2)
-#   4. the cross compilers and cmake, if missing, then the driver for both ARMs
-#   5. the packages: software/driver/build-zcu104/jopt_driver_zcu104.tar.gz and
-#      software/driver/build-zynq7030/jopt_driver_zynq7030.tar.gz
+#   3. the bitstreams: justounetsimple_opt (ZCU104), justounetsimple_opt_zynq7030 (HYPSO-2),
+#      justounetsimple_opt_zynq7020 (PYNQ-Z2)
+#   4. the cross compilers and cmake, if missing, then the driver for each board's ARM
+#   5. the packages: software/driver/build-BOARD/jopt_driver_BOARD.tar.gz for
+#      zcu104, zynq7030 and zynq7020
 #
 # It stops at the first step that fails. Everything it prints also goes to
 # software/driver/server.log. Bitstreams take long: run it with nohup (see README.md).
@@ -41,6 +42,7 @@ step "3/5 bitstreams"
 if [ "$build_bitstreams" = 1 ]; then
     fpga_build justounetsimple_opt
     fpga_build justounetsimple_opt_zynq7030 --board zynq7030
+    fpga_build justounetsimple_opt_zynq7020 --board zynq7020
 else
     echo "skipped (--skip-bitstreams): packaging the newest existing ones"
 fi
@@ -70,12 +72,21 @@ for cxx in aarch64-linux-gnu-g++ arm-linux-gnueabihf-g++; do
         echo "$cxx: $found (from the AMD tools)"
     fi
 done
-"$driver/scripts/cross-compile.sh" zcu104
-"$driver/scripts/cross-compile.sh" zynq7030
+for board in zcu104 zynq7030 zynq7020; do
+    "$driver/scripts/cross-compile.sh" "$board"
+done
 
 step "5/5 packages"
-"$driver/scripts/package.sh" zcu104
-"$driver/scripts/package.sh" zynq7030
+for board in zcu104 zynq7030 zynq7020; do
+    # With --skip-bitstreams, a board without a bitstream yet is not a failure.
+    if "$driver/scripts/package.sh" "$board"; then
+        :
+    elif [ "$build_bitstreams" = 0 ]; then
+        echo "no package for $board: build its bitstream first (server.sh without --skip-bitstreams)"
+    else
+        false
+    fi
+done
 
 step "DONE"
-ls -l "$driver"/build-zcu104/jopt_driver_zcu104.tar.gz "$driver"/build-zynq7030/jopt_driver_zynq7030.tar.gz
+ls -l "$driver"/build-*/jopt_driver_*.tar.gz

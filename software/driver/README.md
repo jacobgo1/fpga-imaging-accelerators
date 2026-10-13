@@ -2,8 +2,9 @@
 
 What the `justounetsimple_opt` notebook does, as one C++ program for the board's
 ARM, without Python or PYNQ: the same program for the ZCU104 (64-bit ARM,
-kernel `justounetsimple_opt`) and HYPSO-2 (Zynq-7030, 32-bit ARM, kernel
-`justounetsimple_opt_zynq7030`). Modelled on `driver_ntnu/cnn-1d-picobob`, the
+kernel `justounetsimple_opt`), HYPSO-2 (Zynq-7030, 32-bit ARM, kernel
+`justounetsimple_opt_zynq7030`) and the lab's PYNQ-Z2 (Zynq-7020, 32-bit ARM,
+kernel `justounetsimple_opt_zynq7020`). Modelled on `driver_ntnu/cnn-1d-picobob`, the
 1D CNN driver flown on HYPSO-2:
 
 1. the raw cube (`.npy` from `tools/justounetsimple_image.py`, or the BIP file
@@ -121,6 +122,15 @@ sets `pl_clk0` to the clock the kernel was built for. If `/dev/mem` refuses the
 buffer ("Operation not permitted": a kernel built with `STRICT_DEVMEM`), reserve
 DDR at boot instead: `mem=1536M` on the kernel command line leaves
 `0x6000_0000`–`0x7FFF_FFFF` to the driver (`--devmem-memory 0x60000000:0x20000000`).
+
+## PYNQ-Z2 (Zynq-7020)
+
+The same as the ZCU104 with PYNQ, with `justounetsimple_opt_zynq7020` (2 read ports,
+like the 7030's) and the 32-bit driver: `package.sh zynq7020` packs the newest
+`build/justounetsimple_opt_zynq7020/*-bitstream-zynq7020` run with the notebook.
+`jopt_driver.ipynb` takes the kernel's register address from the overlay
+(`0x4000_0000` here) and lends the driver as much DDR as PYNQ can spare, up to
+128 MB; the Z2 has 512 MB in all, so a full capture may run in strips.
 
 ## ZCU104 with Petalinux
 

@@ -2,18 +2,21 @@
 # Everything a board needs to run jopt_driver, as one archive:
 #   software/driver/scripts/package.sh zynq7030
 #   software/driver/scripts/package.sh zcu104
+#   software/driver/scripts/package.sh zynq7020      (the PYNQ-Z2)
 # takes the newest bitstream run of that board's kernel (justounetsimple_opt
-# for the ZCU104, justounetsimple_opt_zynq7030 for HYPSO-2) (or the run
+# for the ZCU104, justounetsimple_opt_zynq7030 for HYPSO-2,
+# justounetsimple_opt_zynq7020 for the PYNQ-Z2) (or the run
 # folder given as a second argument) and writes
 #   software/driver/build-BOARD/jopt_driver_BOARD.tar.gz
 # with the driver, the register header and bitstream of that run, the device
-# tree snippet; for HYPSO-2 process-capture.sh, for the ZCU104 jopt_driver.ipynb. Cross-compile first (cross-compile.sh).
+# tree snippet; for HYPSO-2 process-capture.sh, for the PYNQ boards jopt_driver.ipynb. Cross-compile first (cross-compile.sh).
 set -e
 board=$1
 case "$board" in
     zynq7030) kernel=justounetsimple_opt_zynq7030; suffix='-bitstream-zynq7030' ;;
+    zynq7020) kernel=justounetsimple_opt_zynq7020; suffix='-bitstream-zynq7020' ;;
     zcu104)   kernel=justounetsimple_opt;          suffix='-bitstream' ;;
-    *) echo "usage: $0 zynq7030|zcu104 [RUN]" >&2; exit 1 ;;
+    *) echo "usage: $0 zcu104|zynq7030|zynq7020 [RUN]" >&2; exit 1 ;;
 esac
 driver=$(cd "$(dirname "$0")/.." && pwd)
 repo=$(cd "$driver/../.." && pwd)
@@ -40,9 +43,9 @@ cp "$(ls "$run"/vivado/system.runs/impl_1/*.bit | head -n 1)" "$out/$kernel.bit"
 # PYNQ's Overlay wants the .hwh next to the .bit, by the same name.
 hwh=$(find "$run/vivado" -path '*hw_handoff/system.hwh' | head -n 1)
 [ -n "$hwh" ] && cp "$hwh" "$out/$kernel.hwh"
-cp "$driver/firmware/$board.dtsi" "$out/"
+[ -f "$driver/firmware/$board.dtsi" ] && cp "$driver/firmware/$board.dtsi" "$out/"
 [ "$board" = zynq7030 ] && cp "$driver/scripts/process-capture.sh" "$out/"
-# The ZCU104 runs PYNQ: a notebook that loads the bitstream and runs the driver.
-[ "$board" = zcu104 ] && cp "$driver/jopt_driver.ipynb" "$out/"
+# The ZCU104 and the PYNQ-Z2 run PYNQ: a notebook that loads the bitstream and runs the driver.
+[ "$board" != zynq7030 ] && cp "$driver/jopt_driver.ipynb" "$out/"
 tar -C "$driver/build-$board" -czf "$out.tar.gz" "jopt_driver_$board"
 echo "for the board: $out.tar.gz"
