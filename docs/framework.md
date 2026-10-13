@@ -31,8 +31,9 @@ build/K/latest/run.json                               what was built: git commit
 ```
 
 `main.py bitstream` without `--skip-cosim` also runs C/RTL co-simulation in
-step 2. It's slow, so `fpga_build` skips it. Run `main.py cosim --kernel K`
-separately when the RTL needs checking.
+step 2. It's slow, so `fpga_build` skips it. Run `fpga_cosim K` (`main.py cosim
+--kernel K`) separately when the RTL needs checking; its report,
+`build/K/latest/hls/solution/sim/report/K_cosim.rpt`, has the measured cycle count.
 
 ## 2. The hardware around the kernel
 
@@ -129,6 +130,7 @@ Tab completes `K` (the kernel names), and for `fpga_pynq` also `RUN`.
 | Tools on PATH | `fpga_env` |
 | Test on the PC/server, no FPGA | `fpga_test K` |
 | Bitstream + board zip | `fpga_build K` |
+| Co-simulation: the RTL against the testbench, with its cycle count | `fpga_cosim K` |
 | List builds | `fpga_runs K` |
 | Re-make the zip of an old build (e.g. after editing the notebook) | `fpga_pynq K [RUN]` |
 | Zip an image folder for upload | `fpga_zip DIR` |

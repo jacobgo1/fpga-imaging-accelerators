@@ -141,8 +141,8 @@ class FpgaShellTests(unittest.TestCase):
     def test_help_lists_every_command(self):
         result = self.bash('fpga_help')
         self.assertEqual(result.returncode, 0, result.stderr)
-        for command in ('fpga_kernels', 'fpga_env', 'fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq',
-                        'fpga_zip'):
+        for command in ('fpga_kernels', 'fpga_env', 'fpga_test', 'fpga_build', 'fpga_cosim', 'fpga_runs',
+                        'fpga_pynq', 'fpga_zip'):
             self.assertIn(command, result.stdout)
 
     def test_kernels_are_the_folders_in_src_hls(self):
@@ -151,12 +151,13 @@ class FpgaShellTests(unittest.TestCase):
         self.assertEqual(result.stdout.split(), sorted(p.name for p in (ROOT / 'src/hls').iterdir() if p.is_dir()))
 
     def test_tab_completes_kernel_names(self):
-        for command in ('fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq'):
+        for command in ('fpga_test', 'fpga_build', 'fpga_cosim', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
                                  ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7020',
                                   'justounetsimple_opt_zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
+        self.assertEqual(self.complete('fpga_cosim', 'matmul', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
                          ['--board', '--clock-ns'])
@@ -169,9 +170,10 @@ class FpgaShellTests(unittest.TestCase):
                              ['2026-09-29_10-00-00-bitstream'])
 
     def test_completion_is_registered(self):
-        result = self.bash('complete -p fpga_build fpga_pynq fpga_zip')
+        result = self.bash('complete -p fpga_build fpga_cosim fpga_pynq fpga_zip')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('complete -F _fpga_complete fpga_build', result.stdout)
+        self.assertIn('complete -F _fpga_complete fpga_cosim', result.stdout)
         self.assertIn('complete -d fpga_zip', result.stdout)
 
     def test_runs_lists_bitstream_runs_only(self):
@@ -184,7 +186,7 @@ class FpgaShellTests(unittest.TestCase):
                              ['2026-09-29_10-00-00-bitstream'])
 
     def test_kernel_must_be_named(self):
-        for command in ('fpga_test', 'fpga_build', 'fpga_runs', 'fpga_pynq'):
+        for command in ('fpga_test', 'fpga_build', 'fpga_cosim', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 result = self.bash(command)
                 self.assertNotEqual(result.returncode, 0)
