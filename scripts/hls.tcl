@@ -28,7 +28,13 @@ if {[catch {
         if {![file exists $report]} { error "C synthesis failed: no $report" }
     }
     if {$cfg(stage) eq "cosim" || ($cfg(stage) eq "bitstream" && !$cfg(skip_cosim))} {
-        cosim_design -rtl verilog -tool xsim -trace_level port
+        # --dataflow-profile: also record every DATAFLOW process's working and
+        # stalled cycles, and every signal, for the Dataflow Viewer (slower).
+        if {$cfg(profile)} {
+            cosim_design -rtl verilog -tool xsim -trace_level all -enable_dataflow_profiling
+        } else {
+            cosim_design -rtl verilog -tool xsim -trace_level port
+        }
     }
     if {$cfg(stage) eq "bitstream"} {
         # Writes the IP to hls/solution/impl/ip/, where vivado.tcl picks it up.

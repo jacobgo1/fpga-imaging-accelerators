@@ -158,6 +158,8 @@ class FpgaShellTests(unittest.TestCase):
                                   'justounetsimple_opt_zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
         self.assertEqual(self.complete('fpga_cosim', 'matmul', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_cosim', 'matmul', '--d'), ['--dataflow-profile'])
+        self.assertEqual(self.complete('fpga_build', 'matmul', '--d'), [])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
                          ['--board', '--clock-ns'])

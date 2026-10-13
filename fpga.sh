@@ -24,7 +24,8 @@ newest bitstream build.
                              ARGS e.g. --board zynq7030 (default zcu104), --clock-ns 5)
   fpga_cosim KERNEL [ARGS]   python3 main.py cosim --kernel KERNEL [ARGS]
                              (the testbench driving the generated Verilog: checks the
-                             RTL, and its report gives the real cycle count; same ARGS)
+                             RTL, and its report gives the real cycle count; same ARGS,
+                             and --dataflow-profile for the Dataflow Viewer)
   fpga_runs KERNEL           the runs in build/KERNEL/ with a bitstream, newest last
   fpga_pynq KERNEL [RUN]     python3 main.py pynq --kernel KERNEL [--run RUN]
                              (re-make the PYNQ folder and zip of an existing build)
@@ -121,6 +122,7 @@ _fpga_complete() {
                 done
             elif [ "$prev" != "--clock-ns" ]; then
                 words="--board --clock-ns"
+                [ "${COMP_WORDS[0]}" = fpga_cosim ] && words="$words --dataflow-profile"
             fi ;;
     esac
     # shellcheck disable=SC2207

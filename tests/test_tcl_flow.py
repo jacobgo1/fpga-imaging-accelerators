@@ -24,12 +24,12 @@ def braced(path):
 
 @unittest.skipIf(tkinter is None, 'Optional Tcl tests require Python tkinter; no display needed')
 class TclFlowTests(unittest.TestCase):
-    def execute_hls(self, stage, fail_at='', skip_cosim=False, csynth_report=True):
+    def execute_hls(self, stage, fail_at='', skip_cosim=False, csynth_report=True, profile=False):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
-            flow.write_settings(flow.find_kernel('matmul'), run, stage, 10.0, skip_cosim)
+            flow.write_settings(flow.find_kernel('matmul'), run, stage, 10.0, skip_cosim, profile=profile)
             tcl = tkinter.Tcl()
-            tcl.eval('set calls {}; set exit_code -1')
+            tcl.eval('set calls {}; set exit_code -1; set cosim_args {}')
             for name in ('open_project', 'set_top', 'add_files', 'open_solution',
                          'set_part', 'create_clock', 'csim_design', 'csynth_design',
                          'cosim_design', 'export_design', 'close_project'):
@@ -37,6 +37,8 @@ class TclFlowTests(unittest.TestCase):
                 if name == 'csynth_design' and csynth_report:  # what a real run leaves behind
                     body += ('; set d [file join $::cfg(run_dir) hls solution syn report]'
                              '; file mkdir $d; close [open [file join $d $::cfg(top)_csynth.rpt] w]')
+                if name == 'cosim_design':
+                    body += '; set ::cosim_args $args'
                 if name == fail_at:
                     body += '; error "injected tool failure"'
                 tcl.eval(f'proc {name} {{args}} {{{body}}}')
@@ -46,6 +48,7 @@ class TclFlowTests(unittest.TestCase):
             with self.assertRaises(tkinter.TclError):
                 tcl.eval(script)
             calls = tcl.splitlist(tcl.getvar('calls'))
+            self.cosim_args = [str(a) for a in tcl.splitlist(tcl.getvar('cosim_args'))]
             return int(tcl.getvar('exit_code')), calls
 
     def test_stage_dependencies(self):
@@ -60,6 +63,14 @@ class TclFlowTests(unittest.TestCase):
                 code, calls = self.execute_hls(stage)
                 self.assertEqual(code, 0)
                 self.assertEqual([c for c in calls if c.endswith('_design')], stages)
+
+    def test_dataflow_profile_records_what_the_dataflow_viewer_needs(self):
+        self.execute_hls('cosim')
+        self.assertNotIn('-enable_dataflow_profiling', self.cosim_args)
+        self.assertEqual(self.cosim_args[self.cosim_args.index('-trace_level') + 1], 'port')
+        self.execute_hls('cosim', profile=True)
+        self.assertIn('-enable_dataflow_profiling', self.cosim_args)
+        self.assertEqual(self.cosim_args[self.cosim_args.index('-trace_level') + 1], 'all')
 
     def test_skip_cosim_still_exports(self):
         code, calls = self.execute_hls('bitstream', skip_cosim=True)

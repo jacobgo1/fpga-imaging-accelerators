@@ -34,6 +34,11 @@ build/K/latest/run.json                               what was built: git commit
 step 2. It's slow, so `fpga_build` skips it. Run `fpga_cosim K` (`main.py cosim
 --kernel K`) separately when the RTL needs checking; its report,
 `build/K/latest/hls/solution/sim/report/K_cosim.rpt`, has the measured cycle count.
+`fpga_cosim K --dataflow-profile` also records, for every process of a
+DATAFLOW kernel, when it worked and when it waited on which stream: open the
+run's `hls/` project in the Vitis HLS GUI and the Dataflow Viewer of the top
+function shows it. Slower, so only when looking for the stage that holds the
+others up.
 
 ## 2. The hardware around the kernel
 

@@ -149,7 +149,7 @@ def board_clock_ns(board):
     return float(CONFIG['boards'][board].get('clock_ns', CONFIG['clock_ns']))
 
 
-def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
+def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None, profile=False):
     """settings.tcl: everything the Tcl scripts need to know, as the Tcl array cfg(...)."""
     target = CONFIG['boards'][board or CONFIG['board']]
     def tcl(value):  # a {braced} Tcl word: taken literally, spaces and all
@@ -161,7 +161,7 @@ def write_settings(kernel, run, stage, clock_ns, skip_cosim, board=None):
     settings = {
         'root': ROOT, 'run_dir': run, 'stage': stage, 'top': kernel['top'],
         'board': board or CONFIG['board'], 'part': target['part'], 'clock_ns': clock_ns, 'jobs': job_count(),
-        'skip_cosim': int(skip_cosim), 'board_script': ROOT / target['script'],
+        'skip_cosim': int(skip_cosim), 'profile': int(profile), 'board_script': ROOT / target['script'],
         'directives': kernel['directives'] or '',
     }
     lines = [f'set cfg({key}) {tcl(value)}' for key, value in settings.items()]
@@ -272,6 +272,9 @@ def main():
     parser.add_argument('stage', choices=STAGES + ('pynq', 'kernels'))
     parser.add_argument('--kernel', help='folder name in src/hls/')
     parser.add_argument('--skip-cosim', action='store_true', help='bitstream: leave out cosim (slow)')
+    parser.add_argument('--dataflow-profile', action='store_true',
+                        help='cosim: record when each DATAFLOW process works and stalls, for the '
+                             'Dataflow Viewer (slower)')
     parser.add_argument('--clock-ns', type=float,
                         help='clock period target (default: the board\'s "clock_ns" in the config, '
                              f'else {CONFIG["clock_ns"]})')
@@ -305,13 +308,14 @@ def main():
     commit = subprocess.run(['git', 'describe', '--always', '--dirty'], cwd=ROOT, capture_output=True,
                             text=True).stdout.strip() if shutil.which('git') else None
     record = {'kernel': args.kernel, 'stage': args.stage, 'git': commit, 'board': args.board, 'part': part,
-              'clock_ns': args.clock_ns, 'skip_cosim': args.skip_cosim,
+              'clock_ns': args.clock_ns, 'skip_cosim': args.skip_cosim, 'dataflow_profile': args.dataflow_profile,
               'started': datetime.datetime.now().isoformat(timespec='seconds'), 'result': 'failed'}
     try:
         if args.stage == 'native':
             native(kernel, run)
         else:
-            write_settings(kernel, run, args.stage, args.clock_ns, args.skip_cosim, args.board)
+            write_settings(kernel, run, args.stage, args.clock_ns, args.skip_cosim, args.board,
+                           args.dataflow_profile)
             shutil.copy2(ROOT / 'scripts' / 'hls.tcl', run)
             hls(run)
             if args.stage == 'bitstream':
