@@ -1,0 +1,127 @@
+{
+  "stage": "native",
+  "config": {
+    "part": null,
+    "clock_ns": 10.0,
+    "jobs": 4,
+    "default_kernel": "conv2d",
+    "board_script": null,
+    "export_xsa": false,
+    "kernels": {
+      "streaming_conv2d": {
+        "include_dirs": [
+          "src/hls/streaming_conv2d",
+          "src/common"
+        ]
+      },
+      "streaming_relu": {
+        "include_dirs": [
+          "src/hls/streaming_relu",
+          "src/common"
+        ]
+      },
+      "streaming_maxpool": {
+        "include_dirs": [
+          "src/hls/streaming_maxpool",
+          "src/common"
+        ]
+      },
+      "streaming_pipeline": {
+        "sources": [
+          "src/hls/streaming_pipeline/streaming_pipeline.cpp",
+          "src/hls/streaming_conv2d/streaming_conv2d.cpp",
+          "src/hls/streaming_relu/streaming_relu.cpp",
+          "src/hls/streaming_maxpool/streaming_maxpool.cpp"
+        ],
+        "include_dirs": [
+          "src/hls/streaming_pipeline",
+          "src/hls/streaming_conv2d",
+          "src/hls/streaming_relu",
+          "src/hls/streaming_maxpool",
+          "src/common"
+        ]
+      }
+    },
+    "part_requested": null
+  },
+  "kernel": "matmul",
+  "kernel_files": {
+    "top": "matmul",
+    "sources": [
+      "src/hls/matmul/matmul.cpp"
+    ],
+    "testbench": [
+      "tb/matmul/test_matmul.cpp"
+    ],
+    "include_dirs": [
+      "src/hls/matmul"
+    ],
+    "directives": "config/matmul.tcl"
+  },
+  "commands": [
+    [
+      "compile",
+      [
+        "/usr/bin/g++",
+        "-std=c++14",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unknown-pragmas",
+        "-Wno-unused-label",
+        "-I/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/matmul",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/matmul/matmul.cpp",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/tb/matmul/test_matmul.cpp",
+        "-o",
+        "testbench"
+      ]
+    ]
+  ],
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.11.8 (v3.11.8:db85d51d3e, Feb  6 2024, 18:02:37) [Clang 13.0.0 (clang-1300.0.29.30)]",
+  "started": "2026-09-22T10:09:39+02:00",
+  "status": "passed",
+  "run": "matmul/2026-09-22_10-09-39-native",
+  "git_commit": "df40bfe1ec9094f8dca86280db09a042073a4cc8",
+  "git_status": "M config/project.json\n M src/hls/streaming_conv2d/streaming_conv2d.cpp\n M src/hls/streaming_conv2d/streaming_conv2d.hpp\n M src/hls/streaming_maxpool/streaming_maxpool.cpp\n M src/hls/streaming_maxpool/streaming_maxpool.hpp\n M src/hls/streaming_relu/streaming_relu.cpp\n M src/hls/streaming_relu/streaming_relu.hpp\n M tb/streaming_conv2d/streaming_conv2d_tb.cpp\n M tb/streaming_maxpool/streaming_maxpool_tb.cpp\n M tb/streaming_relu/streaming_relu_tb.cpp\n?? src/common/\n?? src/hls/streaming_pipeline/\n?? tb/streaming_pipeline/",
+  "source_sha256": {
+    "main.py": "8c31b7757a1ad46ebbb62e335a6ea83bb6a83a280a3e6365b2157957c51ddca4",
+    "src/common/hls_stream_shim.hpp": "8e1d430d09aa91f0bb5388d3baff4ee280e64616a0512782af91e2b6e3ef58f0",
+    "src/hls/dot_product/dot_product.cpp": "4e97bad33e4b50390d655a84bc1fa1c6ea17688fa58755a62626be5c07643fb1",
+    "src/hls/dot_product/dot_product.h": "ef3a0fea44649c312530221dee23a58d33ce83a98c223895269da2f1530e5f29",
+    "src/hls/conv2d/conv2d.cpp": "57fb0f1316be0a2ffd6200571719a6c43a889e9d88e203b1df234007eb0c2b57",
+    "src/hls/conv2d/conv2d.hpp": "df877b98bd876b81934401e43a278ad6ee218b743c19d4e49f08ed2b4776ae4f",
+    "src/hls/streaming_maxpool/streaming_maxpool.hpp": "9a5563d6e0f28892f6df004fa2a794567ff902414732be3d4b8be73d5a19bf66",
+    "src/hls/streaming_maxpool/streaming_maxpool.cpp": "cdf6cfcc0855c5c05ccfd5b6d004a3a0278add2f5cd2268ea8b26f4abb76b02f",
+    "src/hls/streaming_conv2d/streaming_conv2d.hpp": "288744c7fc1d45541cfc069dca875d35f39b6cd9b57aed8867109caa0e70370c",
+    "src/hls/streaming_conv2d/streaming_conv2d.cpp": "4487bcbc911528f1e004f1bcaf38e4f5c6bbd9e6eedc155d4fdfe144660a44a1",
+    "src/hls/test_conv2d/test_conv2d.cpp": "c8131d9b7767e0ac95432056f16886a18a57e31b5bb7114e79b527170e462b98",
+    "src/hls/test_conv2d/test_conv2d.hpp": "8dc37a1b46d062739e7d9939120b62f815c4f154c48aa64f7d431e7fd723a8c6",
+    "src/hls/streaming_relu/streaming_relu.hpp": "7de8384ff4fd5bcee76bbd4681cc9e6de5b44731324f067c3a3acfba8b245421",
+    "src/hls/streaming_relu/streaming_relu.cpp": "c0ef868075620950b100a0897754ab5c523b0a753c0751b68c6e81ae01aa271c",
+    "src/hls/streaming_upsample/streaming_upsample.cpp": "e0b50a01185a526ae56c65623c7c95f13c3fd2ebc8a1e01ff66d672d7a0a603b",
+    "src/hls/streaming_upsample/streaming_upsample.hpp": "4aa3c35a3a5c41afb585fd03df041016178c81d8f0e014ce6326389e6702a8bb",
+    "src/hls/matmul/matmul.cpp": "c6b7faccd3facf3ff0fce82fc3d7311aa3dd9994b3c83c65282b55ec7fec6c55",
+    "src/hls/matmul/matmul.hpp": "d7f38a7aee9f2d3f7b6692a773f699c4da1a29795e49e1e5f6169a21916b0d11",
+    "src/hls/streaming_pipeline/streaming_pipeline.cpp": "f9c59de3e39d884ae2c2337223886210b257ae0b82952b8b216c06e1e86dfe86",
+    "src/hls/streaming_pipeline/streaming_pipeline.hpp": "07eae41e022a7738a635f7d974fa874bde8f7e1c690a1df588189357f3cb5680",
+    "src/rtl/README.md": "fc1fa1babda5a5cbfccc6bae9dcfb07624658d1e3c79409d7cb1214e9073f37e",
+    "tb/test_conv2d.cpp/test_conv2d_tb.cpp": "a2d9ac4fb4f3433fbbb4f2171bedbae7ac9cebae93f66b379c879641b9053cce",
+    "tb/dot_product/dot_product_tb.cpp": "afea1c73d5ff34ff332b0bc30eb2826be3a51f45ed93d8f7f7495e902b5ec9f7",
+    "tb/conv2d/conv2d_tb.cpp": "b841d28bb38c0eda297760cf346662ed03186cb12ee44e1abc4ad87c197fc62f",
+    "tb/streaming_maxpool/streaming_maxpool_tb.cpp": "27078ba4fa5741579c56b7d905a01290368ddfc736ad1d0add8ee9b103e84bd1",
+    "tb/streaming_conv2d/streaming_conv2d_tb.cpp": "908370f7c4f420e969452a350ad27b28375033f46e44be5bce8ddd0509eb480b",
+    "tb/streaming_relu/streaming_relu_tb.cpp": "d648cef4e024aa7990c40d92a99c6f9e033f137dbe902fecd170cdc2cb8c41be",
+    "tb/streaming_upsample/streaming_upsample_tb.cpp": "c26bb2d90a996c6686519764d2be05f3a4d04467f1af0de4c4a8dd1542527c24",
+    "tb/matmul/test_matmul.cpp": "cfea71a6752cc42f9a1b6aa265c84f64ac11a71a5e834a32b3c1aa2e1c8f9769",
+    "tb/streaming_pipeline/streaming_pipeline_tb.cpp": "99c19926d45319ebd08f5eba6e0f6ea1cef4d9146e743c697e77d00ded926010",
+    "tb/data/README.md": "241022e9287ef0ceaa0b8cadaf28d78a977be6ec9cba2e9ebd9c1e8e4b1d9d10",
+    "config/matmul.tcl": "568ba035f880746a085be3e812b4bf28d25abcee54882690e9deb63d4a241e17",
+    "config/project.json": "0073eebbceb3693b8e7178015d98f3d7c810bb5e571c8d6afde93c927a69abff",
+    "config/parts.json": "856ee8876430374a43ed9b32f3323cf79315a06533af93eed60f2d50de4a1864",
+    "scripts/vivado.tcl": "87ff86e807de717005b3941b5b9683c3826b944e6c8aadbe5ae4ab397ccd7ae3",
+    "scripts/hls.tcl": "50bed991dc657a7085e53e9cd635ff690f8f636fba7a7d7a66a470915018fdc6",
+    "boards/README.md": "925d9261c2589899822d377bb1d269dd1afccb4ca8c97406c80ea5f2dc6f893b",
+    "constraints/README.md": "f18641cdf854b3c8c042751ef16ab05db36212adff927d040a271f71288cdff8"
+  }
+}

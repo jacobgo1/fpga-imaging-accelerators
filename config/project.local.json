@@ -1,0 +1,9 @@
+{
+  "part": "zcu104",
+  "clock_ns": 10.0,
+  "jobs": 4,
+  "default_kernel": "justoliunet",
+  "board_script": "boards/zcu104/system.tcl",
+  "export_xsa": true,
+  "kernels": {}
+}

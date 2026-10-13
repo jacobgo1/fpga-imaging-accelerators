@@ -5,6 +5,10 @@ AXI-Lite register offsets from the driver header generated inside the exported
 HLS IP (`x<kernel>_hw.h`, packed next to the notebook) rather than hardcoding
 them.
 
+Without Python: [driver/](driver/README.md) is a C++ program that runs
+`justounetsimple_opt` from Linux on HYPSO-2 (Zynq-7030) or the ZCU104, as
+`driver_ntnu` does for the 1D CNN on HYPSO-2.
+
 `fpga.sh` in the repository root wraps everything below in short commands
 (`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)
 shows how it fits together.

@@ -1,0 +1,76 @@
+{
+  "stage": "native",
+  "config": {
+    "part": null,
+    "clock_ns": 10.0,
+    "jobs": 4,
+    "default_kernel": "conv2d",
+    "board_script": null,
+    "export_xsa": false,
+    "kernels": {},
+    "part_requested": null
+  },
+  "kernel": "conv2d",
+  "kernel_files": {
+    "top": "conv2d",
+    "sources": [
+      "src/hls/conv2d/conv2d.cpp"
+    ],
+    "testbench": [
+      "tb/conv2d/conv2d_tb.cpp"
+    ],
+    "include_dirs": [
+      "src/hls/conv2d"
+    ]
+  },
+  "commands": [
+    [
+      "compile",
+      [
+        "/usr/bin/g++",
+        "-std=c++14",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unknown-pragmas",
+        "-Wno-unused-label",
+        "-I/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/conv2d",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/conv2d/conv2d.cpp",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/tb/conv2d/conv2d_tb.cpp",
+        "-o",
+        "testbench"
+      ]
+    ]
+  ],
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.11.8 (v3.11.8:db85d51d3e, Feb  6 2024, 18:02:37) [Clang 13.0.0 (clang-1300.0.29.30)]",
+  "started": "2026-09-21T09:20:06+02:00",
+  "status": "passed",
+  "run": "conv2d/2026-09-21_09-20-06-native",
+  "git_commit": "71ab4b8118aa1ae62e52f7b3b646030018a56ae8",
+  "git_status": "M main.py\n M src/hls/conv2d/conv2d.cpp\n M src/hls/conv2d/conv2d.hpp\nRM tb/conv2d/test_conv2d.cpp -> tb/conv2d/conv2d_tb.cpp",
+  "source_sha256": {
+    "main.py": "8c31b7757a1ad46ebbb62e335a6ea83bb6a83a280a3e6365b2157957c51ddca4",
+    "src/hls/dot_product/dot_product.cpp": "4e97bad33e4b50390d655a84bc1fa1c6ea17688fa58755a62626be5c07643fb1",
+    "src/hls/dot_product/dot_product.h": "ef3a0fea44649c312530221dee23a58d33ce83a98c223895269da2f1530e5f29",
+    "src/hls/conv2d/conv2d.cpp": "08c2fef490dff404a798a20693f39ad355de21e361c9c0a98c8416a111e8345f",
+    "src/hls/conv2d/conv2d.hpp": "dc9f4df86ffb7d25785b4c80c61462453831278c9417840c97df2c7ae18cd548",
+    "src/hls/test_conv2d/test_conv2d.cpp": "c8131d9b7767e0ac95432056f16886a18a57e31b5bb7114e79b527170e462b98",
+    "src/hls/test_conv2d/test_conv2d.hpp": "8dc37a1b46d062739e7d9939120b62f815c4f154c48aa64f7d431e7fd723a8c6",
+    "src/hls/matmul/matmul.cpp": "c6b7faccd3facf3ff0fce82fc3d7311aa3dd9994b3c83c65282b55ec7fec6c55",
+    "src/hls/matmul/matmul.hpp": "d7f38a7aee9f2d3f7b6692a773f699c4da1a29795e49e1e5f6169a21916b0d11",
+    "src/rtl/README.md": "fc1fa1babda5a5cbfccc6bae9dcfb07624658d1e3c79409d7cb1214e9073f37e",
+    "tb/test_conv2d.cpp/test_conv2d_tb.cpp": "a2d9ac4fb4f3433fbbb4f2171bedbae7ac9cebae93f66b379c879641b9053cce",
+    "tb/dot_product/dot_product_tb.cpp": "afea1c73d5ff34ff332b0bc30eb2826be3a51f45ed93d8f7f7495e902b5ec9f7",
+    "tb/conv2d/conv2d_tb.cpp": "8d1642e1972f3347aaeec5e286084a93479e0a2c7c76401a96f60a037cc62f6a",
+    "tb/matmul/test_matmul.cpp": "cfea71a6752cc42f9a1b6aa265c84f64ac11a71a5e834a32b3c1aa2e1c8f9769",
+    "tb/data/README.md": "241022e9287ef0ceaa0b8cadaf28d78a977be6ec9cba2e9ebd9c1e8e4b1d9d10",
+    "config/matmul.tcl": "568ba035f880746a085be3e812b4bf28d25abcee54882690e9deb63d4a241e17",
+    "config/project.json": "f068a80f0c81f01d80b6325f723a509d49fac6a5405b8a38229e918c48f67632",
+    "config/parts.json": "856ee8876430374a43ed9b32f3323cf79315a06533af93eed60f2d50de4a1864",
+    "scripts/vivado.tcl": "87ff86e807de717005b3941b5b9683c3826b944e6c8aadbe5ae4ab397ccd7ae3",
+    "scripts/hls.tcl": "50bed991dc657a7085e53e9cd635ff690f8f636fba7a7d7a66a470915018fdc6",
+    "boards/README.md": "925d9261c2589899822d377bb1d269dd1afccb4ca8c97406c80ea5f2dc6f893b",
+    "constraints/README.md": "f18641cdf854b3c8c042751ef16ab05db36212adff927d040a271f71288cdff8"
+  }
+}

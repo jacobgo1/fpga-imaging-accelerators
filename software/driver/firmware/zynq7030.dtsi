@@ -1,0 +1,27 @@
+// HYPSO-2 (Zynq-7030): the device tree overlay that gives jopt_driver its two
+// UIO devices. Like driver_ntnu's cnn-1d-picobob.dtsi; Petalinux turns it into
+// the .dtbo next to the bitstream (opu-system's prepare_pl_firmware.sh).
+//
+// The bootargs must contain uio_pdrv_genirq.of_id=generic-uio (HYPSO-2's do).
+
+// The kernel's registers. "kernel" is the block's name in the block design
+// (boards/*/system.tcl); if the flight design names it otherwise, use that label.
+&kernel {
+    compatible = "generic-uio";
+    linux,uio-name = "justounetsimple_opt";
+};
+
+&{/} {
+    // DDR the kernel reads the cube from and writes the scores to: the
+    // CubeDMA reserved memory of HYPSO-2's base device tree, the same 152 MB
+    // driver_ntnu uses. A capture there is overwritten, as with the 1D CNN.
+    // A 598 x 1092 cube (157 MB) does not fit whole: the driver then runs it in
+    // strips of 256 rows. A reserved-memory node cannot be added by an overlay;
+    // it must be in the base device tree.
+    jopt_memory {
+        compatible = "generic-uio";
+        linux,uio-name = "jopt_memory";
+        memory-region = <&reserved>;
+        reg = <0x20000000 0x09800000>;
+    };
+};

@@ -1,0 +1,224 @@
+{
+  "stage": "native",
+  "config": {
+    "part": null,
+    "clock_ns": 10.0,
+    "jobs": 10,
+    "default_kernel": "conv2d",
+    "board_script": "boards/zcu104/system.tcl",
+    "export_xsa": true,
+    "kernels": {
+      "relu_golden": {
+        "top": "relu_golden_top"
+      },
+      "conv2d_golden": {
+        "top": "conv2d_golden_top"
+      },
+      "conv2d_padded_golden": {
+        "top": "conv2d_padded_golden_top"
+      },
+      "padding_golden": {
+        "top": "padding_golden_top"
+      },
+      "maxpool_golden": {
+        "top": "maxpool_golden_top"
+      },
+      "add_golden": {
+        "top": "add_golden_top"
+      },
+      "conv1x1_golden": {
+        "top": "conv1x1_golden_top"
+      },
+      "nearest_neighbor_golden": {
+        "top": "nearest_neighbor_golden_top"
+      },
+      "batchnorm_golden": {
+        "top": "batchnorm_golden_top"
+      },
+      "conv1d_golden": {
+        "top": "conv1d_golden_top"
+      },
+      "relu1d_golden": {
+        "top": "relu1d_golden_top"
+      },
+      "maxpool1d_golden": {
+        "top": "maxpool1d_golden_top"
+      },
+      "flatten_golden": {
+        "top": "flatten_golden_top"
+      },
+      "dense_golden": {
+        "top": "dense_golden_top"
+      },
+      "justounet2d_golden": {
+        "top": "justounet2d_golden_top"
+      }
+    },
+    "part_requested": null
+  },
+  "kernel": "justounet2d_golden",
+  "kernel_files": {
+    "top": "justounet2d_golden_top",
+    "sources": [
+      "src/hls/justounet2d_golden/justounet2d_golden.cpp"
+    ],
+    "testbench": [
+      "tb/justounet2d_golden/justounet2d_golden_tb.cpp"
+    ],
+    "include_dirs": [
+      "src/hls/justounet2d_golden",
+      "src/common"
+    ]
+  },
+  "commands": [
+    [
+      "compile",
+      [
+        "/usr/bin/g++",
+        "-std=c++14",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unknown-pragmas",
+        "-Wno-unused-label",
+        "-I/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/justounet2d_golden",
+        "-I/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/common",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/src/hls/justounet2d_golden/justounet2d_golden.cpp",
+        "/Users/martinbrekkenilsen/Library/CloudStorage/OneDrive-NTNU/Semester 9/prosjekt/fpga-imaging-accelerators/tb/justounet2d_golden/justounet2d_golden_tb.cpp",
+        "-o",
+        "testbench"
+      ]
+    ]
+  ],
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "python": "3.11.8 (v3.11.8:db85d51d3e, Feb  6 2024, 18:02:37) [Clang 13.0.0 (clang-1300.0.29.30)]",
+  "started": "2026-10-02T14:38:23+02:00",
+  "status": "passed",
+  "run": "justounet2d_golden/2026-10-02_14-38-23-native",
+  "git_commit": "ae2b738780bb41f7f4dbd3ea0acdc574e8d0047b",
+  "git_status": "M config/project.json\n M src/golden/conv2d_padded_golden.hpp\n M src/hls/conv2d_golden/conv2d_golden.cpp\n?? src/hls/justounet2d_golden/\n?? tb/justounet2d_golden/",
+  "source_sha256": {
+    "main.py": "b3df0f2aa557fef06defa636645a42b4661810829fe17990247a77258ab29950",
+    "src/golden/relu1d_golden.hpp": "1f70961ed49e24c18d3abcb4b05a09b23562e6aa12401a11438847c46968bcbc",
+    "src/golden/relu_golden.hpp": "c7f41b84447c9e05b683f1bd55891775c6f8ddd0a27127b98568e7fa188d1d0a",
+    "src/golden/maxpool_golden.hpp": "a5e0cc0e5eee29dadf65b96cf88f54ae13261a7d2880e3a2250c5a0230c814b3",
+    "src/golden/doubleconv_golden.hpp": "c84ce0f25d00c8792d2976b5c444dcc67773802c0db2ba1c527a6a78d5c71392",
+    "src/golden/conv2d_padded_golden.hpp": "6deaa3563ead559c2ae75add36a407c2b93c2bcb866117cc3c94455eedc6581d",
+    "src/golden/nearest_neighbor_golden.hpp": "cca01a167b4a37b86a79c8b1ea642e615cd68866f9424464f19f89cc189b7915",
+    "src/golden/justounet2d_golden.hpp": "f1b7351dc1d705efc1c6be6bef52c2eadf3789f364c646e97694f5bfe0961cf7",
+    "src/golden/justoliunet_golden.hpp": "e811f7432500339bbb358cd3b2f0e5d9e91548798a5d3da8a33e7a493ada65f6",
+    "src/golden/half_unet_golden.hpp": "80487b89484d415690bb380214953d2f00c45e7178bb88675328722723d98e05",
+    "src/golden/dense_golden.hpp": "54a97e59b79e38112b279de2a7ae7748cb61dcee3ab52f9b21d7f613bfb96177",
+    "src/golden/add_golden.hpp": "6cac05cae283d967fdc191d3e080464c4b8476f5c51f65241b9156616303c3d6",
+    "src/golden/batchnorm_golden.hpp": "a51c0bafc7dddd7a3af68f139e5d43336edf58b572600bc7ac93f850f2c023cc",
+    "src/golden/conv2d_golden.hpp": "7aa0bceaeae78efedb03cf593499e7e2c28f173e504ed60df5eb40eb51ae7e2c",
+    "src/golden/flatten_golden.hpp": "7e2dcaee28cd65a37da9b875fc78ce53feac0fd2bcc6b04640ec1d43350809e6",
+    "src/golden/padding_golden.hpp": "b9e930955d4f04cd872f17285301c3bdc8dcdcc6e42d58d96bb065353758b95c",
+    "src/golden/conv1x1_golden.hpp": "f2ba6d8284b0b093b4c14f268221a3e9a8d8df10060dc330661cdbcc0b47f251",
+    "src/golden/maxpool1d_golden.hpp": "72dae6b1ed7981995d85b079e3f58671644bc26349c52d56c2c823e6b63cdabf",
+    "src/golden/conv1d_golden.hpp": "5f8418b8bcd29665c7a69fa3f1451eccb7b15ba686b2d1d11b2ed0bb299e286c",
+    "src/common/line_buffer.hpp": "53536f0ee905604530462fffbdbf125dcb4a7b4432effb4bdb9bff0c7cd00603",
+    "src/common/layers_activation.hpp": "440e34d10593aa458710a57f6f41c11cd8fbfca342e477db572383dda5fe6f76",
+    "src/common/hls_stream_shim.hpp": "8e1d430d09aa91f0bb5388d3baff4ee280e64616a0512782af91e2b6e3ef58f0",
+    "src/common/layers_dense.hpp": "d017589378b7c50103b955379a7644e6b72534db5523c94aab5d220302627d8e",
+    "src/common/layers_pool.hpp": "b970978f8b9018588cc4457ac0606daf36be0ff060cf4aead30e591b55111deb",
+    "src/common/types.hpp": "314cf20f52e9d8fde78b424aa909eab093dc628af023662ee0fe86f7249a0194",
+    "src/common/layers_conv2d.hpp": "5e307d6ad3640e7c73bdf9e8924b2b44ffa333fa048c549088d46f1a3edce3f6",
+    "src/hls/add_golden/add_golden.cpp": "7b7ebe42145a032f1886246336446a9b1d49b08adf03269f238736da41220f5f",
+    "src/hls/add_golden/add_golden.hpp": "d48bab62f2ff8eb4597b053b6d906f8aa6d9dcbd14703256df095e08c68a34a4",
+    "src/hls/justoliunet/justoliunet_weights.hpp": "cf9845e802b788d78222d1238ee5ed7209855be9c1964e389e980b97a6340100",
+    "src/hls/justoliunet/justoliunet.hpp": "a01e9b3fe24a8666cbc4d5d4705f73db33906ddbb42c7feb67bb25e5be1d4a9d",
+    "src/hls/justoliunet/justoliunet.cpp": "6cf4cdfcf7b79c303007136da20afb7e930dcc22389f56947d3337a024d321b8",
+    "src/hls/maxpool1d_golden/maxpool1d_golden.cpp": "9261bd03e7fc5de8f31881c37c4719a5fc99d9279c0de5b4b83305b44c8c309a",
+    "src/hls/maxpool1d_golden/maxpool1d_golden.hpp": "ec3480cb4a44ebffeae19aa8795197296e7c8e460d0484d25ae2143170d98410",
+    "src/hls/padding_golden/padding_golden.cpp": "2e7c0d266f1448ada38dc00d50b4191b075e672305b232425a53a532e42cb4d5",
+    "src/hls/padding_golden/padding_golden.hpp": "c39a99c9dcb229e6eddd7355b1a384e98432bd61abf94346099fd359d91b08df",
+    "src/hls/conv1d_golden/conv1d_golden.cpp": "b68edf4b4d548dfdef0be180cc2e225086d521b64766e5d14e48127bcf3ed752",
+    "src/hls/conv1d_golden/conv1d_golden.hpp": "72ff7ca2085db35f6e32365ce5a4831d0ba75c647994c93fa6534be2d0416786",
+    "src/hls/dot_product/dot_product.cpp": "4e97bad33e4b50390d655a84bc1fa1c6ea17688fa58755a62626be5c07643fb1",
+    "src/hls/dot_product/dot_product.h": "ef3a0fea44649c312530221dee23a58d33ce83a98c223895269da2f1530e5f29",
+    "src/hls/nearest_neighbor_golden/nearest_neighbor_golden.hpp": "6c027c9717165b9152a027caa98c8bab3124e4fd1048b5110ad8861e9541f9d2",
+    "src/hls/nearest_neighbor_golden/nearest_neighbor_golden.cpp": "8a8257679d8dff4c8524ab9b60986b830a7b703a05a542d4635d40cf631dd1f4",
+    "src/hls/justounet2d_golden/justounet2d_golden.hpp": "4a84834f7b63a3dc192894eec97382d82d8c1281a5454f516d129c48dc290826",
+    "src/hls/justounet2d_golden/justounet2d_golden.cpp": "f5688340e2d0dbf68973b426563193af4e2241ffb5705ed06eaf228b6f82cf8c",
+    "src/hls/conv2d/conv2d.cpp": "57fb0f1316be0a2ffd6200571719a6c43a889e9d88e203b1df234007eb0c2b57",
+    "src/hls/conv2d/conv2d.hpp": "df877b98bd876b81934401e43a278ad6ee218b743c19d4e49f08ed2b4776ae4f",
+    "src/hls/dense_golden/dense_golden.hpp": "b84204215879b9a3c6e27b6db78e2c7689f071db962d781feef8e7967bb28b8b",
+    "src/hls/dense_golden/dense_golden.cpp": "131e4142c36b807dfe3f32caf329fa3c044a4f54864efeec89e730784a7ff64a",
+    "src/hls/conv2d_golden/conv2d_golden.cpp": "e87e277219b932725de9e7a370382a356c30a3f7d2d2e508221ad98f90b87ab6",
+    "src/hls/conv2d_golden/conv2d_golden.hpp": "fa99fb812039fca791bfdcfcabe13727f88f1759829b0372c77ede32251fbb78",
+    "src/hls/streaming_maxpool/streaming_maxpool.hpp": "ee30d96f5daf711bf14439bb41a43157dec30c4d4af83d7ff03a660dc039a653",
+    "src/hls/streaming_maxpool/streaming_maxpool.cpp": "a8af437fcbebb491f5c325a6a2c4e2b7c37ff80ff1ae202f17cfa2cf5646288e",
+    "src/hls/streaming_conv2d/streaming_conv2d.hpp": "0810432494933ff5f8d5b169dae659ff8bd0e7ffa0cd1a89123dce67eab89d2c",
+    "src/hls/streaming_conv2d/streaming_conv2d.cpp": "7b0f7ea60eb92fc66c973b19a5240615c41dcad5f483c0dbdc53e00820d59f2c",
+    "src/hls/test_conv2d/test_conv2d.cpp": "c8131d9b7767e0ac95432056f16886a18a57e31b5bb7114e79b527170e462b98",
+    "src/hls/test_conv2d/test_conv2d.hpp": "8dc37a1b46d062739e7d9939120b62f815c4f154c48aa64f7d431e7fd723a8c6",
+    "src/hls/maxpool_golden/maxpool_golden.hpp": "244806c21203c93c7742df28c3d89fb5abd0a73c9e7cbcfd01e46496abf60233",
+    "src/hls/maxpool_golden/maxpool_golden.cpp": "c9aae00401d34acdfdcf3726ae1cdc29d5474815e1e68824301266efb4ac5f6e",
+    "src/hls/relu1d_golden/relu1d_golden.hpp": "16c8fa99c898fd052b3acfa12629e075f85e38a43999b495bfc0e3e10c586bf8",
+    "src/hls/relu1d_golden/relu1d_golden.cpp": "0382f4fbbb254d857e409f9bf8cf7ce14046f41d2ccfd0602288cbcb338c8bf8",
+    "src/hls/model/weights.hpp": "fd98a85f92c5f808255d29f140cc650189074205de820b027b12d025167794b3",
+    "src/hls/model/dense_weights.inc": "80c22b387b30f2e408192cb068b1ab9224b192867f8f6cec8ee00eda774f8b23",
+    "src/hls/model/model.hpp": "0a29491c6f3f51bf0be41ed25c9b6aa813e6e2d74d0c6765bb3845e2d735fae3",
+    "src/hls/model/conv1_weights.inc": "e58b778759a4a21f657e6caee31ab4dbfe8cf538408e2cf916764d25cca1faa4",
+    "src/hls/model/model.cpp": "757b667546149321565c4b855986a290b37f8dce5233b1080f05584af0117d6b",
+    "src/hls/model/conv2_weights.inc": "bdb9bd0e1a7de9a81ec2e69f9291d1cc3d2614925d15006c429a3936737f444b",
+    "src/hls/batchnorm_golden/batchnorm_golden.cpp": "3f5ecd55f8e133675eca7f6b021b03c2d902796b9ace74f2eb328daa84df3191",
+    "src/hls/batchnorm_golden/batchnorm_golden.hpp": "6b8967cabca7921471b2a9b0b515e10e7a9f8f6faac15dd2b54820ba168bd2aa",
+    "src/hls/streaming_relu/streaming_relu.hpp": "620f1554291fe5a6255f5e8cdb3a876457f9bbc85e9fb8f3794f9b710477c8da",
+    "src/hls/streaming_relu/streaming_relu.cpp": "2b5aa796c8848607b0b60b81f96ea7c1df65ccccede0fb933e605ec715e293be",
+    "src/hls/streaming_upsample/streaming_upsample.cpp": "e0b50a01185a526ae56c65623c7c95f13c3fd2ebc8a1e01ff66d672d7a0a603b",
+    "src/hls/streaming_upsample/streaming_upsample.hpp": "4aa3c35a3a5c41afb585fd03df041016178c81d8f0e014ce6326389e6702a8bb",
+    "src/hls/matmul/matmul.cpp": "542454e08435efd26c34ac532e5ec70e5289b238226b40cf35b3a4e18cb399de",
+    "src/hls/matmul/matmul.hpp": "d7f38a7aee9f2d3f7b6692a773f699c4da1a29795e49e1e5f6169a21916b0d11",
+    "src/hls/relu_golden/relu_golden.hpp": "992363eebf076d51106c19b02f7d29b5208e8dc232932f021799cc622e86b5ef",
+    "src/hls/relu_golden/relu_golden.cpp": "7fbe3067deb2356e9c8341a908eb6b9bb3b5bc583a2b4c77c8aa5735e936e66f",
+    "src/hls/streaming_pipeline/streaming_pipeline.cpp": "f9c59de3e39d884ae2c2337223886210b257ae0b82952b8b216c06e1e86dfe86",
+    "src/hls/streaming_pipeline/streaming_pipeline.hpp": "07eae41e022a7738a635f7d974fa874bde8f7e1c690a1df588189357f3cb5680",
+    "src/hls/conv1x1_golden/conv1x1_golden.cpp": "a9026ea3059ca61e5c06b824aa8f403d042703525f922e820b4b3747b64f416e",
+    "src/hls/conv1x1_golden/conv1x1_golden.hpp": "87ae33629ef7382be6022e44c3b3688c8b3589e670dd38730948c39aeb64aeca",
+    "src/hls/conv2d_padded_golden/conv2d_padded_golden.hpp": "95f2679cbe21e23f80a2bfabe66d6f422b0a89164031e5d05f1712af1278453c",
+    "src/hls/conv2d_padded_golden/conv2d_padded_golden.cpp": "74ec2943670216087f4decc9d3d693739754681711ace788d8c4ee1e248f9aa3",
+    "src/hls/flatten_golden/flatten_golden.cpp": "c3f879e5ce2830b64e6b713fa7f993a5e4b06414555b319de18302eaeb72ce6d",
+    "src/hls/flatten_golden/flatten_golden.hpp": "486cb3d195ce9fcfaf45a30a2067b30f4ef32b70fe6f0d2e51aa8474392f91dc",
+    "src/rtl/README.md": "fc1fa1babda5a5cbfccc6bae9dcfb07624658d1e3c79409d7cb1214e9073f37e",
+    "tb/add_golden/add_golden_tb.cpp": "e20078b1fbd255eaea40c0e12e906cb18031c8e7ecc9adbf5dd1f5a7c0f7f51e",
+    "tb/justoliunet/justoliunet_tb.cpp": "87fe4bd63a3302a31d1a88e90f62143bf00be3b61690da10ecf05b9bf6bd5738",
+    "tb/justoliunet/justoliunet_vectors.hpp": "77c6cbb07a30c5b92088534ef687fdbd3f0d787ab0fe33861bb0dc8f6b585a3a",
+    "tb/maxpool1d_golden/maxpool1d_golden_tb.cpp": "8534f122feb4dead55e9a7c663f4462438a32572a0d32386cdb5d34eb7f4e175",
+    "tb/padding_golden/padding_golden_tb.cpp": "de6203a9405493140f72c1f332594790de7f918c9d7415d9e62066ed685ed833",
+    "tb/conv1d_golden/conv1d_golden_tb.cpp": "2d64e273984ef7515c293a68a410b451cb1aa768a25d26682d3ae5840ae62bcd",
+    "tb/test_conv2d.cpp/test_conv2d_tb.cpp": "a2d9ac4fb4f3433fbbb4f2171bedbae7ac9cebae93f66b379c879641b9053cce",
+    "tb/dot_product/dot_product_tb.cpp": "afea1c73d5ff34ff332b0bc30eb2826be3a51f45ed93d8f7f7495e902b5ec9f7",
+    "tb/nearest_neighbor_golden/nearest_neighbor_golden_tb.cpp": "d835448aeae440fc7e4d40a915ca5560b4d2ba72bd3ff2e4dd02114d1d459052",
+    "tb/justounet2d_golden/justounet2d_golden_tb.cpp": "6405337a0fe872ad9726a401db1cc6d828b8da8fc7184dfd724b10232942c458",
+    "tb/conv2d/conv2d_tb.cpp": "b841d28bb38c0eda297760cf346662ed03186cb12ee44e1abc4ad87c197fc62f",
+    "tb/dense_golden/dense_golden_tb.cpp": "1379a53dd12f2c2d19a9a38ae30526206066c1af95ee17d0cdcceae65c088f66",
+    "tb/conv2d_golden/conv2d_golden_tb.cpp": "62f121b9761c23ed779e2531c5f6033b230d99f9a08ed60f98a8618c912dba14",
+    "tb/streaming_maxpool/streaming_maxpool_tb.cpp": "6b96835bc632dfb42a6a2a77608d617f5930176788dd7450377e4a729296b1f9",
+    "tb/streaming_conv2d/streaming_conv2d_tb.cpp": "781c8b24e7945b415d60c939d895c5976c9f766980866c5c9b8aba11c2852744",
+    "tb/maxpool_golden/maxpool_golden_tb.cpp": "31fce44f858b46d595965c6ae05e250157a86c2f14ea9b6329fb876fc6a5de64",
+    "tb/relu1d_golden/relu1d_golden_tb.cpp": "78b02a0400a28221c11b5dd25ace8393cd78fa19fd1ae224dd1d75ba5315b4ff",
+    "tb/model/model_tb.cpp": "a1fb838324c61485a8c8e7c352e2f1129634e9f6ff4f975a7028132d879cb3d0",
+    "tb/batchnorm_golden/batchnorm_golden_tb.cpp": "26f9af6006bf3be98986dbdc16988f41c2ecbc8f29f67a8510fdc2a1134e2673",
+    "tb/streaming_relu/streaming_relu_tb.cpp": "01306198382b6b40a090f177d856bb83d3520d1c1a50da6015bf3e18bbb9eb56",
+    "tb/streaming_upsample/streaming_upsample_tb.cpp": "c26bb2d90a996c6686519764d2be05f3a4d04467f1af0de4c4a8dd1542527c24",
+    "tb/matmul/test_matmul.cpp": "cfea71a6752cc42f9a1b6aa265c84f64ac11a71a5e834a32b3c1aa2e1c8f9769",
+    "tb/relu_golden/relu_golden_tb.cpp": "8466ff6cd30bc023ac811a13d6f8c2a2b464ebd56e4b73b85852a17cbec42f45",
+    "tb/streaming_pipeline/streaming_pipeline_tb.cpp": "99c19926d45319ebd08f5eba6e0f6ea1cef4d9146e743c697e77d00ded926010",
+    "tb/data/README.md": "241022e9287ef0ceaa0b8cadaf28d78a977be6ec9cba2e9ebd9c1e8e4b1d9d10",
+    "tb/data/justoliunet_vectors.txt": "caacee089a3ba787b115f685e47fab4d78f73d318af81fe6794e735b33c22a50",
+    "tb/conv1x1_golden/conv1x1_golden_tb.cpp": "097a1601bb2ff02ee40451f3624ab0a0c8a1b710340fdae5b6cf9bf8c1218e02",
+    "tb/conv2d_padded_golden/conv2d_padded_golden_tb.cpp": "fbb8f829fb1afa15724ae654e6994414458bab803fa7acd507cbd457a49fd762",
+    "tb/flatten_golden/flatten_golden_tb.cpp": "629fdbd21ff0f681b9bd8ca36895eda5937d30945fc14ad0df6d6fd8e5a1c6a8",
+    "config/matmul.tcl": "568ba035f880746a085be3e812b4bf28d25abcee54882690e9deb63d4a241e17",
+    "config/project.local.json": "3b6d05d6173b2652cf5b8b19a11fade1e15419f1828618efdd05213bc1fad865",
+    "config/project.json": "2e2ec94ba89ccd7c373487e56a3ec10e94ac6277c96bb0c849c15f37a1267c1c",
+    "config/parts.json": "856ee8876430374a43ed9b32f3323cf79315a06533af93eed60f2d50de4a1864",
+    "scripts/vivado.tcl": "87ff86e807de717005b3941b5b9683c3826b944e6c8aadbe5ae4ab397ccd7ae3",
+    "scripts/hls.tcl": "c5fa58a619c10a848d62e9de185a7de6f8a611f0d113733385d6db73938d1a1e",
+    "boards/README.md": "925d9261c2589899822d377bb1d269dd1afccb4ca8c97406c80ea5f2dc6f893b",
+    "boards/zcu104/system.tcl": "b34cb7d9701a080d53fca2bd2fa89f54cbcaf5d5c22c429bd9700c70c63999f5",
+    "constraints/README.md": "f18641cdf854b3c8c042751ef16ab05db36212adff927d040a271f71288cdff8"
+  }
+}

@@ -1,0 +1,36 @@
+// ZCU104 with Petalinux: the device tree entries that give jopt_driver its
+// two UIO devices. (On PYNQ, use --devmem-memory instead: see README.md.)
+//
+// The bootargs must contain uio_pdrv_genirq.of_id=generic-uio.
+
+// 1. In the BASE device tree (project-spec/meta-user/recipes-bsp/device-tree/
+//    files/system-user.dtsi): reserved DDR that Linux never uses, so the kernel
+//    can own it. An overlay cannot reserve memory; it must be there at boot.
+//    512 MB at 0x6000_0000: the top quarter of the ZCU104's 2 GB PS DDR, enough
+//    for a 598 x 1092 cube and its scores in one start.
+/ {
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        jopt_reserved: jopt@60000000 {
+            no-map;
+            reg = <0x0 0x60000000 0x0 0x20000000>;
+        };
+    };
+
+    jopt_memory {
+        compatible = "generic-uio";
+        linux,uio-name = "jopt_memory";
+        memory-region = <&jopt_reserved>;
+        reg = <0x0 0x60000000 0x0 0x20000000>;
+    };
+};
+
+// 2. With the bitstream (in the overlay, or system-user.dtsi if the PL is in
+//    the base device tree): the kernel's registers. "kernel" is the block's
+//    name in boards/zcu104/system.tcl.
+&kernel {
+    compatible = "generic-uio";
+    linux,uio-name = "justounetsimple_opt";
+};
