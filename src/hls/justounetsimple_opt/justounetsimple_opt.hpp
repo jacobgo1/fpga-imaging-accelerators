@@ -12,15 +12,17 @@
 // last row and column repeated to fill the edge patches), and put each patch's
 // scores back in place. A DATAFLOW chain of processes, all running at once:
 //
-//   read_rows<0> ─┐                           rows 0, 4, 8, ... of each patch, HP0
-//   read_rows<1> ─┤
-//   read_rows<2> ─┤
-//   read_rows<3> ─┴─► patch_buffer ─► conv1 ─► pool ─► conv2 ─► pool+up ─►
+//   read_rows_ahead<0> ─┐                     rows 0, 4, 8, ... of each patch, HP0
+//   read_rows_ahead<1> ─┤
+//   read_rows_ahead<2> ─┤
+//   read_rows_ahead<3> ─┴─► patch_buffer ─► conv1 ─► pool ─► conv2 ─► pool+up ─►
 //                     z-score, ping-pong          conv3 ─► up ─► conv4 ─► store (HPC0)
 //
-// read_rows: a patch row is 32 pixels x 120 bands = 7.5 KB contiguous in the
-// cube, one long burst. Four ports (each its own m_axi bundle and HP port,
-// 128 bits per cycle) take every fourth row.
+// read_rows_ahead: a patch row is 32 pixels x 120 bands = 7.5 KB contiguous
+// in the cube, two bursts of 16 pixels. Four ports (each its own m_axi bundle
+// and HP port, 128 bits per cycle) take every fourth row, each asking for its
+// next row while the current one still comes in, so the DDR's latency is not
+// paid once per row.
 // patch_buffer: two patch buffers on chip (UltraRAM). While conv1 reads patch
 // k from one, in band-chunk order, the readers fill patch k+1 into the other.
 // conv1: 32 bands per cycle (4 x 32 x 32 + 33 cycles per patch), two
@@ -70,8 +72,8 @@ typedef hls::vector<uint16_t, PORT_BANDS> jopt_raw_t;
 // One pixel of dout: 3 scores and the class, 128 bits.
 typedef hls::vector<int32_t, 4> jopt_out_t;
 
-void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                         const jopt_raw_t *din2, const jopt_raw_t *din3,
+void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
+                         hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
                          hls::burst_maxi<jopt_out_t> dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP

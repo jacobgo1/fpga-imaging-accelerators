@@ -296,7 +296,7 @@ int main(int, char** argv) {{
     FILE* f = fopen(argv[1], "rb");
     if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
     fclose(f);
-    const jopt_raw_t *d = din.data();
+    jopt_raw_t *d = din.data();   // hls::burst_maxi takes a plain pointer
     {call};
     f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jopt_out_t), dout.size(), f); fclose(f);
 }}

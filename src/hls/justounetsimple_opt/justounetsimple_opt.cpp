@@ -50,8 +50,8 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 // for conv1 (int8 input), 32767 * ... <= 7.7e7 for the others. The testbench
 // checks every sum it sees.
 
-void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                         const jopt_raw_t *din2, const jopt_raw_t *din3,
+void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
+                         hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
                          hls::burst_maxi<jopt_out_t> dout, int height, int width)
 {
 // Five AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
@@ -82,21 +82,30 @@ void justounetsimple_opt(const jopt_raw_t *din0, const jopt_raw_t *din1,
     hls::stream<vec_t<acc_t, BASE_CH>> s_conv3("s_conv3");
     hls::stream<vec_t<act_t, BASE_CH>> s_c("s_c");
     hls::stream<vec_t<acc_t, OUT_CH>> s_conv4("s_conv4");
-// The readers pause between rows (a new burst); let them run ahead.
+// Let the readers run ahead of patch_buffer, which takes a word from all four at once.
 #pragma HLS STREAM variable = s_raw depth = 64
 #pragma HLS STREAM variable = s_in depth = 64
 // conv1 hands out a patch's 16 x 16 pooled pixels during its last chunk
 // only (1024 cycles), conv2 takes one per 12 cycles. Room for all of them,
 // so conv1 never waits for conv2.
 #pragma HLS STREAM variable = s_a depth = 256
+// relu_pool_up gives a row pair (32 pixels) at once and conv3 takes one per 6
+// cycles; relu_up gives two rows (64 pixels) at once and conv4 takes one per 3.
+// With the default depth of 2 they cannot take their next input while they
+// give, conv2 and conv3 wait for them, and the chain behind conv1 took ~6 600
+// cycles a patch instead of conv1's 4 129. Room for all of it:
+#pragma HLS STREAM variable = s_b depth = 32
+#pragma HLS STREAM variable = s_c depth = 64
 // A patch row of scores, so conv4 keeps going while store starts a burst.
 #pragma HLS STREAM variable = s_conv4 depth = 32
 
     // Every process walks the same grid of H x W patches, one after another.
-    read_rows<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
-    read_rows<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    read_rows<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
-    read_rows<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
+    // Each asks for its next row one row ahead: at most 3 bursts outstanding,
+    // within num_read_outstanding = 4.
+    read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
     patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, true>(
         s_raw, s_in, height, width);
     // conv1: 110 -> 6 at 32 x 32, 32 bands per cycle (128 with the zero ones),
