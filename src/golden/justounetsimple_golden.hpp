@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quant_scale.hpp"
 #include "relu_golden.hpp"
 #include "maxpool_golden.hpp"
 #include "nearest_neighbor_golden.hpp"
@@ -28,12 +29,6 @@
 // Layout is the same as everywhere else: weights [out][in][kh][kw], activations
 // HWC. H and W must be divisible by 4. A 32 x 32 patch is the geometry the
 // model was trained on.
-
-// 2^-frac, for the scale arguments. constexpr: evaluated by the compiler, so
-// no conversion is left for the hardware.
-constexpr float pow2_neg(int frac) {
-    return 1.0f / (float)(1L << frac);
-}
 
 // Same-padded KxK convolution (zero padding) on quantized weights. Out-of-range
 // taps are skipped instead of copying the input into a padded buffer, so

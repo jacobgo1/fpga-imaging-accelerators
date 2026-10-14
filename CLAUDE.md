@@ -46,7 +46,9 @@ tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does
 ```
 
-Kernels now: `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
+Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
+per-pixel networks, from src/golden/'s 1D modules; numpy model
+tools/justoliunet_model.py), `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
 ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks; the 7020 one also the notebook),

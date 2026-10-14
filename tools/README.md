@@ -31,6 +31,10 @@ justounetsimple_model.py  numpy model of the justounetsimple kernels: preprocess
                           integer version of justounetsimple_opt (classify_fixed). Also
                           writes src/hls/justounetsimple_opt/justounetsimple_prep.hpp
                           (the integer z-score constants): python tools/justounetsimple_model.py
+justoliunet_model.py      numpy model of the justoliunet and justoliunet_bn kernels (the
+                          1D per-pixel networks): the trained model with its BatchNorm, and
+                          the int8 network the kernels run. python tools/justoliunet_model.py
+                          compares the two on the labelled aegean pixels.
 patching.py               Cuts an image into 32 x 32 patches and stitches results back,
                           the same way the kernels do.
 ```
