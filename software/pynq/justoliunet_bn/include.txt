@@ -1,0 +1,5 @@
+# The same network as justoliunet, other weights: its notebook finds the kernel from
+# the .bit and x..._hw.h next to it, and loads that kernel's weights.
+software/pynq/justoliunet/justoliunet.ipynb
+mu_sd.txt                                                  # training mean/std per band, for the preprocessing
+weights/quantized/justoliunet_bn/justoliunet_bn_int8.npz   # the kernel's weights, for the numpy reference

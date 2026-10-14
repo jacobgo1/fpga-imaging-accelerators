@@ -80,6 +80,22 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((out / 'justounetsimple_opt.ipynb').read_bytes(),
                          (ROOT / 'software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb').read_bytes())
 
+    def test_justoliunet_packages_carry_the_shared_notebook_and_their_own_weights(self):
+        for kernel in ('justoliunet', 'justoliunet_bn'):
+            with self.subTest(kernel=kernel):
+                weights = ROOT / f'weights/quantized/{kernel}/{kernel}_int8.npz'
+                if not weights.exists():
+                    self.skipTest(f'no {weights.relative_to(ROOT)}: '
+                                  f'python tools/quantize_weights.py weights/fp32/{kernel}')
+                run = make_build(self.dir / kernel, kernel, f'#define X{kernel.upper()}_CONTROL_ADDR_AP_CTRL 0x0\n')
+                out, _ = self.package(run, kernel)
+                self.assertEqual(sorted(p.name for p in out.iterdir()),
+                                 sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'justoliunet.ipynb',
+                                         'mu_sd.txt', f'{kernel}_int8.npz']))
+                self.assertEqual((out / 'justoliunet.ipynb').read_bytes(),
+                                 (ROOT / 'software/pynq/justoliunet/justoliunet.ipynb').read_bytes())
+                self.assertEqual((out / f'{kernel}_int8.npz').read_bytes(), weights.read_bytes())
+
     def test_missing_hwh_is_named(self):
         with self.assertRaisesRegex(SystemExit, 'block design description'):
             self.package(make_build(self.dir, hwh=False), 'justounetsimple')
