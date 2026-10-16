@@ -1,14 +1,38 @@
 // justounetsimple_opt_tb.cpp  --  testbench for the optimized kernel. The
-// checks are in justounetsimple_opt_check.hpp, shared with the Zynq-7030 one.
+// checks are in justounetsimple_opt_check.hpp, shared with the Zynq-7030 one;
+// the timeline (trace) is this kernel's own and checked here.
 #include "justounetsimple_opt.hpp"
 #include <cstdio>
+#include <cstdlib>
+#include <vector>
 
 static void run_kernel(jopt_raw_t *din, jopt_out_t *dout, int height, int width) {
     // All four ports read the cube; hls::burst_maxi takes a plain (not const) pointer.
-    // cycles counts only in the RTL (cosim): 0 here, in C simulation.
+    // cycles and the trace's times count only in the RTL (cosim): in C
+    // simulation cycles is 0 and the times are just the marks' order.
     uint32_t cycles = 0;
-    justounetsimple_opt(din, din, din, din, dout, height, width, cycles);
-    std::printf("cycles register: %u\n", (unsigned)cycles);
+    std::vector<uint32_t> trace(TRACE_WORDS + 1, 0xdeadbeef);   // one more: nothing written past the end
+    justounetsimple_opt(din, din, din, din, dout, height, width, cycles, trace.data());
+    std::printf("cycles register: %u, trace total: %u\n", (unsigned)cycles, (unsigned)trace[0]);
+
+    // Every tap passed exactly its words: two marks per patch on every lane
+    // (a wrong count would have hung or starved a process before this).
+    const int patches = ((height + H - 1) / H) * ((width + W - 1) / W);
+    bool ok = trace[0] == cycles && trace[TRACE_WORDS] == 0xdeadbeef;
+    for (int i = 0; i < TRACE_LANES; i++) {
+        const uint32_t marks = trace[1 + i];
+        if (marks != 2u * patches) {
+            std::printf("trace lane %d: %u marks, expected %d\n", i, (unsigned)marks, 2 * patches);
+            ok = false;
+        }
+        for (int k = 1; k < (int)marks && k < 2 * TRACE_PATCHES; k++)
+            if (trace[TRACE_HEAD + i * 2 * TRACE_PATCHES + k] < trace[TRACE_HEAD + i * 2 * TRACE_PATCHES + k - 1]) {
+                std::printf("trace lane %d: mark %d before mark %d\n", i, k, k - 1);
+                ok = false;
+            }
+    }
+    std::printf("trace: %s (%d lanes, %d patches)\n", ok ? "PASS" : "FAIL", TRACE_LANES, patches);
+    if (!ok) std::exit(1);
 }
 
 #include "justounetsimple_opt_check.hpp"

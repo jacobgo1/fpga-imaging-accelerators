@@ -33,6 +33,12 @@ public:
         return value;
     }
     bool empty() const { return data_.empty(); }
+    // Non-blocking read: false, and value unchanged, when there is nothing to read.
+    bool read_nb(T& value) {
+        if (data_.empty()) return false;
+        value = read();
+        return true;
+    }
 
 private:
     std::queue<T> data_;

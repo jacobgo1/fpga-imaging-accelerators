@@ -38,6 +38,9 @@ HEADER = f"""\
 """
 DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
 CYCLES_PER_PATCH = 4321   # what the fake kernel's counter says
+TRACE = 0x64              # the timeline buffer's address (64 bits)
+TRACE_LANES, TRACE_PATCHES, TRACE_HEAD = 12, 1024, 16
+TRACE_WORDS = TRACE_HEAD + TRACE_LANES * 2 * TRACE_PATCHES
 DIN0 = DINS[0]
 OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL     0x{AP_CTRL:02x}
@@ -51,6 +54,8 @@ OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_DATA 0x{CYCLES:02x}
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_BITS_CYCLES_DATA 32
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_CTRL 0x{CYCLES + 4:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_TRACE_DATA  0x{TRACE:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_BITS_TRACE_DATA  64
 """
 OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
 
@@ -121,6 +126,19 @@ class FakeImageKernel(FakeKernel):
             raise RuntimeError('Failed to allocate Memory!')
         return super().allocate(shape, dtype)
 
+    @staticmethod
+    def trace(patches):
+        """A made-up timeline in the kernel's layout: patch k starts on every lane near
+        cycle 1000 k; patch_buffer's window is 950 cycles, every other lane's 300."""
+        out = np.zeros(TRACE_WORDS, dtype=np.uint32)
+        out[0] = CYCLES_PER_PATCH * patches
+        out[1:1 + TRACE_LANES] = 2 * patches
+        for i in range(TRACE_LANES):
+            first = 1000 * np.arange(patches) + 10 * i
+            lane = out[TRACE_HEAD + i * 2 * TRACE_PATCHES:][:2 * patches].reshape(-1, 2)
+            lane[:, 0], lane[:, 1] = first, first + (949 if i == 4 else 299)
+        return out
+
     def view(self, address, shape, dtype):
         """shape x dtype at a physical address, inside one buffer."""
         for start, buffer in self.buffers.items():
@@ -139,7 +157,10 @@ class FakeImageKernel(FakeKernel):
             if self.broken:
                 scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
             self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = self.model.with_class(scores)
-            self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
+            patches = -(-h // 32) * -(-w // 32)
+            self.words[CYCLES] = CYCLES_PER_PATCH * patches
+            if self.address(TRACE):
+                self.view(self.address(TRACE), (TRACE_WORDS,), np.uint32)[:] = self.trace(patches)
             self.runs.append((h, w))
             self.done = True
         else:
@@ -207,9 +228,12 @@ class JustoUNetSimpleTests(unittest.TestCase):
         pynq.allocate = kernel.allocate
         pynq.Clocks = types.SimpleNamespace(fclk0_mhz=200.0)
         pyplot = types.ModuleType('matplotlib.pyplot')
-        pyplot.subplots = lambda n, m, **kw: (None, [types.SimpleNamespace(
-            imshow=lambda *a, **k: None, set_title=lambda *a: None, axis=lambda *a: None) for _ in range(m)])
-        pyplot.show = lambda: None
+        class Anything:   # a figure or axes: every call does nothing
+            def __getattr__(self, name):
+                return lambda *a, **k: None
+        pyplot.subplots = lambda n=1, m=1, **kw: (Anything(), Anything() if n * m == 1 else
+                                                  [Anything() for _ in range(n * m)])
+        pyplot.show = pyplot.tight_layout = lambda *a, **k: None
         matplotlib = types.ModuleType('matplotlib')
         matplotlib.pyplot = pyplot
         fakes = {'pynq': pynq, 'matplotlib': matplotlib, 'matplotlib.pyplot': pyplot}
@@ -283,7 +307,8 @@ int main(int, char** argv) {
         cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
         cube.tofile(self.dir / 'in.bin')
         want = self.model.classify_fixed(cube)
-        kernels = {'justounetsimple_opt': 'uint32_t cycles; justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles)',
+        kernels = {'justounetsimple_opt': 'uint32_t cycles; std::vector<uint32_t> trace(TRACE_WORDS); '
+                                       'justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles, trace.data())',
                    'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
@@ -393,15 +418,29 @@ int main(int, char** argv) {{
         self.assertEqual(ns['CYCLES'], CYCLES, 'the counter, from the register map')
         self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 6 / 200e6, msg='its count, at the clock')
         self.assertAlmostEqual(ns['own_best'], CYCLES_PER_PATCH * 6 / 200e6)
+        # The timeline of the last run: every lane, every patch, read back as written.
+        self.assertEqual(ns['TRACE'], TRACE, 'the timeline port, from the register map')
+        self.assertEqual(kernel.address(TRACE), ns['trace_out'].physical_address)
+        self.assertEqual([name for name, _, _ in ns['timeline']], ns['LANE_NAMES'])
+        self.assertEqual(len(ns['LANE_NAMES']), TRACE_LANES)
+        name, first, last = ns['timeline'][4]
+        np.testing.assert_array_equal(first, 1000 * np.arange(6) + 40)
+        np.testing.assert_array_equal(last - first, [949] * 6)
+        self.assertEqual(ns['busiest'], 'patch_buffer')
+        self.assertAlmostEqual(ns['stats']['patch_buffer'][2], 0.95)
 
     def test_opt_notebook_works_without_the_cycle_counter(self):
-        """The Zynq-7000 kernels share the notebook and have no cycles register."""
-        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines() if '_CYCLES_' not in line)
+        """The Zynq-7000 kernels share the notebook and have no cycles register or trace port."""
+        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines()
+                         if '_CYCLES_' not in line and '_TRACE_' not in line)
         board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', header), counts=True)
         kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
-        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
+        ns, kernel = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
         self.assertIsNone(ns['CYCLES'])
         self.assertIsNone(ns['own'])
+        self.assertIsNone(ns['TRACE'])
+        self.assertIsNone(ns['timeline'])
+        self.assertNotIn(TRACE, kernel.words, 'no address written to a register that is not there')
         self.assertTrue(ns['close'].all())
 
     def test_opt_notebook_uses_strips_when_the_cube_does_not_fit(self):

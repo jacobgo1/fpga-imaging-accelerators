@@ -65,8 +65,9 @@ void SimRegisters::run() {
 #elif defined(JOPT_SIM_ZYNQ7020)
   justounetsimple_opt_zynq7020(din[0], din[1], dout, height, width);
 #else
-  uint32_t cycles;   // the kernel's own stopwatch; counts only in the RTL
-  justounetsimple_opt(din[0], din[1], din[2], din[3], dout, height, width, cycles);
+  uint32_t cycles;   // the kernel's own stopwatch and timeline; they count only in the RTL
+  std::vector<uint32_t> trace(TRACE_WORDS);
+  justounetsimple_opt(din[0], din[1], din[2], din[3], dout, height, width, cycles, trace.data());
 #endif
   done_ = true;
 }

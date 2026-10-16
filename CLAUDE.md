@@ -50,7 +50,8 @@ Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
 per-pixel networks, from src/golden/'s 1D modules; numpy model
 tools/justoliunet_model.py; one notebook for both, software/pynq/justoliunet/),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
-ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
+ZCU104; records its own timeline in hardware, `src/optimized/shared/timeline.hpp`,
+which its notebook plots), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks; the 7020 one also the notebook),
 `justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute

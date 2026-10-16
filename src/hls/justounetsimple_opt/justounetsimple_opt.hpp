@@ -49,8 +49,22 @@
 // strip of a larger image works the same way: point din at its first row and
 // dout at that row's scores.
 // cycles: an output register, the kernel's time in clock cycles, from its
-// start until the last score is in memory (count_cycles.hpp). 0 in C
-// simulation, where the processes run one after another.
+// start until the last score is in memory. 0 in C simulation, where the
+// processes run one after another.
+// trace: the timeline of the run, TRACE_WORDS uint32, through its own port
+// (HPC1): for each FIFO below and each patch, the cycle its first and its
+// last word came out of the producer (src/optimized/shared/timeline.hpp has
+// the layout). Lanes, in order:
+//   0-3  read_rows_ahead 0-3 -> patch_buffer     3 840 words a patch each
+//   4    patch_buffer -> conv1                   4 096
+//   5    conv1 -> relu_pool                      1 024
+//   6    relu_pool -> conv2                        256
+//   7    conv2 -> relu_pool_up                     256
+//   8    relu_pool_up -> conv3                     256
+//   9    conv3 -> relu_up                          256
+//   10   relu_up -> conv4                        1 024
+//   11   conv4 -> store_scores                   1 024
+// The first TRACE_PATCHES patches are kept (an image of 19 x 35 has 665).
 
 // The kernel's sizes and formats, used as they are by the .cpp and the testbench.
 // constexpr, not #define: a macro H would also rewrite every template
@@ -70,6 +84,11 @@ constexpr int IN_FRAC = 5;       // conv1's input: z-score * 2^5 (int8: -3.97 ..
 constexpr int ACT_FRAC = 11;     // activations between the blocks (int16: -16 .. +16)
 constexpr int OUT_FRAC = 16;     // dout = score * 2^16
 
+constexpr int TRACE_LANES = 12;
+constexpr int TRACE_PATCHES = 1024;
+constexpr int TRACE_HEAD = 16;   // the total and the lanes' counts, then the lanes
+constexpr int TRACE_WORDS = TRACE_HEAD + TRACE_LANES * 2 * TRACE_PATCHES;
+
 // One word of the cube: 8 bands of a pixel, 128 bits.
 typedef hls::vector<uint16_t, PORT_BANDS> jopt_raw_t;
 // One pixel of dout: 3 scores and the class, 128 bits.
@@ -77,6 +96,7 @@ typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                          hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles);
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles,
+                         uint32_t *trace);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP
