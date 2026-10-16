@@ -15,14 +15,18 @@ static void run_kernel(jopt_raw_t *din, jopt_out_t *dout, int height, int width)
     justounetsimple_opt(din, din, din, din, dout, height, width, cycles, trace.data());
     std::printf("cycles register: %u, trace total: %u\n", (unsigned)cycles, (unsigned)trace[0]);
 
-    // Every tap passed exactly its words: two marks per patch on every lane
-    // (a wrong count would have hung or starved a process before this).
+    // Every tap passed exactly its words and sent two marks per patch and its
+    // two counts on every lane: a wrong count stops the tap or the timeline
+    // with an error before this. The empty and full counts are written: 0 in
+    // C simulation (cycles 0, nothing waits), less than the run in cosim.
     const int patches = ((height + H - 1) / H) * ((width + W - 1) / W);
     bool ok = trace[0] == cycles && trace[TRACE_WORDS] == 0xdeadbeef;
     for (int i = 0; i < TRACE_LANES; i++) {
-        const uint32_t marks = trace[1 + i];
-        if (marks != 2u * patches) {
-            std::printf("trace lane %d: %u marks, expected %d\n", i, (unsigned)marks, 2 * patches);
+        const uint32_t marks = trace[1 + i], empty = trace[32 + i], full = trace[64 + i];
+        const bool waits_ok = cycles == 0 ? empty == 0 && full == 0 : (uint64_t)empty + full < cycles;
+        if (marks != 2u * patches || !waits_ok) {
+            std::printf("trace lane %d: %u marks (expected %d), empty %u, full %u, of %u cycles\n", i,
+                        (unsigned)marks, 2 * patches, (unsigned)empty, (unsigned)full, (unsigned)cycles);
             ok = false;
         }
         for (int k = 1; k < (int)marks && k < 2 * TRACE_PATCHES; k++)

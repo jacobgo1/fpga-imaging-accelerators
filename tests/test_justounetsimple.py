@@ -39,7 +39,8 @@ HEADER = f"""\
 DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
 CYCLES_PER_PATCH = 4321   # what the fake kernel's counter says
 TRACE = 0x64              # the timeline buffer's address (64 bits)
-TRACE_LANES, TRACE_PATCHES, TRACE_HEAD = 12, 1024, 16
+TRACE_FIFOS, TRACE_PATCHES, TRACE_HEAD = 12, 1024, 128
+TRACE_LANES = 2 * TRACE_FIFOS
 TRACE_WORDS = TRACE_HEAD + TRACE_LANES * 2 * TRACE_PATCHES
 DIN0 = DINS[0]
 OPT_HEADER = f"""\
@@ -128,15 +129,20 @@ class FakeImageKernel(FakeKernel):
 
     @staticmethod
     def trace(patches):
-        """A made-up timeline in the kernel's layout: patch k starts on every lane near
-        cycle 1000 k; patch_buffer's window is 950 cycles, every other lane's 300."""
+        """A made-up timeline in the kernel's layout, of a run held up by the reads: on
+        lane L, patch k's first word at cycle CYCLES_PER_PATCH k + 10 L and its last 299 later; the
+        readers had nothing to give 30% of the run, every "took" tap found its FIFO
+        empty 20% of it, nothing was ever full."""
+        total = CYCLES_PER_PATCH * patches
         out = np.zeros(TRACE_WORDS, dtype=np.uint32)
-        out[0] = CYCLES_PER_PATCH * patches
+        out[0] = total
         out[1:1 + TRACE_LANES] = 2 * patches
+        out[32:32 + 4] = 0.3 * total                                  # gave taps of the readers
+        out[32 + TRACE_FIFOS:32 + TRACE_LANES] = 0.2 * total          # took taps
         for i in range(TRACE_LANES):
-            first = 1000 * np.arange(patches) + 10 * i
+            first = CYCLES_PER_PATCH * np.arange(patches) + 10 * i
             lane = out[TRACE_HEAD + i * 2 * TRACE_PATCHES:][:2 * patches].reshape(-1, 2)
-            lane[:, 0], lane[:, 1] = first, first + (949 if i == 4 else 299)
+            lane[:, 0], lane[:, 1] = first, first + 299
         return out
 
     def view(self, address, shape, dtype):
@@ -421,13 +427,43 @@ int main(int, char** argv) {{
         # The timeline of the last run: every lane, every patch, read back as written.
         self.assertEqual(ns['TRACE'], TRACE, 'the timeline port, from the register map')
         self.assertEqual(kernel.address(TRACE), ns['trace_out'].physical_address)
-        self.assertEqual([name for name, _, _ in ns['timeline']], ns['LANE_NAMES'])
-        self.assertEqual(len(ns['LANE_NAMES']), TRACE_LANES)
-        name, first, last = ns['timeline'][4]
-        np.testing.assert_array_equal(first, 1000 * np.arange(6) + 40)
-        np.testing.assert_array_equal(last - first, [949] * 6)
-        self.assertEqual(ns['busiest'], 'patch_buffer')
-        self.assertAlmostEqual(ns['stats']['patch_buffer'][2], 0.95)
+        stages = dict((name, (start, end)) for name, start, end in ns['timeline'])
+        self.assertEqual(list(stages), [name for name, _, _ in ns['STAGES']])
+        self.assertEqual(len(stages), 4 + 8 + 1, 'four readers, eight stages, the store')
+        k = CYCLES_PER_PATCH * np.arange(6)
+        # a stage starts at the first word it took and ends at the last it gave (lane L at 10 L)
+        np.testing.assert_array_equal(stages['read_rows 0'][0], k)                # gave lane 0
+        np.testing.assert_array_equal(stages['patch_buffer'][0], k + 120)         # took lanes 12-15: the first
+        np.testing.assert_array_equal(stages['patch_buffer'][1], k + 40 + 299)    # gave lane 4
+        np.testing.assert_array_equal(stages['conv1'][0], k + 160)                # took lane 16
+        np.testing.assert_array_equal(stages['conv1'][1], k + 50 + 299)           # gave lane 5
+        np.testing.assert_array_equal(stages['store_scores'][1], k + 230 + 299)   # took lane 23
+        total = CYCLES_PER_PATCH * 6
+        working, no_input, output_full, done = ns['activity']['read_rows 0']
+        self.assertAlmostEqual(no_input, 30, places=2)                          # waiting for DDR
+        self.assertAlmostEqual(done, 100 * (total - 5 * CYCLES_PER_PATCH - 299) / total)
+        for name, shares in ns['activity'].items():
+            self.assertAlmostEqual(sum(shares), 100, msg=name)
+        self.assertAlmostEqual(ns['activity']['conv1'][1], 20, places=2)
+        self.assertTrue(ns['verdict'].startswith('the reads'), ns['verdict'])
+
+    def test_opt_notebook_timeline_not_held_by_the_reads(self):
+        """Readers whose output is full wait for patch_buffer: then it is not the reads."""
+        class Held(FakeImageKernel):
+            @staticmethod
+            def trace(patches):
+                out = FakeImageKernel.trace(patches)
+                out[64:64 + 4] = 0.5 * out[0]       # the readers' FIFOs full half the run
+                return out
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
+        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Held(m, l, b))
+        # 30% empty + 50% full is more than the readers' span (until their last word, 77%):
+        # the two waits overlapped, so they share the span 30 : 50 and nothing is left.
+        working, no_input, output_full, done = ns['activity']['read_rows 2']
+        self.assertAlmostEqual(working, 0)
+        self.assertAlmostEqual(no_input / output_full, 30 / 50, places=2)
+        self.assertAlmostEqual(no_input + output_full + done, 100)
+        self.assertTrue(ns['verdict'].startswith('not the reads'), ns['verdict'])
 
     def test_opt_notebook_works_without_the_cycle_counter(self):
         """The Zynq-7000 kernels share the notebook and have no cycles register or trace port."""

@@ -33,6 +33,8 @@ public:
         return value;
     }
     bool empty() const { return data_.empty(); }
+    bool full() const { return false; }   // a queue has no depth: never full
+
     // Non-blocking read: false, and value unchanged, when there is nothing to read.
     bool read_nb(T& value) {
         if (data_.empty()) return false;
