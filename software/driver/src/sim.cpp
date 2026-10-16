@@ -65,7 +65,8 @@ void SimRegisters::run() {
 #elif defined(JOPT_SIM_ZYNQ7020)
   justounetsimple_opt_zynq7020(din[0], din[1], dout, height, width);
 #else
-  justounetsimple_opt(din[0], din[1], din[2], din[3], dout, height, width);
+  uint32_t cycles;   // the kernel's own stopwatch; counts only in the RTL
+  justounetsimple_opt(din[0], din[1], din[2], din[3], dout, height, width, cycles);
 #endif
   done_ = true;
 }

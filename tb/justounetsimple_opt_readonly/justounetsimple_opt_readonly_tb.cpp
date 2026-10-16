@@ -36,7 +36,8 @@ static bool check(int h, int w, unsigned seed) {
         for (int i = 0; i < 4; i++) word[i] = SENTINEL;
 
     jopt_raw_t *d = cube.data();   // all four ports read the cube; hls::burst_maxi takes a plain pointer
-    justounetsimple_opt_readonly(d, d, d, d, dout.data(), h, w);
+    uint32_t cycles = 0;           // counts only in the RTL (cosim): 0 in C simulation
+    justounetsimple_opt_readonly(d, d, d, d, dout.data(), h, w, cycles);
 
     uint16_t want[LANES];
     reference(cube, h, w, want);
@@ -54,7 +55,7 @@ static bool check(int h, int w, unsigned seed) {
             ok = false;
             break;
         }
-    std::printf("%s %d x %d\n", ok ? "PASS" : "FAIL", h, w);
+    std::printf("%s %d x %d, cycles register: %u\n", ok ? "PASS" : "FAIL", h, w, (unsigned)cycles);
     return ok;
 }
 

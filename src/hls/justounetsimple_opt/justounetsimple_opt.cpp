@@ -8,6 +8,7 @@
 #include "../../optimized/shared/relu_pool_up.hpp"
 #include "../../optimized/shared/relu_up.hpp"
 #include "../../optimized/shared/store_scores.hpp"
+#include "../../optimized/shared/count_cycles.hpp"
 #include <type_traits>
 
 // The quantized weights, as the int8 integers q they are (value q * 2^-frac):
@@ -52,7 +53,7 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 
 void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                          hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                         hls::burst_maxi<jopt_out_t> dout, int height, int width)
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles)
 {
 // Five AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
 // four read the cube in parallel (point all of them at it) through HP0-3,
@@ -70,6 +71,7 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
 #pragma HLS INTERFACE mode = s_axilite port = dout bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = height bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = width bundle = control
+#pragma HLS INTERFACE mode = s_axilite port = cycles bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = return bundle = control
 #pragma HLS DATAFLOW
 
@@ -82,6 +84,7 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
     hls::stream<vec_t<acc_t, BASE_CH>> s_conv3("s_conv3");
     hls::stream<vec_t<act_t, BASE_CH>> s_c("s_c");
     hls::stream<vec_t<acc_t, OUT_CH>> s_conv4("s_conv4");
+    hls::stream<bool> s_finished("s_finished");
 // Let the readers run ahead of patch_buffer, which takes a word from all four at once.
 #pragma HLS STREAM variable = s_raw depth = 64
 #pragma HLS STREAM variable = s_in depth = 64
@@ -124,5 +127,7 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
     // conv4: 6 -> 3 at 32 x 32, no activation, 3 cycles per pixel.
     conv3x3_narrow<H, W, H, W, BASE_CH, OUT_CH, SUM4 - q::conv4_bias_frac,
                    q::conv4_weight, q::conv4_bias, true>(s_c, s_conv4, height, width);
-    store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width);
+    store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width, s_finished);
+    // Last: C simulation runs the processes in this order (count_cycles.hpp).
+    count_cycles(s_finished, cycles);
 }

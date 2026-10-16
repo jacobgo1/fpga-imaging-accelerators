@@ -1,5 +1,6 @@
 #include "justounetsimple_opt_readonly.hpp"
 #include "../../optimized/shared/read_rows.hpp"
+#include "../../optimized/shared/count_cycles.hpp"
 
 constexpr int WORDS = RAW_BANDS / PORT_BANDS;        // 15 words per pixel in the cube
 static_assert(RAW_BANDS % PORT_BANDS == 0, "a pixel is whole words");
@@ -8,9 +9,11 @@ static_assert(RAW_BANDS % PORT_BANDS == 0, "a pixel is whole words");
 // reader sends PH / PORTS rows x PW pixels x WORDS words a patch (the edge
 // patches padded to full size), so drain takes exactly that many: fewer would
 // leave the readers stuck on full FIFOs, more would wait forever. The sum
-// keeps the reads from being optimized away.
+// keeps the reads from being optimized away. Then a word on finished, for
+// count_cycles, as store_scores does in justounetsimple_opt.
 template<int PH, int PW, int WORDS, int PORTS>
-void drain(hls::stream<jopt_raw_t> in[PORTS], hls::burst_maxi<jopt_out_t> dout, int height, int width) {
+void drain(hls::stream<jopt_raw_t> in[PORTS], hls::burst_maxi<jopt_out_t> dout, int height, int width,
+           hls::stream<bool>& finished) {
     static_assert(PORT_BANDS % 2 == 0, "two lanes per int32 of dout");
     constexpr int PER_PATCH = PH / PORTS * PW * WORDS;
     const int patches = patch_count<PH, PW>(height, width);
@@ -45,11 +48,13 @@ void drain(hls::stream<jopt_raw_t> in[PORTS], hls::burst_maxi<jopt_out_t> dout, 
     dout.write_request(0, 1);
     dout.write(out);
     dout.write_response();
+    finished.write(true);
 }
 
 void justounetsimple_opt_readonly(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                                   hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                                  hls::burst_maxi<jopt_out_t> dout, int height, int width)
+                                  hls::burst_maxi<jopt_out_t> dout, int height, int width,
+                                  uint32_t& cycles)
 {
 // The interfaces of justounetsimple_opt, unchanged, so the reads are the same
 // and the same block design (boards/zcu104/system.tcl) wires it the same way.
@@ -66,10 +71,12 @@ void justounetsimple_opt_readonly(hls::burst_maxi<jopt_raw_t> din0, hls::burst_m
 #pragma HLS INTERFACE mode = s_axilite port = dout bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = height bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = width bundle = control
+#pragma HLS INTERFACE mode = s_axilite port = cycles bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = return bundle = control
 #pragma HLS DATAFLOW
 
     hls::stream<jopt_raw_t> s_raw[PORTS];
+    hls::stream<bool> s_finished("s_finished");
 // As in justounetsimple_opt: the readers run ahead of whoever takes their words.
 #pragma HLS STREAM variable = s_raw depth = 64
 
@@ -77,5 +84,7 @@ void justounetsimple_opt_readonly(hls::burst_maxi<jopt_raw_t> din0, hls::burst_m
     read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
     read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
     read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
-    drain<H, W, WORDS, PORTS>(s_raw, dout, height, width);
+    drain<H, W, WORDS, PORTS>(s_raw, dout, height, width, s_finished);
+    // Last: C simulation runs the processes in this order (count_cycles.hpp).
+    count_cycles(s_finished, cycles);
 }

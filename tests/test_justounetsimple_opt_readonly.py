@@ -27,10 +27,12 @@ NAME = 'justounetsimple_opt_readonly'
 NOTEBOOK = ROOT / 'software/pynq' / NAME / f'{NAME}.ipynb'
 SOURCE = ROOT / 'src/hls' / NAME
 CXX = shutil.which('g++') or shutil.which('clang++')
-AP_CTRL, DINS, DOUT, HEIGHT, WIDTH = 0x00, (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54
+AP_CTRL, DINS, DOUT, HEIGHT, WIDTH, CYCLES = 0x00, (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
+CYCLES_PER_PATCH = 3900   # what the fake kernel's counter says
 HEADER = ''.join(f'#define XJUSTOUNETSIMPLE_OPT_READONLY_CONTROL_ADDR_{name} 0x{offset:02x}\n'
                  for name, offset in [('AP_CTRL', AP_CTRL)] + [(f'DIN{i}_DATA', d) for i, d in enumerate(DINS)]
-                 + [('DOUT_DATA', DOUT), ('HEIGHT_DATA', HEIGHT), ('WIDTH_DATA', WIDTH)])
+                 + [('DOUT_DATA', DOUT), ('HEIGHT_DATA', HEIGHT), ('WIDTH_DATA', WIDTH),
+                    ('CYCLES_DATA', CYCLES), ('CYCLES_CTRL', CYCLES + 4)])
 DRIVER = f"""
 #include "{NAME}.hpp"
 #include <cstdio>
@@ -44,7 +46,8 @@ int main(int, char** argv) {{
     if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
     fclose(f);
     jopt_raw_t *d = din.data();   // hls::burst_maxi takes a plain pointer
-    {NAME}(d, d, d, d, dout.data(), h, w);
+    uint32_t cycles;
+    {NAME}(d, d, d, d, dout.data(), h, w, cycles);
     f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jopt_out_t), 1, f); fclose(f);
 }}
 """
@@ -98,6 +101,7 @@ class FakeKernel:
         if self.broken:
             result[0] ^= 1
         self.buffers[self.address(DOUT)][:] = result
+        self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
         self.runs.append((h, w))
         self.done = True
 
@@ -169,6 +173,9 @@ class ReadOnlyNotebookTests(unittest.TestCase):
         self.assertEqual(ns['PATCHES'], 6)
         self.assertEqual(ns['READ_CYCLES'], 3840)
         self.assertGreater(ns['best'], 0)
+        self.assertEqual(ns['CYCLES'], CYCLES, 'the counter, from the register map')
+        self.assertAlmostEqual(ns['own_best'], CYCLES_PER_PATCH * 6 / 200e6)
+        self.assertAlmostEqual(ns['cycles'], CYCLES_PER_PATCH)
         # Without the padding the sum would differ: the notebook must count it.
         plain = (cube.reshape(-1, 8).sum(0, dtype=np.uint64) % 65536).astype(np.uint16)
         self.assertFalse((ns['checksum'] == plain).all())

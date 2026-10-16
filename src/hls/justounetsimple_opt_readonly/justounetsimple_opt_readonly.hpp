@@ -24,11 +24,13 @@
 //
 // Ports and registers as justounetsimple_opt's: din0 .. din3 the same raw cube,
 // [height][width][120] uint16. dout: one 128-bit word, the 8 lanes, lane 2i in
-// the low half of int32 i.
+// the low half of int32 i. cycles: as justounetsimple_opt's, the kernel's time
+// in clock cycles, until the checksum is in memory (0 in C simulation).
 #include "../justounetsimple_opt/justounetsimple_opt.hpp"
 
 void justounetsimple_opt_readonly(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                                   hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                                  hls::burst_maxi<jopt_out_t> dout, int height, int width);
+                                  hls::burst_maxi<jopt_out_t> dout, int height, int width,
+                                  uint32_t& cycles);
 
 #endif // JUSTOUNETSIMPLE_OPT_READONLY_HLS_HPP

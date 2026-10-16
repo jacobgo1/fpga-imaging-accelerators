@@ -36,7 +36,8 @@ HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}
 #define XJUSTOUNETSIMPLE_CONTROL_BITS_DOUT_DATA 64
 """
-DINS, OPT_DOUT, HEIGHT, WIDTH = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54
+DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
+CYCLES_PER_PATCH = 4321   # what the fake kernel's counter says
 DIN0 = DINS[0]
 OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL     0x{AP_CTRL:02x}
@@ -47,6 +48,9 @@ OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_DOUT_DATA   0x{OPT_DOUT:02x}
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_HEIGHT_DATA 0x{HEIGHT:02x}
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_WIDTH_DATA  0x{WIDTH:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_DATA 0x{CYCLES:02x}
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_BITS_CYCLES_DATA 32
+#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_CTRL 0x{CYCLES + 4:02x}
 """
 OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
 
@@ -135,6 +139,7 @@ class FakeImageKernel(FakeKernel):
             if self.broken:
                 scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
             self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = self.model.with_class(scores)
+            self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
             self.runs.append((h, w))
             self.done = True
         else:
@@ -200,6 +205,7 @@ class JustoUNetSimpleTests(unittest.TestCase):
         pynq = types.ModuleType('pynq')
         pynq.Overlay = lambda path: overlay
         pynq.allocate = kernel.allocate
+        pynq.Clocks = types.SimpleNamespace(fclk0_mhz=200.0)
         pyplot = types.ModuleType('matplotlib.pyplot')
         pyplot.subplots = lambda n, m, **kw: (None, [types.SimpleNamespace(
             imshow=lambda *a, **k: None, set_title=lambda *a: None, axis=lambda *a: None) for _ in range(m)])
@@ -277,7 +283,7 @@ int main(int, char** argv) {
         cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
         cube.tofile(self.dir / 'in.bin')
         want = self.model.classify_fixed(cube)
-        kernels = {'justounetsimple_opt': 'justounetsimple_opt(d, d, d, d, dout.data(), h, w)',
+        kernels = {'justounetsimple_opt': 'uint32_t cycles; justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles)',
                    'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
@@ -384,6 +390,19 @@ int main(int, char** argv) {{
         self.assertEqual(kernel.address(OPT_DOUT), ns['scores_out'].physical_address)
         self.assertGreater(ns['wall'], 0)
         self.assertGreater(ns['fpga'], 0)
+        self.assertEqual(ns['CYCLES'], CYCLES, 'the counter, from the register map')
+        self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 6 / 200e6, msg='its count, at the clock')
+        self.assertAlmostEqual(ns['own_best'], CYCLES_PER_PATCH * 6 / 200e6)
+
+    def test_opt_notebook_works_without_the_cycle_counter(self):
+        """The Zynq-7000 kernels share the notebook and have no cycles register."""
+        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines() if '_CYCLES_' not in line)
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', header), counts=True)
+        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
+        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
+        self.assertIsNone(ns['CYCLES'])
+        self.assertIsNone(ns['own'])
+        self.assertTrue(ns['close'].all())
 
     def test_opt_notebook_uses_strips_when_the_cube_does_not_fit(self):
         # 150 x 40 x 120 x 2 bytes = 1.44 MB does not fit, a 128-row strip (1.23 MB) does.
@@ -393,6 +412,8 @@ int main(int, char** argv) {{
         self.assertEqual(ns['scores'].shape, (150, 40, 3))
         self.assertTrue(ns['close'].all())
         self.assertEqual(kernel.runs[1:3], [(128, 40), (22, 40)], 'two strips, the second the rest')
+        # 4 x 2 patches and 1 x 2: the kernel's own counts, added up over the strips
+        self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 10 / 200e6)
 
     def test_opt_notebook_shows_a_wrong_kernel(self):
         _, (ns, _) = self.run_opt(40, 40, broken=True)

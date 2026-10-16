@@ -48,6 +48,9 @@
 // Any height and width from 1 to 65535 (the index arithmetic is 16-bit). A
 // strip of a larger image works the same way: point din at its first row and
 // dout at that row's scores.
+// cycles: an output register, the kernel's time in clock cycles, from its
+// start until the last score is in memory (count_cycles.hpp). 0 in C
+// simulation, where the processes run one after another.
 
 // The kernel's sizes and formats, used as they are by the .cpp and the testbench.
 // constexpr, not #define: a macro H would also rewrite every template
@@ -74,6 +77,6 @@ typedef hls::vector<int32_t, 4> jopt_out_t;
 
 void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                          hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                         hls::burst_maxi<jopt_out_t> dout, int height, int width);
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles);
 
 #endif // JUSTOUNETSIMPLE_OPT_HLS_HPP

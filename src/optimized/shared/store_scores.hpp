@@ -40,8 +40,9 @@ OUT_T scores_and_class(const vec_t<acc_t, OUT>& v) {
 
 // IN_FLIGHT: bursts allowed to wait for their acknowledgement; at most the
 // m_axi port's num_write_outstanding.
-template<int PH, int PW, int SHIFT, int OUT, typename OUT_T, int IN_FLIGHT = 8>
-void store_scores(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> dout, int height, int width) {
+template<int PH, int PW, int SHIFT, int OUT, int IN_FLIGHT, typename OUT_T>
+void store_rows(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> dout, int height, int width) {
+    #pragma HLS INLINE
     const int rows = patch_rows<PH>(height), cols = patch_cols<PW>(width);
     int pending = 0;                            // bursts not yet acknowledged
     patch_row: for (int pr = 0; pr < rows; pr++) {
@@ -74,4 +75,18 @@ void store_scores(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> do
         #pragma HLS LOOP_TRIPCOUNT min=1 max=8
         dout.write_response();
     }
+}
+
+template<int PH, int PW, int SHIFT, int OUT, typename OUT_T, int IN_FLIGHT = 8>
+void store_scores(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> dout, int height, int width) {
+    store_rows<PH, PW, SHIFT, OUT, IN_FLIGHT>(in, dout, height, width);
+}
+
+// The same, and then one word on finished, once every word is in memory: the
+// end of the kernel's work, for count_cycles.
+template<int PH, int PW, int SHIFT, int OUT, typename OUT_T, int IN_FLIGHT = 8>
+void store_scores(hls::stream<vec_t<acc_t, OUT> >& in, hls::burst_maxi<OUT_T> dout, int height, int width,
+                  hls::stream<bool>& finished) {
+    store_rows<PH, PW, SHIFT, OUT, IN_FLIGHT>(in, dout, height, width);
+    finished.write(true);
 }
