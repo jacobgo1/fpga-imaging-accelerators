@@ -53,6 +53,8 @@ tools/justoliunet_model.py; one notebook for both, software/pynq/justoliunet/),
 ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks; the 7020 one also the notebook),
+`justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute
+replaced by a checksum: times the reads alone; its own notebook),
 `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
