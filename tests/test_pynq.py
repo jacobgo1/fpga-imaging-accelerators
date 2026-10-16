@@ -4,9 +4,11 @@ The notebooks themselves run end to end against a fake board in test_justounetsi
 here only that they are valid and what goes into the package next to them.
 """
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -138,6 +140,197 @@ class PackageTests(unittest.TestCase):
             self.assertIn('matmul_pynq/matmul.ipynb', zip_file.namelist())
 
 
+# A .bit as Vivado writes it: a header of fields, then 'e', the length and the words.
+BIT_DATA = bytes.fromhex('ffffffff aa995566 20000000 30008001 0000000d')
+BIT = (bytes.fromhex('0009 0ff00ff00ff00ff000 0001') + b'a' + (12).to_bytes(2, 'big') + b'system;Id=0\0'
+       + b'b' + (12).to_bytes(2, 'big') + b'7z020clg484\0' + b'c' + (11).to_bytes(2, 'big') + b'2026/10/16\0'
+       + b'd' + (9).to_bytes(2, 'big') + b'10:00:00\0' + b'e' + len(BIT_DATA).to_bytes(4, 'big') + BIT_DATA)
+HWH = """<EDKSYSTEM><MODULES>
+<MODULE INSTANCE="ps" MODTYPE="processing_system7"><PARAMETERS>
+  <PARAMETER NAME="PCW_FPGA0_PERIPHERAL_FREQMHZ" VALUE="78.125"/>
+  <PARAMETER NAME="PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ" VALUE="76.923080"/>
+</PARAMETERS><MEMORYMAP>
+  <MEMRANGE BASEVALUE="0x00000000" HIGHVALUE="0x3FFFFFFF" INSTANCE="ps" MEMTYPE="MEMORY"/>
+  <MEMRANGE BASEVALUE="0x40000000" HIGHVALUE="0x4000FFFF" INSTANCE="kernel" MEMTYPE="REGISTER"
+            MASTERBUSINTERFACE="M_AXI_GP0" SLAVEBUSINTERFACE="s_axi_control"/>
+</MEMORYMAP></MODULE></MODULES></EDKSYSTEM>"""
+
+
+# The 7020 kernel's register map as HLS writes it (offsets as in its build).
+HEADER_7020 = """\
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_AP_CTRL     0x00
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_DIN0_DATA   0x10
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_BITS_DIN0_DATA   64
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_DIN1_DATA   0x1c
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_BITS_DIN1_DATA   64
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_DOUT_DATA   0x28
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_BITS_DOUT_DATA   64
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_HEIGHT_DATA 0x34
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_BITS_HEIGHT_DATA 32
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_WIDTH_DATA  0x3c
+#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_BITS_WIDTH_DATA  32
+"""
+
+
+class OpuPackageTests(unittest.TestCase):
+    """The zip for a board running the OPU system's PetaLinux (the ZedBoard)."""
+    KERNEL = 'justounetsimple_opt_zynq7020'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.run = make_build(self.tmp.name, self.KERNEL, HEADER_7020)
+        (self.run / 'vivado/system.runs/impl_1/system_wrapper.bit').write_bytes(BIT)
+        (self.run / 'vivado/system.gen/sources_1/bd/system/hw_handoff/system.hwh').write_text(HWH)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def package(self, board=None, dtc=None, compiler=None):
+        """Packs with only the tools given: dtc and the ARM compiler, found on PATH or not."""
+        saved, saved_cc = flow.shutil.which, os.environ.pop('OPU_CC', None)
+        tools = {'dtc': dtc, 'arm-linux-gnueabihf-gcc': compiler}
+        flow.shutil.which = lambda name: tools.get(name, saved(name))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return flow.package(self.run, self.KERNEL, board)
+        finally:
+            flow.shutil.which = saved
+            if saved_cc is not None:
+                os.environ['OPU_CC'] = saved_cc
+
+    def test_bit_to_bin_drops_the_header_and_swaps_each_word(self):
+        data = flow.bit_to_bin(BIT)
+        self.assertEqual(data, bytes.fromhex('ffffffff 665599aa 00000020 01800030 0d000000'))
+        with self.assertRaisesRegex(SystemExit, 'Not a bitstream'):
+            flow.bit_to_bin(b'BIT')
+        with self.assertRaisesRegex(SystemExit, 'Not a bitstream'):
+            flow.bit_to_bin(BIT[:-1])          # cut short
+
+    def test_kernel_registers_and_clock_come_from_the_hwh(self):
+        hwh = self.run / 'vivado/system.gen/sources_1/bd/system/hw_handoff/system.hwh'
+        self.assertEqual(flow.hwh_kernel(hwh), (0x40000000, 0x10000, 76923080))
+        hwh.write_text('<EDKSYSTEM/>')
+        with self.assertRaisesRegex(SystemExit, 'no kernel registers'):
+            flow.hwh_kernel(hwh)
+
+    def test_zedboard_gets_what_fpgautil_loads(self):
+        archive = self.package('zedboard')
+        out = self.run / f'{self.KERNEL}_opu'
+        names = [f'{self.KERNEL}.bit.bin', f'{self.KERNEL}.bit.bin.md5sum', f'{self.KERNEL}.dtsi',
+                 f'x{self.KERNEL}_hw.h', 'load.sh', 'classify.c', 'kernel_regs.h']
+        self.assertEqual(sorted(p.name for p in out.iterdir()), sorted(names))
+        data = (out / f'{self.KERNEL}.bit.bin').read_bytes()
+        self.assertEqual(data, flow.bit_to_bin(BIT))
+        # md5sum -c on the board: the hash, two spaces, where the file lies there
+        self.assertEqual((out / f'{self.KERNEL}.bit.bin.md5sum').read_text(),
+                         f'{hashlib.md5(data).hexdigest()}  /media/sd-pl/firmware/{self.KERNEL}.bit.bin\n')
+        dtsi = (out / f'{self.KERNEL}.dtsi').read_text()
+        for line in ('/plugin/;', 'target = <&fpga_full>;', f'firmware-name = "{self.KERNEL}.bit.bin";',
+                     'target = <&amba>;', 'assigned-clock-rates = <76923080>;', 'kernel@40000000 {',
+                     'reg = <0x40000000 0x10000>;', 'compatible = "generic-uio";'):
+            self.assertIn(line, dtsi)
+        self.assertEqual(dtsi.count('{'), dtsi.count('}'))
+        load = (out / 'load.sh').read_text()
+        for line in (f'md5sum -c {self.KERNEL}.bit.bin.md5sum', f'fpgautil -b {self.KERNEL}.bit.bin -o {self.KERNEL}.dtbo',
+                     'devmem 0x40000000', 'built for 76923 kHz', '-gt 76923 ]',
+                     'divider=$(( (33333 * ((io >> 12) & 0x7f) + 76923 - 1) / 76923 ))',
+                     'devmem 0xF8000170 32 $(( (fclk & ~0x03F03F30) | (divider << 8) | (1 << 20) ))'):
+            self.assertIn(line, load)
+        self.assertNotIn('\r', load)
+        with zipfile.ZipFile(archive) as zip_file:
+            self.assertEqual(sorted(zip_file.namelist()), sorted(f'{self.KERNEL}_opu/{n}' for n in names))
+
+    def test_dtc_compiles_the_overlay_when_there_is_one(self):
+        calls = []
+        saved = flow.subprocess.run
+        flow.subprocess.run = lambda command, **kw: calls.append(command)
+        try:
+            self.package('zedboard', dtc='/usr/bin/dtc')
+        finally:
+            flow.subprocess.run = saved
+        out = self.run / f'{self.KERNEL}_opu'
+        self.assertEqual(calls, [['/usr/bin/dtc', '-@', '-q', '-I', 'dts', '-O', 'dtb',
+                                  '-o', str(out / f'{self.KERNEL}.dtbo'), str(out / f'{self.KERNEL}.dtsi')]])
+
+    def test_classify_is_built_for_the_board_with_the_kernels_registers(self):
+        calls = []
+        saved = flow.subprocess.run
+        flow.subprocess.run = lambda command, **kw: calls.append(command)
+        try:
+            self.package('zedboard', compiler='/usr/bin/arm-linux-gnueabihf-gcc')
+        finally:
+            flow.subprocess.run = saved
+        out = self.run / f'{self.KERNEL}_opu'
+        source = ROOT / 'software/opu/justounetsimple_opt/classify.c'    # the 7020's include.txt
+        self.assertEqual(calls, [['/usr/bin/arm-linux-gnueabihf-gcc', '-O2', '-Wall', '-static', f'-I{out}',
+                                  str(source), '-o', str(out / 'classify')]])
+        self.assertEqual((out / 'classify.c').read_bytes(), source.read_bytes())
+
+    @unittest.skipIf(BASH is None, 'load.sh needs a shell')
+    def test_load_sh_sets_the_clock_when_the_overlay_did_not(self):
+        """load.sh with stand-ins for the board's commands: devmem reads the PS registers
+        from a file and records writes. FCLK_CLK0 at 100 MHz (IO PLL 1 GHz / 10) must go to
+        1 GHz / 13 = 76.9 MHz, the fastest not above the kernel's 76.92; at that it stays."""
+        self.package('zedboard')
+        out = self.run / f'{self.KERNEL}_opu'
+        bin_dir = Path(self.tmp.name) / 'bin'
+        bin_dir.mkdir()
+        stubs = {
+            'devmem': '#!/bin/sh\n'
+                      'if [ $# -eq 1 ]; then\n'
+                      '  case $(( $1 )) in\n'
+                      '    $((0xF8000108))) echo 0x0001E000 ;;\n'        # IO PLL: FDIV 30
+                      '    $((0xF8000170))) cat "$STATE" ;;\n'
+                      '    *) echo 0x00000004 ;;\n'
+                      '  esac\n'
+                      'else\n'
+                      '  echo "$1 $3" >> "$STATE.writes"\n'
+                      '  if [ $(( $1 )) -eq $((0xF8000170)) ]; then printf "0x%08X\\n" $(( $3 )) > "$STATE"; fi\n'
+                      'fi\n',
+            'fpgautil': '#!/bin/sh\necho "fpgautil $*" >> "$STATE.writes"\n',
+            'md5sum': '#!/bin/sh\nexit 0\n',
+            'dtc': '#!/bin/sh\nexit 0\n',
+        }
+        for name, text in stubs.items():
+            (bin_dir / name).write_text(text, newline='\n')
+        load = (out / 'load.sh').read_text().replace('cd /media/sd-pl/firmware', 'cd "$PACKAGE"')
+        (out / 'load_here.sh').write_text(load, newline='\n')
+        state = Path(self.tmp.name) / 'fclk'
+        for start, want, writes in (('0x00100A00', '0x00100D00', 2), ('0x00100D00', '0x00100D00', 0)):
+            with self.subTest(start=start):
+                state.write_text(start + '\n')
+                Path(f'{state}.writes').write_text('')
+                env = {**os.environ, 'STATE': state.as_posix(), 'PACKAGE': out.as_posix(),
+                       'PATH': bin_dir.as_posix() + os.pathsep + os.environ['PATH']}
+                result = subprocess.run([BASH, '-c', f'PATH="{bin_dir.as_posix()}:$PATH" sh load_here.sh'],
+                                        cwd=out, capture_output=True, text=True, env=env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(state.read_text().strip(), want)
+                logged = Path(f'{state}.writes').read_text().splitlines()
+                self.assertEqual(len([w for w in logged if w.startswith('0xF8')]), writes, logged)
+                self.assertIn(f'fpgautil -b {self.KERNEL}.bit.bin -o {self.KERNEL}.dtbo', logged)
+                self.assertIn('FCLK_CLK0: 76922 kHz, built for 76923 kHz', result.stdout)
+
+    def test_register_offsets_for_the_programs(self):
+        regs = flow.opu_registers(HEADER_7020)
+        for line in ('#define REG_AP_CTRL 0x00', '#define REG_HEIGHT 0x34', '#define REG_WIDTH 0x3c',
+                     '#define REG_DINS {0x10, 0x1c}', '#define REG_DIN_64 1', '#define REG_DOUT 0x28',
+                     '#define REG_DOUT_64 1'):
+            self.assertTrue(any(l == line or l.startswith(line + ' ') for l in regs.splitlines()), line)
+        narrow = HEADER_7020.replace('BITS_DIN0_DATA   64', 'BITS_DIN0_DATA   32')
+        self.assertIn('#define REG_DIN_64 0', flow.opu_registers(narrow))
+        with self.assertRaisesRegex(SystemExit, 'WIDTH_DATA'):
+            flow.opu_registers(HEADER_7020.replace('ADDR_WIDTH_DATA', 'ADDR_OTHER'))
+
+    def test_the_run_says_which_board_it_was_for(self):
+        (self.run / 'run.json').write_text(json.dumps({'board': 'zedboard'}))
+        self.assertTrue(self.package().name.endswith('_opu.zip'))
+        (self.run / 'run.json').write_text(json.dumps({'board': 'zynq7020'}))
+        self.assertTrue(self.package().name.endswith('_pynq.zip'))
+        (self.run / 'run.json').unlink()                  # the default board's
+        self.assertTrue(self.package().name.endswith('_pynq.zip'))
+
+
 @unittest.skipIf(BASH is None, 'fpga.sh needs bash (Git Bash, WSL or Linux)')
 class FpgaShellTests(unittest.TestCase):
     def bash(self, script, root=ROOT, cwd=None):
@@ -176,7 +369,7 @@ class FpgaShellTests(unittest.TestCase):
         self.assertEqual(self.complete('fpga_cosim', 'matmul', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_cosim', 'matmul', '--d'), ['--dataflow-profile'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--d'), [])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zynq7020', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zedboard', 'zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
                          ['--board', '--clock-ns'])
 

@@ -10,6 +10,12 @@
       "script": "boards/zynq7020/system.tcl",
       "clock_ns": 12.8
     },
+    "zedboard": {
+      "part": "xc7z020clg484-1",
+      "script": "boards/zedboard/system.tcl",
+      "clock_ns": 12.8,
+      "software": "petalinux"
+    },
     "zynq7030": {
       "part": "xc7z030sbg485-1",
       "script": "boards/zynq7030/system.tcl",

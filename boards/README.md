@@ -10,6 +10,7 @@ is a property of the kernel (see below).
 | --- | --- | --- | --- |
 | ZCU104 | `zcu104` (default) | `xczu7ev-ffvc1156-2-e` | Zynq UltraScale+, the family HYPSO-3 will fly; runs PYNQ in the lab |
 | Zynq-7020 | `zynq7020` | `xc7z020clg400-1` | Zynq-7000, the PYNQ-Z2 in the lab (also the Zybo Z7-20; a ZedBoard is `xc7z020clg484-1`). Its `system.tcl` is the 7030's block design |
+| ZedBoard | `zedboard` | `xc7z020clg484-1` | The Zynq-7020 again, on the lab's ZedBoards running the OPU system's PetaLinux (HYPSO's Linux, no PYNQ). The 7020's block design; the build packs an OPU zip instead of the PYNQ one |
 | Zynq-7030 | `zynq7030` | `xc7z030sbg485-1` | Zynq-7000, HYPSO-2's FPGA. Check the package and speed grade against HYPSO-2's hardware and change it in `config/project.json` if needed |
 
 Pick the board when building: `fpga_build K --board zynq7030`, or
@@ -86,6 +87,33 @@ The Zynq-7020 uses the same script (`zynq7020/system.tcl` sources it), with its
 preset, if any, in `zynq7020/ps7_preset.tcl`. On the PYNQ-Z2 none is needed:
 the PYNQ image boots the processor, and loading the overlay sets `FCLK_CLK0`
 from the `.hwh`.
+
+## The ZedBoard: the OPU system instead of PYNQ
+
+The lab's ZedBoards run the OPU system (opu-system's PetaLinux, as on HYPSO), which
+loads designs at run time with `fpgautil` and a devicetree overlay. A `zedboard`
+bitstream run packs `build/K/RUN/K_opu/` and `K_opu.zip` (`main.py`, `package_opu`):
+
+| File | What it is |
+| --- | --- |
+| `K.bit.bin` | the bitstream as `fpgautil` takes it (what `bootgen -process_bitstream bin` makes) |
+| `K.bit.bin.md5sum` | its hash, with the path opu-system expects: `/media/sd-pl/firmware/K.bit.bin` |
+| `K.dtsi` (`K.dtbo`) | the overlay: which bitstream the full region gets, FCLK_CLK0 at the kernel's clock, the kernel's registers (generic-uio). Compiled when `dtc` is on the server's PATH; else `load.sh` compiles it on the board |
+| `xK_hw.h` | register offsets |
+| `load.sh` | run as root on the board: checks the md5sum, removes the overlay already loaded, loads, sets FCLK_CLK0 through the SLCR if the overlay could not, prints the FPGA state, FCLK_CLK0 and the kernel's AP_CTRL (4: idle) |
+| `classify` (`classify.c`, `kernel_regs.h`) | the kernel's program from `software/opu/K/` (or its `include.txt`), built static for the board's ARM when the server has `arm-linux-gnueabihf-gcc` (or `$OPU_CC`); the board has no compiler. `classify cube.npy scores.npy reference_fixed.npy`: runs the kernel from the reserved memory, in strips if the cube does not fit, times it and compares with the PC's answer |
+
+Copy the folder's files to `/media/sd-pl/firmware/` on the board, then
+`sh /media/sd-pl/firmware/load.sh`.
+
+A bitstream loaded at run time cannot change the PS: FCLK_CLK0 is set by the
+overlay (`xlnx,fclk`), or by `load.sh` if that did not take, and the HP ports keep
+the boot loader's settings (64 bits, as on the lab's ZedBoard). `classify` uses the
+reserved memory CubeDMA uses: CubeDMA must be idle. The bitstream replaces the whole PL, so the OPU base design
+(opu-system's `opu_base.tcl`: an AXI UART, GPIOs, a bitstream-hash ROM) is gone
+until the next boot: use a development image (`build_all -d`), where opu-services
+does not start by itself. To keep the base design, add the kernel to opu-system's
+`ZedBoard_no_comp.tcl` instead.
 
 ## Writing a board script
 
