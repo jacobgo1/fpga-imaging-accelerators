@@ -1,0 +1,3 @@
+# Repository files main.py copies into the PYNQ package, next to the notebook.
+weights/quantized/justoliunet/justoliunet_int8.npz     # the kernel's weights, for the integer model
+src/hls/justoliunet_opt/justoliunet_opt_formats.hpp    # its z-score constants and activation formats

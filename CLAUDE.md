@@ -49,6 +49,10 @@ docs/framework.md    what each build step does
 Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
 per-pixel networks, from src/golden/'s 1D modules; numpy model
 tools/justoliunet_model.py; one notebook for both, software/pynq/justoliunet/),
+`justoliunet_opt` and `justoliunet_bn_opt` (fast, ZCU104: the raw cube in, a pixel
+every 18 cycles, integer fixed point, the DSPs on conv2 and conv3; the design is in
+src/hls/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
+tools/justoliunet_model.py, one notebook for both in software/pynq/justoliunet_opt/),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
 ZCU104; records its own timeline in hardware, `src/optimized/shared/timeline.hpp`,
 which its notebook plots), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the

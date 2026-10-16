@@ -1,0 +1,5 @@
+# The same network as justoliunet_opt, other weights: its notebook finds the kernel from
+# the .bit and x..._hw.h next to it, and loads that kernel's weights.
+software/pynq/justoliunet_opt/justoliunet_opt.ipynb
+weights/quantized/justoliunet_bn/justoliunet_bn_int8.npz   # the kernel's weights, for the integer model
+src/hls/justoliunet_opt/justoliunet_opt_formats.hpp        # its z-score constants and activation formats
