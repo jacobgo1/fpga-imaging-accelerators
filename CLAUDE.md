@@ -8,7 +8,8 @@ turned into FPGA accelerators with Vitis HLS. Targets:
 - **ZCU104** (Zynq UltraScale+ ZU7EV), the default board: the family HYPSO-3
   will fly, and what runs in the lab (PYNQ).
 - **Zynq-7030** (`--board zynq7030`): HYPSO-2's FPGA. Much smaller (400 DSPs, no
-  UltraRAM, 64-bit HP ports), so kernels must be sized for it. See
+  UltraRAM, 64-bit HP ports), so kernels must be sized for it. On PicoBoB with the
+  OPU system's PetaLinux, so the build packs `K_opu.zip` as for the ZedBoard. See
   `boards/README.md`.
 - **Zynq-7020** (`--board zynq7020`): the PYNQ-Z2 in the lab now. Smaller still
   (220 DSPs, 140 BRAM36, 53 K LUTs); same PS and ports as the 7030.

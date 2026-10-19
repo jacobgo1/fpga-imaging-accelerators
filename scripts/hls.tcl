@@ -4,7 +4,8 @@
 #   csim       csim_design     the testbench, compiled by HLS
 #   csynth     csynth_design   C++ -> Verilog, with the latency/resource report
 #   cosim      cosim_design    the testbench driving the generated Verilog
-#   bitstream  export_design   the Verilog as an IP block for Vivado (cosim first, unless skipped)
+#   ip         export_design   the Verilog as an IP block for Vivado (cosim first, unless skipped)
+#   bitstream  export_design   the same; main.py then runs Vivado
 if {[catch {
     source settings.tcl
     # A project named "hls" in this folder; its one solution is called "solution".
@@ -27,7 +28,8 @@ if {[catch {
         set report [file join $cfg(run_dir) hls solution syn report $cfg(top)_csynth.rpt]
         if {![file exists $report]} { error "C synthesis failed: no $report" }
     }
-    if {$cfg(stage) eq "cosim" || ($cfg(stage) eq "bitstream" && !$cfg(skip_cosim))} {
+    set exports [expr {$cfg(stage) in {ip bitstream}}]
+    if {$cfg(stage) eq "cosim" || ($exports && !$cfg(skip_cosim))} {
         # --dataflow-profile: also record every DATAFLOW process's working and
         # stalled cycles, and every signal, for the Dataflow Viewer (slower).
         if {$cfg(profile)} {
@@ -36,7 +38,7 @@ if {[catch {
             cosim_design -rtl verilog -tool xsim -trace_level port
         }
     }
-    if {$cfg(stage) eq "bitstream"} {
+    if {$exports} {
         # Writes the IP to hls/solution/impl/ip/, where vivado.tcl picks it up.
         export_design -format ip_catalog -rtl verilog
     }

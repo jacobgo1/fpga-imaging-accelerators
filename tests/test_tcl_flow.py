@@ -56,6 +56,7 @@ class TclFlowTests(unittest.TestCase):
             'csim': ['csim_design'],
             'csynth': ['csim_design', 'csynth_design'],
             'cosim': ['csim_design', 'csynth_design', 'cosim_design'],
+            'ip': ['csim_design', 'csynth_design', 'cosim_design', 'export_design'],
             'bitstream': ['csim_design', 'csynth_design', 'cosim_design', 'export_design'],
         }
         for stage, stages in expected.items():
@@ -73,10 +74,12 @@ class TclFlowTests(unittest.TestCase):
         self.assertEqual(self.cosim_args[self.cosim_args.index('-trace_level') + 1], 'all')
 
     def test_skip_cosim_still_exports(self):
-        code, calls = self.execute_hls('bitstream', skip_cosim=True)
-        self.assertEqual(code, 0)
-        self.assertEqual([c for c in calls if c.endswith('_design')],
-                         ['csim_design', 'csynth_design', 'export_design'])
+        for stage in ('ip', 'bitstream'):
+            with self.subTest(stage=stage):
+                code, calls = self.execute_hls(stage, skip_cosim=True)
+                self.assertEqual(code, 0)
+                self.assertEqual([c for c in calls if c.endswith('_design')],
+                                 ['csim_design', 'csynth_design', 'export_design'])
 
     def test_simulation_failure_stops_export(self):
         code, calls = self.execute_hls('bitstream', fail_at='csim_design')

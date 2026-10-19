@@ -9,7 +9,9 @@ Each stage includes the ones above it:
     csim       the same testbench, inside Vitis HLS                     (scripts/hls.tcl)
     csynth     ... then C++ -> Verilog
     cosim      ... then simulate that Verilog with the testbench
-    bitstream  ... then export the IP; the block design around it, synthesis, place and
+    ip         ... then export the IP (hls/solution/impl/ip/), for a block design of your
+               own; stops before Vivado
+    bitstream  ... then the block design around that IP, synthesis, place and
                route, .bit (scripts/vivado.tcl + boards/BOARD/system.tcl); the PYNQ zip
                (for a board running the OPU system's PetaLinux, the OPU zip)
 
@@ -38,7 +40,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / 'config' / 'project.json').read_text(encoding='utf-8'))
-STAGES = ('native', 'csim', 'csynth', 'cosim', 'bitstream')
+STAGES = ('native', 'csim', 'csynth', 'cosim', 'ip', 'bitstream')
 
 
 # ------------------------------------------------------------------ 1. The kernel's files
@@ -490,7 +492,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('stage', choices=STAGES + ('pynq', 'kernels'))
     parser.add_argument('--kernel', help='folder name in src/hls/')
-    parser.add_argument('--skip-cosim', action='store_true', help='bitstream: leave out cosim (slow)')
+    parser.add_argument('--skip-cosim', action='store_true', help='ip, bitstream: leave out cosim (slow)')
     parser.add_argument('--dataflow-profile', action='store_true',
                         help='cosim: record when each DATAFLOW process works and stalls, for the '
                              'Dataflow Viewer (slower)')
@@ -546,6 +548,11 @@ def main():
         (run / 'run.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
         print_estimates(run, kernel['top'])
         print(f'{record["result"].upper()}: {show(run)}/')
+    if args.stage == 'ip':
+        ip = run / 'hls' / 'solution' / 'impl' / 'ip'
+        print(f'\nThe IP, to add to a Vivado IP catalog (Settings > IP > Repository): {show(ip)}/')
+        for archive in sorted(ip.glob('*.zip')):
+            print(f'  the same as one file: {show(archive)}')
     if args.stage == 'bitstream':
         package(run, args.kernel, args.board)
 

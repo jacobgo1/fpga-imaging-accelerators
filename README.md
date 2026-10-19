@@ -21,6 +21,9 @@ fpga_build justounetsimple_opt        # bitstream + build/justounetsimple_opt/la
 Then upload the zip in Jupyter on the board (`http://BOARD:9090`), run
 `!unzip -o justounetsimple_opt_pynq.zip` in a cell, and run the notebook inside it.
 
+On the lab's ZedBoard (OPU system PetaLinux, no PYNQ), step by step:
+[docs/zedboard.md](docs/zedboard.md).
+
 `fpga.sh` only shortens commands. Underneath, everything is
 `python3 main.py STAGE --kernel KERNEL` (on Windows, `python` instead of `python3`):
 
@@ -30,6 +33,7 @@ Then upload the zip in Jupyter on the board (`http://BOARD:9090`), run
 | `csim` | The same testbench inside Vitis HLS |
 | `csynth` | ... then C++ → Verilog, and print latency and resource estimates |
 | `cosim` | ... then simulate the generated Verilog with the testbench |
+| `ip` | ... then export the IP (`hls/solution/impl/ip/`) and stop, for a Vivado block design of your own: no `.bit`. `--skip-cosim` leaves out cosim. `fpga_ip KERNEL` |
 | `bitstream` | ... then the IP, block design, synthesis, place and route, `.bit`, and the PYNQ zip. `--skip-cosim` leaves out cosim |
 | `pynq` | Re-make the PYNQ zip of an earlier run (`--run FOLDER`, default the newest), e.g. after editing the notebook |
 | `kernels` | List the kernels and the files found for each |

@@ -11,7 +11,7 @@ is a property of the kernel (see below).
 | ZCU104 | `zcu104` (default) | `xczu7ev-ffvc1156-2-e` | Zynq UltraScale+, the family HYPSO-3 will fly; runs PYNQ in the lab |
 | Zynq-7020 | `zynq7020` | `xc7z020clg400-1` | Zynq-7000, the PYNQ-Z2 in the lab (also the Zybo Z7-20; a ZedBoard is `xc7z020clg484-1`). Its `system.tcl` is the 7030's block design |
 | ZedBoard | `zedboard` | `xc7z020clg484-1` | The Zynq-7020 again, on the lab's ZedBoards running the OPU system's PetaLinux (HYPSO's Linux, no PYNQ). The 7020's block design; the build packs an OPU zip instead of the PYNQ one |
-| Zynq-7030 | `zynq7030` | `xc7z030sbg485-1` | Zynq-7000, HYPSO-2's FPGA. Check the package and speed grade against HYPSO-2's hardware and change it in `config/project.json` if needed |
+| Zynq-7030 | `zynq7030` | `xc7z030sbg485-1` | Zynq-7000, HYPSO-2's FPGA, on PicoBoB running the OPU system's PetaLinux: the build packs an OPU zip, as for the ZedBoard. The part is opu-system's `picozed_project.tcl`'s |
 
 Pick the board when building: `fpga_build K --board zynq7030`, or
 `python3 main.py bitstream --kernel K --board zynq7030`. The part and script per
@@ -92,7 +92,8 @@ from the `.hwh`.
 
 The lab's ZedBoards run the OPU system (opu-system's PetaLinux, as on HYPSO), which
 loads designs at run time with `fpgautil` and a devicetree overlay. A `zedboard`
-bitstream run packs `build/K/RUN/K_opu/` and `K_opu.zip` (`main.py`, `package_opu`):
+bitstream run packs `build/K/RUN/K_opu/` and `K_opu.zip` (`main.py`, `package_opu`),
+and so does a `zynq7030` run, for PicoBoB (HYPSO-2's board, also the OPU system):
 
 | File | What it is |
 | --- | --- |
