@@ -8,10 +8,14 @@ turned into FPGA accelerators with Vitis HLS. Targets:
 - **ZCU104** (Zynq UltraScale+ ZU7EV), the default board: the family HYPSO-3
   will fly, and what runs in the lab (PYNQ).
 - **Zynq-7030** (`--board zynq7030`): HYPSO-2's FPGA. Much smaller (400 DSPs, no
-  UltraRAM, 64-bit HP ports), so kernels must be sized for it. See
+  UltraRAM, 64-bit HP ports), so kernels must be sized for it. On PicoBoB with the
+  OPU system's PetaLinux, so the build packs `K_opu.zip` as for the ZedBoard. See
   `boards/README.md`.
 - **Zynq-7020** (`--board zynq7020`): the PYNQ-Z2 in the lab now. Smaller still
   (220 DSPs, 140 BRAM36, 53 K LUTs); same PS and ports as the 7030.
+- **ZedBoard** (`--board zedboard`): the same 7020 chip, on the lab's ZedBoards
+  running the OPU system's PetaLinux, not PYNQ: the build packs `K_opu.zip`
+  (.bit.bin, md5sum, devicetree overlay, load.sh) for `fpgautil`. See `boards/README.md`.
 
 Trained models are the `.pt` files in `weights/fp32/`. **Never delete them**: all
 weights are extracted from them on demand.
@@ -41,6 +45,7 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/K/     the notebook for kernel K
+software/opu/K/      the C program for kernel K on the OPU system's PetaLinux (no PYNQ)
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does

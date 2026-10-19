@@ -9,12 +9,15 @@ Each stage includes the ones above it:
     csim       the same testbench, inside Vitis HLS                     (scripts/hls.tcl)
     csynth     ... then C++ -> Verilog
     cosim      ... then simulate that Verilog with the testbench
-    bitstream  ... then export the IP; the block design around it, synthesis, place and
+    ip         ... then export the IP (hls/solution/impl/ip/), for a block design of your
+               own; stops before Vivado
+    bitstream  ... then the block design around that IP, synthesis, place and
                route, .bit (scripts/vivado.tcl + boards/BOARD/system.tcl); the PYNQ zip
+               (for a board running the OPU system's PetaLinux, the OPU zip)
 
 and two helpers:
 
-    pynq       re-make the PYNQ zip of an earlier bitstream run (--run, default the newest)
+    pynq       re-make the PYNQ (or OPU) zip of an earlier bitstream run (--run, default the newest)
     kernels    list the kernels and the files found for each
 
 --board picks the FPGA (its part and board script, from config/project.json); the
@@ -24,6 +27,7 @@ build/KERNEL/latest points at the newest one. Settings are in config/project.jso
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,7 +40,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / 'config' / 'project.json').read_text(encoding='utf-8'))
-STAGES = ('native', 'csim', 'csynth', 'cosim', 'bitstream')
+STAGES = ('native', 'csim', 'csynth', 'cosim', 'ip', 'bitstream')
 
 
 # ------------------------------------------------------------------ 1. The kernel's files
@@ -205,6 +209,20 @@ def print_estimates(run, top):
 
 # ------------------------------------------------------------------ 5. The zip for the board
 
+def software_files(kind, name):
+    """What software/KIND/NAME/ holds for the board, and the other repository files its
+    include.txt names (one per line, # comments)."""
+    folder = ROOT / 'software' / kind / name
+    files = [f for f in sorted(folder.glob('*')) if f.is_file() and f.name != 'include.txt'] if folder.is_dir() else []
+    include = folder / 'include.txt'
+    if include.is_file():
+        for line in include.read_text(encoding='utf-8').splitlines():
+            line = line.split('#')[0].strip()
+            if line:
+                files.append(ROOT / line)
+    return files
+
+
 def package_pynq(run, name):
     """RUN/NAME_pynq/ and RUN/NAME_pynq.zip: everything the notebook on the board needs."""
     def one(pattern, what):
@@ -216,7 +234,6 @@ def package_pynq(run, name):
     bit = one('vivado/system.runs/impl_1/*.bit', 'bitstream')
     hwh = one('vivado/**/hw_handoff/system.hwh', 'block design description')
     header = one('hls/solution/impl/ip/drivers/*/src/*_hw.h', 'register map')
-    notebook = ROOT / 'software' / 'pynq' / name
 
     out = run / f'{name}_pynq'
     shutil.rmtree(out, ignore_errors=True)
@@ -224,15 +241,8 @@ def package_pynq(run, name):
     shutil.copy2(bit, out / f'{name}.bit')  # PYNQ finds the .hwh by the .bit's name
     shutil.copy2(hwh, out / f'{name}.hwh')
     shutil.copy2(header, out / header.name)
-    for file in (notebook.glob('*') if notebook.is_dir() else []):
-        if file.is_file() and file.name != 'include.txt':
-            shutil.copy2(file, out / file.name)
-    include = notebook / 'include.txt'  # other repository files the notebook uses, one per line
-    if include.is_file():
-        for line in include.read_text(encoding='utf-8').splitlines():
-            line = line.split('#')[0].strip()
-            if line:
-                shutil.copy2(ROOT / line, out / Path(line).name)
+    for file in software_files('pynq', name):
+        shutil.copy2(file, out / file.name)
 
     archive = run / f'{name}_pynq.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -243,6 +253,217 @@ def package_pynq(run, name):
     for notebook_file in sorted(out.glob('*.ipynb')):   # its own, or one include.txt names
         print(f'  then open {name}_pynq/{notebook_file.name} and run it from the top.')
     return archive
+
+
+# The OPU system (HYPSO's PetaLinux, on the lab's ZedBoards) loads designs at run time
+# with fpgautil, from here (opu-system's fpga_reconfig.md).
+OPU_FIRMWARE = '/media/sd-pl/firmware'
+
+
+def bit_to_bin(bit):
+    """A .bit file's configuration data as the .bit.bin fpgautil loads (what bootgen
+    -process_bitstream bin makes): without the header, each 32-bit word byte-swapped, so
+    the sync word AA 99 55 66 reads 66 55 99 AA, as the Zynq FPGA manager looks for it."""
+    i = 13                                   # field 1 (9 bytes) and its length, field 2's length
+    while i < len(bit):
+        key = bit[i:i + 1]
+        if key == b'e':                      # the data: a 4-byte length, then the words
+            n = int.from_bytes(bit[i + 1:i + 5], 'big')
+            data = bit[i + 5:i + 5 + n]
+            if n % 4 or len(data) != n:
+                break
+            return b''.join(data[k:k + 4][::-1] for k in range(0, n, 4))
+        if key not in (b'a', b'b', b'c', b'd'):   # design, part, date, time: 2-byte lengths
+            break
+        i += 3 + int.from_bytes(bit[i + 1:i + 3], 'big')
+    raise SystemExit('Not a bitstream (.bit) file: no configuration data found')
+
+
+def hwh_kernel(hwh):
+    """From the block design's .hwh: (base, size) of the kernel's registers as the PS sees
+    them, and FCLK_CLK0 in Hz as the PS was set to make it."""
+    root = ElementTree.parse(hwh).getroot()
+    ranges = [m for m in root.iter('MEMRANGE')
+              if m.get('INSTANCE') == 'kernel' and m.get('MEMTYPE') == 'REGISTER']
+    rates = [p.get('VALUE') for p in root.iter('PARAMETER') if p.get('NAME') == 'PCW_ACT_FPGA0_PERIPHERAL_FREQMHZ']
+    if not ranges or not rates:
+        raise SystemExit(f'{show(hwh)}: no kernel registers or no FCLK_CLK0 rate in it')
+    base, high = int(ranges[0].get('BASEVALUE'), 16), int(ranges[0].get('HIGHVALUE'), 16)
+    # Rounded down: Linux picks the nearest rate at or below it, never faster than HLS planned.
+    return base, high - base + 1, int(float(rates[0]) * 1e6)
+
+
+def opu_registers(header):
+    """kernel_regs.h for the board's C programs, from the text of x<kernel>_hw.h: the
+    offsets classify.c uses, under names that do not depend on the kernel."""
+    addr = dict(re.findall(r'_ADDR_(\w+)\s+(0x[0-9a-fA-F]+)', header))
+    bits = dict(re.findall(r'_BITS_(\w+)\s+(\d+)', header))
+    dins = sorted((k for k in addr if re.fullmatch(r'DIN\d+_DATA', k)), key=lambda k: int(k[3:-5]))
+    missing = [k for k in ('AP_CTRL', 'DOUT_DATA', 'HEIGHT_DATA', 'WIDTH_DATA') if k not in addr]
+    if missing or not dins:
+        raise SystemExit(f'The register map has no {", ".join(missing or ["DIN0_DATA"])}')
+    return ('/* The kernel\'s registers, from its x..._hw.h, for the board\'s programs. Made by main.py. */\n'
+            f'#define REG_AP_CTRL {addr["AP_CTRL"]}\n'
+            f'#define REG_HEIGHT {addr["HEIGHT_DATA"]}\n'
+            f'#define REG_WIDTH {addr["WIDTH_DATA"]}\n'
+            f'#define REG_DINS {{{", ".join(addr[k] for k in dins)}}}   /* every input port */\n'
+            f'#define REG_DIN_64 {int(bits.get(dins[0]) == "64")}   /* addresses in two registers */\n'
+            f'#define REG_DOUT {addr["DOUT_DATA"]}\n'
+            f'#define REG_DOUT_64 {int(bits.get("DOUT_DATA") == "64")}\n')
+
+
+def opu_compiler():
+    """A C compiler for the board's ARM (Cortex-A9, hard float, Linux): $OPU_CC, else one on PATH."""
+    if os.environ.get('OPU_CC'):
+        return os.environ['OPU_CC']
+    for name in ('arm-linux-gnueabihf-gcc', 'arm-none-linux-gnueabihf-gcc'):
+        if shutil.which(name):
+            return shutil.which(name)
+    return None
+
+
+def package_opu(run, name):
+    """RUN/NAME_opu/ and RUN/NAME_opu.zip: the design for the OPU system's PetaLinux, to
+    copy to OPU_FIRMWARE on the board and load with its load.sh."""
+    def one(pattern, what):
+        found = sorted(run.glob(pattern))
+        if not found:
+            raise SystemExit(f'No {what} in {show(run)}/{pattern}')
+        return found[0]
+
+    bit = one('vivado/system.runs/impl_1/*.bit', 'bitstream')
+    hwh = one('vivado/**/hw_handoff/system.hwh', 'block design description')
+    header = one('hls/solution/impl/ip/drivers/*/src/*_hw.h', 'register map')
+    base, size, rate = hwh_kernel(hwh)
+
+    out = run / f'{name}_opu'
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir()
+    firmware = f'{name}.bit.bin'
+    data = bit_to_bin(bit.read_bytes())
+    (out / firmware).write_bytes(data)
+    # obip fpga reload and load.sh check the file against this before loading it.
+    md5 = hashlib.md5(data).hexdigest()
+    (out / f'{firmware}.md5sum').write_text(f'{md5}  {OPU_FIRMWARE}/{firmware}\n', encoding='utf-8')
+    shutil.copy2(header, out / header.name)
+
+    # The kernel's programs (software/opu/NAME/), built for the board: it has no compiler.
+    # Static, so they do not depend on the board's C library.
+    programs = [f for f in software_files('opu', name) if f.suffix == '.c']
+    compiler = opu_compiler() if programs else None
+    if programs:
+        (out / 'kernel_regs.h').write_text(opu_registers(header.read_text(encoding='utf-8')), encoding='utf-8')
+    for source in programs:
+        shutil.copy2(source, out / source.name)
+        if compiler:
+            subprocess.run([compiler, '-O2', '-Wall', '-static', f'-I{out}', str(source), '-o',
+                            str(out / source.stem)], check=True)
+
+    # The overlay: which bitstream the full region gets, FCLK_CLK0 (set by the boot loader for
+    # the design the board booted with, so set here; the xlnx,fclk driver applies it) and the
+    # kernel's registers, for UIO (generic-uio, as opu-system does for CubeDMA).
+    dtsi = out / f'{name}.dtsi'
+    dtsi.write_text(f'''/* {name} on the OPU system's PetaLinux. Made by main.py from {hwh.name}.
+ * Load: fpgautil -b {firmware} -o {name}.dtbo (load.sh does it). */
+/dts-v1/;
+/plugin/;
+/ {{
+	fragment@0 {{
+		target = <&fpga_full>;
+		__overlay__ {{
+			firmware-name = "{firmware}";
+		}};
+	}};
+	fragment@1 {{
+		target = <&amba>;
+		__overlay__ {{
+			#address-cells = <1>;
+			#size-cells = <1>;
+			clocking0 {{
+				compatible = "xlnx,fclk";
+				#clock-cells = <0>;
+				clocks = <&clkc 15>;
+				clock-output-names = "fabric_clk";
+				assigned-clocks = <&clkc 15>;
+				assigned-clock-rates = <{rate}>;
+			}};
+			kernel@{base:x} {{
+				compatible = "generic-uio";
+				reg = <0x{base:x} 0x{size:x}>;
+			}};
+		}};
+	}};
+}};
+''', encoding='utf-8', newline='\n')
+    dtc = shutil.which('dtc')
+    if dtc:
+        subprocess.run([dtc, '-@', '-q', '-I', 'dts', '-O', 'dtb', '-o', str(out / f'{name}.dtbo'), str(dtsi)],
+                       check=True)
+
+    (out / 'load.sh').write_text(f'''#!/bin/sh
+# Load {name} on the FPGA: run as root on the board, with this folder's files in
+# {OPU_FIRMWARE}. Made by main.py.
+set -e
+cd {OPU_FIRMWARE}
+[ -f {name}.dtbo ] || dtc -@ -q -I dts -O dtb -o {name}.dtbo {name}.dtsi
+md5sum -c {firmware}.md5sum
+# An overlay already in the full region (the OPU base design's, loaded at boot) blocks a
+# new one; it goes, and with it the drivers of that design's UART and GPIOs.
+for overlay in /configfs/device-tree/overlays/* /sys/kernel/config/device-tree/overlays/*; do
+    if [ -d "$overlay" ]; then echo "removing the overlay $overlay"; rmdir "$overlay"; fi
+done
+fpgautil -b {firmware} -o {name}.dtbo
+echo "FPGA: $(cat /sys/class/fpga_manager/fpga0/state)"
+# FCLK_CLK0 in kHz: the IO PLL (33.333 MHz PS_CLK x FDIV) through its two dividers.
+fclk_khz() {{
+    io=$(devmem 0xF8000108)
+    fclk=$(devmem 0xF8000170)
+    echo $((33333 * ((io >> 12) & 0x7f) / ((fclk >> 8) & 0x3f) / ((fclk >> 20) & 0x3f)))
+}}
+if [ "$(fclk_khz)" -gt {rate // 1000} ]; then
+    # The overlay's rate did not take (no xlnx,fclk driver): the IO PLL's smallest divider
+    # that is not faster than the kernel was built for, written to the SLCR (unlocked first).
+    io=$(devmem 0xF8000108)
+    fclk=$(devmem 0xF8000170)
+    divider=$(( (33333 * ((io >> 12) & 0x7f) + {rate // 1000} - 1) / {rate // 1000} ))
+    echo "FCLK_CLK0 is $(fclk_khz) kHz: setting it to the IO PLL / $divider"
+    devmem 0xF8000008 32 0xDF0D
+    devmem 0xF8000170 32 $(( (fclk & ~0x03F03F30) | (divider << 8) | (1 << 20) ))
+fi
+echo "FCLK_CLK0: $(fclk_khz) kHz, built for {rate // 1000} kHz"
+echo "kernel AP_CTRL at 0x{base:08X}: $(devmem 0x{base:08X}) (0x00000004: idle, ready to start)"
+''', encoding='utf-8', newline='\n')
+
+    archive = run / f'{name}_opu.zip'
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file in sorted(out.iterdir()):
+            zip_file.write(file, f'{name}_opu/{file.name}')
+    print(f'\nFor the board (OPU system PetaLinux): {show(archive)}')
+    print(f'  Copy the files in {name}_opu/ to {OPU_FIRMWARE}/ on the board, then as root:'
+          f'  sh {OPU_FIRMWARE}/load.sh')
+    if not dtc:
+        print(f'  No dtc here: load.sh compiles {name}.dtsi on the board (the OPU image has dtc).')
+    for source in programs:
+        if compiler:
+            print(f'  Then: {OPU_FIRMWARE}/{source.stem} CUBE.npy SCORES.npy REFERENCE.npy (see {source.name})')
+        else:
+            print(f'  {source.name} is not built: no ARM compiler (arm-linux-gnueabihf-gcc, or set OPU_CC).'
+                  f' Install one (sudo apt install gcc-arm-linux-gnueabihf) and run: python3 main.py pynq --kernel {name}')
+    return archive
+
+
+def package(run, name, board=None):
+    """The board's package: the PYNQ zip, or for a board running the OPU system, the OPU one.
+    board: the run's, from its run.json when not given."""
+    if board is None:
+        try:
+            board = json.loads((run / 'run.json').read_text(encoding='utf-8')).get('board')
+        except (OSError, ValueError):
+            board = None
+    target = CONFIG['boards'].get(board or CONFIG['board'], {})
+    if target.get('software') == 'petalinux':
+        return package_opu(run, name)
+    return package_pynq(run, name)
 
 
 def bitstream_runs(name):
@@ -271,7 +492,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('stage', choices=STAGES + ('pynq', 'kernels'))
     parser.add_argument('--kernel', help='folder name in src/hls/')
-    parser.add_argument('--skip-cosim', action='store_true', help='bitstream: leave out cosim (slow)')
+    parser.add_argument('--skip-cosim', action='store_true', help='ip, bitstream: leave out cosim (slow)')
     parser.add_argument('--dataflow-profile', action='store_true',
                         help='cosim: record when each DATAFLOW process works and stalls, for the '
                              'Dataflow Viewer (slower)')
@@ -295,7 +516,7 @@ def main():
             runs = [run for run in runs if run.name == args.run]
         if not runs:
             raise SystemExit(f'No bitstream run {args.run or ""} in build/{args.kernel}/')
-        return package_pynq(runs[-1], args.kernel)
+        return package(runs[-1], args.kernel)
 
     if args.clock_ns is None:
         args.clock_ns = board_clock_ns(args.board)
@@ -327,8 +548,13 @@ def main():
         (run / 'run.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
         print_estimates(run, kernel['top'])
         print(f'{record["result"].upper()}: {show(run)}/')
+    if args.stage == 'ip':
+        ip = run / 'hls' / 'solution' / 'impl' / 'ip'
+        print(f'\nThe IP, to add to a Vivado IP catalog (Settings > IP > Repository): {show(ip)}/')
+        for archive in sorted(ip.glob('*.zip')):
+            print(f'  the same as one file: {show(archive)}')
     if args.stage == 'bitstream':
-        package_pynq(run, args.kernel)
+        package(run, args.kernel, args.board)
 
 
 if __name__ == '__main__':

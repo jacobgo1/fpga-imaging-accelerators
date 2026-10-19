@@ -56,6 +56,7 @@ class TclFlowTests(unittest.TestCase):
             'csim': ['csim_design'],
             'csynth': ['csim_design', 'csynth_design'],
             'cosim': ['csim_design', 'csynth_design', 'cosim_design'],
+            'ip': ['csim_design', 'csynth_design', 'cosim_design', 'export_design'],
             'bitstream': ['csim_design', 'csynth_design', 'cosim_design', 'export_design'],
         }
         for stage, stages in expected.items():
@@ -73,10 +74,12 @@ class TclFlowTests(unittest.TestCase):
         self.assertEqual(self.cosim_args[self.cosim_args.index('-trace_level') + 1], 'all')
 
     def test_skip_cosim_still_exports(self):
-        code, calls = self.execute_hls('bitstream', skip_cosim=True)
-        self.assertEqual(code, 0)
-        self.assertEqual([c for c in calls if c.endswith('_design')],
-                         ['csim_design', 'csynth_design', 'export_design'])
+        for stage in ('ip', 'bitstream'):
+            with self.subTest(stage=stage):
+                code, calls = self.execute_hls(stage, skip_cosim=True)
+                self.assertEqual(code, 0)
+                self.assertEqual([c for c in calls if c.endswith('_design')],
+                                 ['csim_design', 'csynth_design', 'export_design'])
 
     def test_simulation_failure_stops_export(self):
         code, calls = self.execute_hls('bitstream', fail_at='csim_design')
@@ -95,7 +98,8 @@ class TclFlowTests(unittest.TestCase):
     def test_scripts_have_complete_tcl_syntax(self):
         tcl = tkinter.Tcl()
         for path in ('scripts/hls.tcl', 'scripts/vivado.tcl', 'boards/zcu104/system.tcl',
-                     'boards/zynq7020/system.tcl', 'boards/zynq7030/system.tcl'):
+                     'boards/zynq7020/system.tcl', 'boards/zedboard/system.tcl',
+                     'boards/zynq7030/system.tcl'):
             self.assertEqual(int(tcl.call('info', 'complete', (ROOT / path).read_text(encoding='utf-8'))), 1)
 
     def test_every_configured_board_has_its_script(self):
@@ -207,6 +211,13 @@ class TclFlowTests(unittest.TestCase):
         self.assertEqual(self.wire_board('zynq7020', masters), self.wire_board('zynq7030', masters))
         _, props = self.wire_board('zynq7020', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
         self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
+
+    def test_zedboard_is_the_7030_block_design_with_its_own_ps_preset(self):
+        masters = ['m_axi_gmem0', 'm_axi_gmem1', 'm_axi_gmem2']
+        self.assertEqual(self.wire_board('zedboard', masters), self.wire_board('zynq7030', masters))
+        _, props = self.wire_board('zedboard', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
+        self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
+        self.assertEqual(flow.CONFIG['boards']['zedboard']['part'], 'xc7z020clg484-1')
 
     def test_zynq7030_rejects_more_masters_than_hp_ports(self):
         with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):

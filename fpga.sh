@@ -22,6 +22,9 @@ newest bitstream build.
   fpga_build KERNEL [ARGS]   python3 main.py bitstream --kernel KERNEL --skip-cosim [ARGS]
                              (C++ -> IP -> block design -> .bit, then the PYNQ zip;
                              ARGS e.g. --board zynq7030 (default zcu104), --clock-ns 5)
+  fpga_ip KERNEL [ARGS]      python3 main.py ip --kernel KERNEL --skip-cosim [ARGS]
+                             (C++ -> IP, and stop: no Vivado, no .bit; for a block design
+                             of your own. Same ARGS; the IP is in hls/solution/impl/ip/)
   fpga_cosim KERNEL [ARGS]   python3 main.py cosim --kernel KERNEL [ARGS]
                              (the testbench driving the generated Verilog: checks the
                              RTL, and its report gives the real cycle count; same ARGS,
@@ -29,7 +32,8 @@ newest bitstream build.
   fpga_runs KERNEL           the runs in build/KERNEL/ with a bitstream, newest last
   fpga_pynq KERNEL [RUN]     python3 main.py pynq --kernel KERNEL [--run RUN]
                              (re-make the PYNQ folder and zip of an existing build)
-  fpga_zip DIR               DIR -> DIR.zip, to upload an image next to the notebook
+  fpga_zip DIR               DIR -> DIR.zip, an image to upload once, in the folder above
+                             the designs' folders (or next to one notebook)
 
 What each step does: docs/framework.md
 EOF
@@ -84,6 +88,13 @@ fpga_build() {
     (cd "$FPGA_ROOT" && "$FPGA_PYTHON" main.py bitstream --kernel "$kernel" --skip-cosim "$@")
 }
 
+fpga_ip() {
+    [ -n "$1" ] || { _fpga_fail "usage: fpga_ip KERNEL"; return; }
+    local kernel="$1"
+    shift
+    (cd "$FPGA_ROOT" && "$FPGA_PYTHON" main.py ip --kernel "$kernel" --skip-cosim "$@")
+}
+
 fpga_cosim() {
     [ -n "$1" ] || { _fpga_fail "usage: fpga_cosim KERNEL"; return; }
     local kernel="$1"
@@ -101,20 +112,20 @@ fpga_zip() {
     [ -d "$dir" ] || { _fpga_fail "usage: fpga_zip DIR"; return; }
     (cd "$(dirname "$dir")" && rm -f "$(basename "$dir").zip" \
         && "$FPGA_PYTHON" -m zipfile -c "$(basename "$dir").zip" "$(basename "$dir")") || return
-    echo "$dir.zip: upload it next to the notebook"
+    echo "$dir.zip: upload it to the folder above the designs' folders (or next to the notebook)"
 }
 
 # ---- Tab completion (bash) ----
-# fpga_test / fpga_build / fpga_cosim / fpga_runs KERNEL, fpga_pynq KERNEL RUN, fpga_zip DIR.
+# fpga_test / fpga_build / fpga_ip / fpga_cosim / fpga_runs KERNEL, fpga_pynq KERNEL RUN, fpga_zip DIR.
 _fpga_complete() {
     local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" words=""
     case "${COMP_WORDS[0]}:$COMP_CWORD" in
-        fpga_test:1|fpga_build:1|fpga_cosim:1|fpga_runs:1|fpga_pynq:1)
+        fpga_test:1|fpga_build:1|fpga_ip:1|fpga_cosim:1|fpga_runs:1|fpga_pynq:1)
             words="$(fpga_kernels)" ;;
         fpga_pynq:2)
             local run
             for run in $(fpga_runs "${COMP_WORDS[1]}" 2>/dev/null); do words="$words ${run##*/}"; done ;;
-        fpga_build:*|fpga_cosim:*)
+        fpga_build:*|fpga_ip:*|fpga_cosim:*)
             if [ "$prev" = "--board" ]; then
                 local script
                 for script in "$FPGA_ROOT"/boards/*/system.tcl; do
@@ -130,7 +141,7 @@ _fpga_complete() {
 }
 
 if [ -n "${BASH_VERSION:-}" ]; then
-    complete -F _fpga_complete fpga_test fpga_build fpga_cosim fpga_runs fpga_pynq
+    complete -F _fpga_complete fpga_test fpga_build fpga_ip fpga_cosim fpga_runs fpga_pynq
     complete -d fpga_zip
     complete -f fpga_env
 fi
