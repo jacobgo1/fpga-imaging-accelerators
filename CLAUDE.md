@@ -59,8 +59,7 @@ every 18 cycles, integer fixed point, the DSPs on conv2 and conv3; the design is
 src/hls/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
 tools/justoliunet_model.py, one notebook for both in software/pynq/justoliunet_opt/),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
-ZCU104; records its own timeline in hardware, `src/optimized/shared/timeline.hpp`,
-which its notebook plots), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
+ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks; the 7020 one also the notebook),
 `justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute

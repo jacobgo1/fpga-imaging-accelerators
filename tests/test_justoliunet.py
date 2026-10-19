@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import types
 import unittest
 import zipfile
@@ -101,10 +102,11 @@ class FakeKernel:
         if offset == AP_CTRL and value & 1:
             n = self.words[N_REG]
             spectra = self.view(self.address(DIN), (n, 110))
-            scores = self.model.forward(spectra.astype(np.float64), self.weights)
+            scores = self.view(self.address(DOUT), (n, 3))
+            for i in range(0, n, 1024):    # in pieces: on the board this memory is not the ARM's
+                scores[i:i + 1024] = self.model.forward(spectra[i:i + 1024].astype(np.float64), self.weights)
             if self.broken:
                 scores[min(5, n - 1), 0] += 0.5
-            self.view(self.address(DOUT), (n, 3))[:] = scores
             self.runs.append(n)
             self.done = True
         else:
@@ -290,6 +292,20 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
         self.assertEqual(kernel.runs, [256, 128 * w, 128 * w, 44 * w] + [128 * w] * 5)
         self.assertTrue(ns['close'].all())
         self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
+
+    def test_notebook_checks_the_image_in_little_memory(self):
+        # The reference needs about 13 KB a pixel; a 128-row strip of a real capture (1092 wide)
+        # is 140 K pixels, 1.75 GB, more than the board has. 10 000 pixels in one strip here:
+        # about 128 MB in one call, under 100 MB only if the reference is fed in pieces.
+        board = self.prepare('justoliunet', 100, 100)
+        tracemalloc.start()
+        try:
+            ns, _ = self.run_notebook(board, 'justoliunet')
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertTrue(ns['close'].all())
+        self.assertLess(peak, 100 * 2**20, f'the notebook peaked at {peak / 2**20:.0f} MB')
 
     def test_notebook_shows_a_wrong_kernel(self):
         ns, _ = self.run_notebook(self.prepare('justoliunet', 40, 40), 'justoliunet', broken=True)

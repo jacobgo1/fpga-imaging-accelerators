@@ -8,7 +8,7 @@
 #include "../../optimized/shared/relu_pool_up.hpp"
 #include "../../optimized/shared/relu_up.hpp"
 #include "../../optimized/shared/store_scores.hpp"
-#include "../../optimized/shared/timeline.hpp"
+#include "../../optimized/shared/count_cycles.hpp"
 #include <type_traits>
 
 // The quantized weights, as the int8 integers q they are (value q * 2^-frac):
@@ -34,9 +34,6 @@ static_assert(prep::FIRST_BAND % PORT_BANDS == 0 &&
               "the kept bands must be whole words, to the end of each pixel");
 
 static_assert(OUT_CH + 1 == 4, "a pixel of dout is 3 scores and the class");
-static_assert(timeline_layout<TRACE_LANES, TRACE_PATCHES>::HEAD == TRACE_HEAD &&
-                  timeline_layout<TRACE_LANES, TRACE_PATCHES>::WORDS == TRACE_WORDS,
-              "the trace layout in the header must be timeline.hpp's");
 
 // Fraction bits: each layer's sums carry its input's plus its weights'.
 constexpr int SUM1 = IN_FRAC + q::conv1_weight_frac;
@@ -56,19 +53,17 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 
 void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                          hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles,
-                         uint32_t *trace)
+                         hls::burst_maxi<jopt_out_t> dout, int height, int width, uint32_t& cycles)
 {
-// Six AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
+// Five AXI masters, each on its own port to DDR (boards/zcu104/system.tcl):
 // four read the cube in parallel (point all of them at it) through HP0-3,
-// one writes the scores through HPC0, one the timeline through HPC1.
+// one writes the scores through HPC0.
 // depth is only for co-simulation: the testbench's 40 x 50 image.
 #pragma HLS INTERFACE mode = m_axi port = din0 bundle = gmem0 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
 #pragma HLS INTERFACE mode = m_axi port = din1 bundle = gmem1 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
 #pragma HLS INTERFACE mode = m_axi port = din2 bundle = gmem2 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
 #pragma HLS INTERFACE mode = m_axi port = din3 bundle = gmem3 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
 #pragma HLS INTERFACE mode = m_axi port = dout bundle = gmem4 offset = slave depth = 2000 max_write_burst_length = 32 num_write_outstanding = 16
-#pragma HLS INTERFACE mode = m_axi port = trace bundle = gmem5 offset = slave depth = 49280 max_write_burst_length = 256
 #pragma HLS INTERFACE mode = s_axilite port = din0 bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = din1 bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = din2 bundle = control
@@ -77,7 +72,6 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
 #pragma HLS INTERFACE mode = s_axilite port = height bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = width bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = cycles bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = trace bundle = control
 #pragma HLS INTERFACE mode = s_axilite port = return bundle = control
 #pragma HLS DATAFLOW
 
@@ -91,21 +85,6 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
     hls::stream<vec_t<act_t, BASE_CH>> s_c("s_c");
     hls::stream<vec_t<acc_t, OUT_CH>> s_conv4("s_conv4");
     hls::stream<bool> s_finished("s_finished");
-    // The timeline (timeline.hpp): each producer writes into o_*, a "gave" tap
-    // passes the words on to the s_* above (with the depths below), a "took"
-    // tap from there into i_*, which the consumer reads. o_* and i_* keep the
-    // default depth of 2, so the taps see the words when the stages do.
-    hls::stream<jopt_raw_t> o_raw[PORTS], i_raw[PORTS];
-    hls::stream<vec_t<act8_t, P1>> o_in("o_in"), i_in("i_in");
-    hls::stream<vec_t<acc_t, BASE_CH>> o_conv1("o_conv1"), i_conv1("i_conv1");
-    hls::stream<vec_t<act_t, BASE_CH>> o_a("o_a"), i_a("i_a");
-    hls::stream<vec_t<acc_t, 2 * BASE_CH>> o_conv2("o_conv2"), i_conv2("i_conv2");
-    hls::stream<vec_t<act_t, 2 * BASE_CH>> o_b("o_b"), i_b("i_b");
-    hls::stream<vec_t<acc_t, BASE_CH>> o_conv3("o_conv3"), i_conv3("i_conv3");
-    hls::stream<vec_t<act_t, BASE_CH>> o_c("o_c"), i_c("i_c");
-    hls::stream<vec_t<acc_t, OUT_CH>> o_conv4("o_conv4"), i_conv4("i_conv4");
-    hls::stream<uint32_t> s_ev[TRACE_LANES];
-#pragma HLS STREAM variable = s_ev depth = 4
 // Let the readers run ahead of patch_buffer, which takes a word from all four at once.
 #pragma HLS STREAM variable = s_raw depth = 64
 #pragma HLS STREAM variable = s_in depth = 64
@@ -123,60 +102,32 @@ void justounetsimple_opt(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_
 // A patch row of scores, so conv4 keeps going while store starts a burst.
 #pragma HLS STREAM variable = s_conv4 depth = 32
 
-    // Words per patch on each FIFO, for its taps.
-    constexpr int RAW = H / PORTS * W * WORDS, IN = H * W * (IN_PAD / P1), FULL = H * W, HALF = H / 2 * W / 2;
-    constexpr int TOOK = TRACE_FIFOS;   // lane of FIFO F's "took" tap: TOOK + F
-
     // Every process walks the same grid of H x W patches, one after another.
     // Each asks for its next row one row ahead: at most 3 bursts outstanding,
     // within num_read_outstanding = 4.
-    read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, o_raw[0], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, o_raw[1], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, o_raw[2], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, o_raw[3], height, width);
-    tap<H, W, RAW>(o_raw[0], s_raw[0], s_ev[0], height, width);
-    tap<H, W, RAW>(o_raw[1], s_raw[1], s_ev[1], height, width);
-    tap<H, W, RAW>(o_raw[2], s_raw[2], s_ev[2], height, width);
-    tap<H, W, RAW>(o_raw[3], s_raw[3], s_ev[3], height, width);
-    tap<H, W, RAW>(s_raw[0], i_raw[0], s_ev[TOOK + 0], height, width);
-    tap<H, W, RAW>(s_raw[1], i_raw[1], s_ev[TOOK + 1], height, width);
-    tap<H, W, RAW>(s_raw[2], i_raw[2], s_ev[TOOK + 2], height, width);
-    tap<H, W, RAW>(s_raw[3], i_raw[3], s_ev[TOOK + 3], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
     patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, true>(
-        i_raw, o_in, height, width);
-    tap<H, W, IN>(o_in, s_in, s_ev[4], height, width);
-    tap<H, W, IN>(s_in, i_in, s_ev[TOOK + 4], height, width);
+        s_raw, s_in, height, width);
     // conv1: 110 -> 6 at 32 x 32, 32 bands per cycle (128 with the zero ones),
     // 6 x 32 x 9 = 1728 multiply-adds per cycle, two per DSP: 864 DSPs.
     conv3x3_wide<H, W, H, W, IN_CH, BASE_CH, P1, SUM1 - q::conv1_bias_frac,
-                 q::conv1_weight, q::conv1_bias>(i_in, o_conv1, height, width);
-    tap<H, W, FULL>(o_conv1, s_conv1, s_ev[5], height, width);
-    tap<H, W, FULL>(s_conv1, i_conv1, s_ev[TOOK + 5], height, width);
-    relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(i_conv1, o_a, height, width); // -> 16 x 16
-    tap<H, W, HALF>(o_a, s_a, s_ev[6], height, width);
-    tap<H, W, HALF>(s_a, i_a, s_ev[TOOK + 6], height, width);
+                 q::conv1_weight, q::conv1_bias>(s_in, s_conv1, height, width);
+    relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width); // -> 16 x 16
     // conv2: 6 -> 12 at 16 x 16, 12 cycles per pixel.
     conv3x3_narrow<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, SUM2 - q::conv2_bias_frac,
-                   q::conv2_weight, q::conv2_bias, true>(i_a, o_conv2, height, width);
-    tap<H, W, HALF>(o_conv2, s_conv2, s_ev[7], height, width);
-    tap<H, W, HALF>(s_conv2, i_conv2, s_ev[TOOK + 7], height, width);
-    relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(i_conv2, o_b, height, width); // 16 x 16
-    tap<H, W, HALF>(o_b, s_b, s_ev[8], height, width);
-    tap<H, W, HALF>(s_b, i_b, s_ev[TOOK + 8], height, width);
+                   q::conv2_weight, q::conv2_bias, true>(s_a, s_conv2, height, width);
+    relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width); // 16 x 16
     // conv3: 12 -> 6 at 16 x 16, 6 cycles per pixel.
     conv3x3_narrow<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, SUM3 - q::conv3_bias_frac,
-                   q::conv3_weight, q::conv3_bias, true>(i_b, o_conv3, height, width);
-    tap<H, W, HALF>(o_conv3, s_conv3, s_ev[9], height, width);
-    tap<H, W, HALF>(s_conv3, i_conv3, s_ev[TOOK + 9], height, width);
-    relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(i_conv3, o_c, height, width); // -> 32 x 32
-    tap<H, W, FULL>(o_c, s_c, s_ev[10], height, width);
-    tap<H, W, FULL>(s_c, i_c, s_ev[TOOK + 10], height, width);
+                   q::conv3_weight, q::conv3_bias, true>(s_b, s_conv3, height, width);
+    relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width); // -> 32 x 32
     // conv4: 6 -> 3 at 32 x 32, no activation, 3 cycles per pixel.
     conv3x3_narrow<H, W, H, W, BASE_CH, OUT_CH, SUM4 - q::conv4_bias_frac,
-                   q::conv4_weight, q::conv4_bias, true>(i_c, o_conv4, height, width);
-    tap<H, W, FULL>(o_conv4, s_conv4, s_ev[11], height, width);
-    tap<H, W, FULL>(s_conv4, i_conv4, s_ev[TOOK + 11], height, width);
-    store_scores<H, W, SUM4 - OUT_FRAC>(i_conv4, dout, height, width, s_finished);
-    // Last: C simulation runs the processes in this order (timeline.hpp).
-    timeline<H, W, TRACE_LANES, TRACE_PATCHES>(s_ev, s_finished, trace, cycles, height, width);
+                   q::conv4_weight, q::conv4_bias, true>(s_c, s_conv4, height, width);
+    store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width, s_finished);
+    // Last: C simulation runs the processes in this order (count_cycles.hpp).
+    count_cycles(s_finished, cycles);
 }

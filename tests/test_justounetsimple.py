@@ -4,7 +4,6 @@ The notebook's own code cells run against a fake `pynq` whose kernel computes ea
 with the numpy model, on an image folder made by tools/justounetsimple_image.py prepare.
 That checks the register traffic, the patching and the comparison -- not PYNQ or the board.
 """
-import contextlib
 import gc
 import importlib.util
 import io
@@ -41,10 +40,6 @@ HEADER = f"""\
 """
 DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
 CYCLES_PER_PATCH = 4321   # what the fake kernel's counter says
-TRACE = 0x64              # the timeline buffer's address (64 bits)
-TRACE_FIFOS, TRACE_PATCHES, TRACE_HEAD = 12, 1024, 128
-TRACE_LANES = 2 * TRACE_FIFOS
-TRACE_WORDS = TRACE_HEAD + TRACE_LANES * 2 * TRACE_PATCHES
 DIN0 = DINS[0]
 OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_AP_CTRL     0x{AP_CTRL:02x}
@@ -58,8 +53,6 @@ OPT_HEADER = f"""\
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_DATA 0x{CYCLES:02x}
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_BITS_CYCLES_DATA 32
 #define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_CYCLES_CTRL 0x{CYCLES + 4:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_ADDR_TRACE_DATA  0x{TRACE:02x}
-#define XJUSTOUNETSIMPLE_OPT_CONTROL_BITS_TRACE_DATA  64
 """
 OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
 
@@ -130,24 +123,6 @@ class FakeImageKernel(FakeKernel):
             raise RuntimeError('Failed to allocate Memory!')
         return super().allocate(shape, dtype)
 
-    @staticmethod
-    def trace(patches):
-        """A made-up timeline in the kernel's layout, of a run held up by the reads: on
-        lane L, patch k's first word at cycle CYCLES_PER_PATCH k + 10 L and its last 299 later; the
-        readers had nothing to give 30% of the run, every "took" tap found its FIFO
-        empty 20% of it, nothing was ever full."""
-        total = CYCLES_PER_PATCH * patches
-        out = np.zeros(TRACE_WORDS, dtype=np.uint32)
-        out[0] = total
-        out[1:1 + TRACE_LANES] = 2 * patches
-        out[32:32 + 4] = 0.3 * total                                  # gave taps of the readers
-        out[32 + TRACE_FIFOS:32 + TRACE_LANES] = 0.2 * total          # took taps
-        for i in range(TRACE_LANES):
-            first = CYCLES_PER_PATCH * np.arange(patches) + 10 * i
-            lane = out[TRACE_HEAD + i * 2 * TRACE_PATCHES:][:2 * patches].reshape(-1, 2)
-            lane[:, 0], lane[:, 1] = first, first + 299
-        return out
-
     def view(self, address, shape, dtype):
         """shape x dtype at a physical address, inside one buffer."""
         for start, buffer in self.buffers.items():
@@ -166,10 +141,7 @@ class FakeImageKernel(FakeKernel):
             if self.broken:
                 scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
             self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = self.model.with_class(scores)
-            patches = -(-h // 32) * -(-w // 32)
-            self.words[CYCLES] = CYCLES_PER_PATCH * patches
-            if self.address(TRACE):
-                self.view(self.address(TRACE), (TRACE_WORDS,), np.uint32)[:] = self.trace(patches)
+            self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
             self.runs.append((h, w))
             self.done = True
         else:
@@ -316,8 +288,7 @@ int main(int, char** argv) {
         cube = self.raw_cube(h, w, seed=3, counts=True).astype(np.uint16)
         cube.tofile(self.dir / 'in.bin')
         want = self.model.classify_fixed(cube)
-        kernels = {'justounetsimple_opt': 'uint32_t cycles; std::vector<uint32_t> trace(TRACE_WORDS); '
-                                       'justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles, trace.data())',
+        kernels = {'justounetsimple_opt': 'uint32_t cycles; justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles)',
                    'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
@@ -535,88 +506,14 @@ uint32_t reg_read(struct board *, unsigned offset) {
         self.assertEqual(ns['CYCLES'], CYCLES, 'the counter, from the register map')
         self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 6 / 200e6, msg='its count, at the clock')
         self.assertAlmostEqual(ns['own_best'], CYCLES_PER_PATCH * 6 / 200e6)
-        # The timeline of the last run: every lane, every patch, read back as written.
-        self.assertEqual(ns['TRACE'], TRACE, 'the timeline port, from the register map')
-        self.assertEqual(kernel.address(TRACE), ns['trace_out'].physical_address)
-        stages = dict((name, (start, end)) for name, start, end in ns['timeline'])
-        self.assertEqual(list(stages), [name for name, _, _ in ns['STAGES']])
-        self.assertEqual(len(stages), 4 + 8 + 1, 'four readers, eight stages, the store')
-        k = CYCLES_PER_PATCH * np.arange(6)
-        # a stage starts at the first word it took and ends at the last it gave (lane L at 10 L)
-        np.testing.assert_array_equal(stages['read_rows 0'][0], k)                # gave lane 0
-        np.testing.assert_array_equal(stages['patch_buffer'][0], k + 120)         # took lanes 12-15: the first
-        np.testing.assert_array_equal(stages['patch_buffer'][1], k + 40 + 299)    # gave lane 4
-        np.testing.assert_array_equal(stages['conv1'][0], k + 160)                # took lane 16
-        np.testing.assert_array_equal(stages['conv1'][1], k + 50 + 299)           # gave lane 5
-        np.testing.assert_array_equal(stages['store_scores'][1], k + 230 + 299)   # took lane 23
-        total = CYCLES_PER_PATCH * 6
-        working, no_input, output_full, done = ns['activity']['read_rows 0']
-        self.assertAlmostEqual(no_input, 30, places=2)                          # waiting for DDR
-        self.assertAlmostEqual(done, 100 * (total - 5 * CYCLES_PER_PATCH - 299) / total)
-        for name, shares in ns['activity'].items():
-            self.assertAlmostEqual(sum(shares), 100, msg=name)
-        self.assertAlmostEqual(ns['activity']['conv1'][1], 20, places=2)
-        self.assertTrue(ns['verdict'].startswith('the reads'), ns['verdict'])
-
-    def test_opt_notebook_timeline_not_held_by_the_reads(self):
-        """Readers whose output is full wait for patch_buffer: then it is not the reads."""
-        class Held(FakeImageKernel):
-            @staticmethod
-            def trace(patches):
-                out = FakeImageKernel.trace(patches)
-                out[64:64 + 4] = 0.5 * out[0]       # the readers' FIFOs full half the run
-                return out
-        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
-        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Held(m, l, b))
-        # 30% empty + 50% full is more than the readers' span (until their last word, 77%):
-        # the two waits overlapped, so they share the span 30 : 50 and nothing is left.
-        working, no_input, output_full, done = ns['activity']['read_rows 2']
-        self.assertAlmostEqual(working, 0)
-        self.assertAlmostEqual(no_input / output_full, 30 / 50, places=2)
-        self.assertAlmostEqual(no_input + output_full + done, 100)
-        # patch_buffer is the first stage not held by the next, and all after it wait
-        self.assertTrue(ns['verdict'].startswith('patch_buffer:'), ns['verdict'])
-
-    def test_opt_notebook_timeline_empty(self):
-        """A trace buffer nothing was written to: a message, no timeline, no crash."""
-        class Silent(FakeImageKernel):
-            @staticmethod
-            def trace(patches):
-                return np.zeros(TRACE_WORDS, dtype=np.uint32)
-        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Silent(m, l, b))
-        self.assertIsNone(ns['timeline'])
-        self.assertIn('the timeline is empty', printed.getvalue())
-
-    def test_opt_notebook_timeline_one_slow_reader_pair(self):
-        """As on the board: readers 1 and 2 wait for DDR, 0 and 3 wait for patch_buffer,
-        which takes from all four at once. That is the reads, naming the slow ones."""
-        class Uneven(FakeImageKernel):
-            @staticmethod
-            def trace(patches):
-                out = FakeImageKernel.trace(patches)
-                out[32:32 + 4] = np.array([0.05, 0.19, 0.23, 0.05]) * out[0]   # nothing from DDR
-                out[64:64 + 4] = np.array([0.21, 0.08, 0.03, 0.21]) * out[0]   # FIFO full
-                return out
-        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
-        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Uneven(m, l, b))
-        self.assertTrue(ns['verdict'].startswith('the reads: read_rows 1, 2 wait for DDR (19%, 23%'),
-                        ns['verdict'])
-
     def test_opt_notebook_works_without_the_cycle_counter(self):
-        """The Zynq-7000 kernels share the notebook and have no cycles register or trace port."""
-        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines()
-                         if '_CYCLES_' not in line and '_TRACE_' not in line)
+        """The Zynq-7000 kernels share the notebook and have no cycles register."""
+        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines() if '_CYCLES_' not in line)
         board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', header), counts=True)
         kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
-        ns, kernel = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
+        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
         self.assertIsNone(ns['CYCLES'])
         self.assertIsNone(ns['own'])
-        self.assertIsNone(ns['TRACE'])
-        self.assertIsNone(ns['timeline'])
-        self.assertNotIn(TRACE, kernel.words, 'no address written to a register that is not there')
         self.assertTrue(ns['close'].all())
 
     def test_opt_notebook_uses_strips_when_the_cube_does_not_fit(self):
