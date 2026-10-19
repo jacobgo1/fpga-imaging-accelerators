@@ -61,7 +61,7 @@ void SimRegisters::run() {
   auto *dout = const_cast<jopt_out_t *>(
       static_cast<const jopt_out_t *>(pointer(value(map_.dout), pixels * OUT_PIXEL)));
 #if defined(JOPT_SIM_ZYNQ7030)
-  justounetsimple_opt_zynq7030(din[0], din[1], dout, height, width);
+  justounetsimple_opt_zynq7030(din[0], din[1], din[2], din[3], dout, height, width);
 #elif defined(JOPT_SIM_ZYNQ7020)
   justounetsimple_opt_zynq7020(din[0], din[1], dout, height, width);
 #else

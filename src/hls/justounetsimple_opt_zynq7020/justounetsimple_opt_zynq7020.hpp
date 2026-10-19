@@ -26,8 +26,8 @@
 //   cycles a patch, the slowest stage (7% over conv1). The scores go out
 //   through HP2.
 // - No UltraRAM: the patch buffer is in block RAM (56 of 140 BRAM36).
-// At 100 MHz that is about 0.16 ms per patch (0.29 on the 7030 with one
-// multiply per DSP, 0.04 on the ZCU104).
+// At 100 MHz that is about 0.16 ms per patch (0.10 on the 7030, which does 12
+// bands a cycle with its 400 DSPs; 0.04 on the ZCU104).
 //
 // din0, din1: the same raw cube, [height][width][120] uint16. The 120 bands
 // of a pixel are 30 words of 4; words 2-29 are the kept bands (raw 8-117)

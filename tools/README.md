@@ -37,7 +37,10 @@ justoliunet_model.py      numpy model of the justoliunet and justoliunet_bn kern
                           optimized kernels (justoliunet_opt, justoliunet_bn_opt) bit for bit.
                           python tools/justoliunet_model.py compares them on the labelled
                           aegean pixels; ... formats writes the optimized kernels' integer
-                          formats, src/hls/justoliunet_opt/justoliunet_opt_formats.hpp.
+                          formats, src/hls/justoliunet_opt/justoliunet_opt_formats.hpp;
+                          ... reference IMAGE writes IMAGE/reference_<model>.npy, what every
+                          optimized kernel writes for IMAGE/cube.npy (the ZedBoard's classify
+                          compares with it).
 patching.py               Cuts an image into 32 x 32 patches and stitches results back,
                           the same way the kernels do.
 ```

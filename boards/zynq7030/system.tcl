@@ -12,7 +12,9 @@
 #     M_AXI_GP0  ──► ctrl (SmartConnect)  ──► kernel/s_axi_control   registers
 #     S_AXI_HP0  ◄── data0 (SmartConnect) ◄── kernel/m_axi_gmem0     DDR access
 #     S_AXI_HP1  ◄── data1 (SmartConnect) ◄── kernel/m_axi_gmem1     (one HP port
-#     ...                                    ...                    per m_axi port)
+#     ...                                    ...                    per m_axi port;
+#     S_AXI_HP3  ◄── data3 (SmartConnect) ◄── kernel/m_axi_gmem3     a fifth one
+#                                         ◄── kernel/m_axi_gmem4     shares HP3)
 #     IRQ_F2P    ◄── kernel/interrupt
 #
 # Differences from the ZCU104 that matter to a kernel:
@@ -61,9 +63,13 @@ puts "INFO: kernel $vlnv, m_axi ports: [llength $masters]"
 
 # Which PS ports exist: GP0 (PS -> kernel registers), HP0 .. HP3 (kernel -> DDR,
 # one per m_axi port, 64 bits wide), the fabric interrupt, and FCLK_CLK0 at the
-# HLS target.
-set hp_ports [llength $masters]
-if {$hp_ports > 4} { error "the kernel has $hp_ports m_axi ports; the PS has 4 HP ports" }
+# HLS target. A fifth m_axi port shares HP3 with the fourth, through the same
+# SmartConnect: meant for a kernel whose fifth port only writes and fourth only
+# reads (justounetsimple_opt_zynq7030), as AXI reads and writes have their own
+# channels and so do not wait for each other.
+set n_masters [llength $masters]
+if {$n_masters > 5} { error "the kernel has $n_masters m_axi ports; the PS has 4 HP ports (and HP3 takes a fifth)" }
+set hp_ports [expr {min($n_masters, 4)}]
 set ps_config [list \
     CONFIG.PCW_USE_M_AXI_GP0 1 \
     CONFIG.PCW_USE_FABRIC_INTERRUPT 1 \
@@ -98,7 +104,8 @@ set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $ctrl
 # width and AXI version) to its own HP port: master i -> data<i> -> HP<i>.
 for {set i 0} {$i < $hp_ports} {incr i} {
     set data [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect data$i]
-    set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $data
+    set inputs [expr {$i == 3 && $n_masters == 5 ? 2 : 1}]
+    set_property -dict [list CONFIG.NUM_SI $inputs CONFIG.NUM_MI 1] $data
 }
 
 # ---------------------------------------------------------------- Wires
@@ -117,12 +124,18 @@ foreach pin $reset { connect_bd_net [get_bd_pins rst/peripheral_aresetn] [get_bd
 connect_bd_intf_net [get_bd_intf_pins ps/M_AXI_GP0] [get_bd_intf_pins ctrl/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins ctrl/M00_AXI] [get_bd_intf_pins kernel/s_axi_control]
 
-# Data path (masters in name order: m_axi_gmem0 -> HP0, m_axi_gmem1 -> HP1, ...).
+# Data path (masters in name order: m_axi_gmem0 -> HP0, m_axi_gmem1 -> HP1, ...;
+# m_axi_gmem4 -> data3's second input -> HP3).
 set i 0
 foreach master [lsort $masters] {
-    puts "INFO: [get_property NAME $master] -> data$i -> S_AXI_HP$i"
-    connect_bd_intf_net $master [get_bd_intf_pins data$i/S00_AXI]
-    connect_bd_intf_net [get_bd_intf_pins data$i/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP$i]
+    if {$i < 4} {
+        puts "INFO: [get_property NAME $master] -> data$i -> S_AXI_HP$i"
+        connect_bd_intf_net $master [get_bd_intf_pins data$i/S00_AXI]
+        connect_bd_intf_net [get_bd_intf_pins data$i/M00_AXI] [get_bd_intf_pins ps/S_AXI_HP$i]
+    } else {
+        puts "INFO: [get_property NAME $master] -> data3 (shared) -> S_AXI_HP3"
+        connect_bd_intf_net $master [get_bd_intf_pins data3/S01_AXI]
+    }
     incr i
 }
 

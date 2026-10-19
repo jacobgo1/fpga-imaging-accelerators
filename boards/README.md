@@ -26,13 +26,15 @@ Zynq-7000s; `--clock-ns` still overrides it).
   general-purpose master port, through a SmartConnect;
 - each `m_axi` port on its own port to DDR, through its own SmartConnect, in
   name order (`gmem0` -> HP0, ...): on the ZCU104 the four high-performance (HP)
-  ports, then the two HPC ports, at most 6; on the 7020 and 7030 the four HP ports;
+  ports, then the two HPC ports, at most 6; on the 7020 and 7030 the four HP ports,
+  and a fifth `m_axi` port shares HP3 with the fourth through its SmartConnect
+  (for a writer next to a reader: AXI reads and writes have their own channels);
 - one clock from the processor at the HLS target (`clock_ns`), checked to be no
   faster than that target; a `proc_sys_reset` for the reset; the interrupt.
 
 So a kernel works on any board as long as it uses that interface: AXI-Lite
 control and no more `m_axi` ports than the board has ports to DDR (6 on the
-ZCU104, 4 on the Zynq-7000s). An AXI-Stream kernel with a DMA, or one
+ZCU104, 4 on the Zynq-7000s, 5 with HP3 shared). An AXI-Stream kernel with a DMA, or one
 with its own pins, would need the board script extended.
 
 ## What differs: the chip
@@ -48,11 +50,12 @@ with its own pins, would need the board script extended.
 
 A kernel sized for one does not automatically fit the other.
 `justounetsimple_opt` uses about 1,100 DSPs, UltraRAM and five `m_axi` ports:
-it is a ZCU104 design. `justounetsimple_opt_zynq7030` is the same model
-for the 7030, with the same answers: 4 bands per cycle in conv1, one multiply
-per DSP (216 DSPs), conv2-4 one input x one output channel per cycle, two
-64-bit read ports and one write port, and the patch buffer in block RAM; about
-7x slower per patch. Build it with `--board zynq7030`.
+it is a ZCU104 design. `justounetsimple_opt_zynq7030` is the 7020 version below
+made wider for the 7030, with the same answers: conv1 at 12 bands per cycle, two
+multiplies per DSP (324 DSPs), conv2-4 at 2 input x one output channel per cycle
+on DSPs (54), four 64-bit read ports (HP0-3) with the writer sharing HP3, and the
+patch buffer in block RAM (about 60 BRAM36). conv1 sets the pace: 10,273 cycles a
+patch, about 0.10 ms at 100 MHz, 2.5x the ZCU104's. Build it with `--board zynq7030`.
 
 `justounetsimple_opt_zynq7020` is the same model again, for the 7020's 220 DSPs:
 conv1 takes 216 of them at 8 bands per cycle, **two multiplies per DSP** (the

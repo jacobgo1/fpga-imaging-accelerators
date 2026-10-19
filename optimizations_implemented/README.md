@@ -1,0 +1,14 @@
+# Optimizations implemented
+
+One file per model: its flow, the optimizations each board's kernel uses, how the latency
+and utilization of each stage are calculated, the inference time, and each board's limits.
+
+| Model | File |
+|---|---|
+| 2D-JustoUNet-Simple | [justounetsimple.md](justounetsimple.md) |
+| 1D-Justo-LiuNet | [justoliunet.md](justoliunet.md) |
+| 1D-Justo-LiuNet with BatchNorm | [justoliunet_bn.md](justoliunet_bn.md) |
+
+**Keep them current:** when a kernel's design changes, update its model's file (tables and
+a line under "Changes"); a new model gets a new file here. Measured results replace
+predictions as they come in (and the runs go in `docs/experiments/`).
