@@ -274,7 +274,7 @@ class JustoLiuNetOptNotebookTests(unittest.TestCase):
                 self.assertTrue(ns['close'].all())
                 self.assertEqual(len(ns['sample']), 40 * 60)
                 self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
-                self.assertTrue((self.dir / model / 'aegean_unet/fpga_scores.npy').is_file())
+                self.assertTrue((self.dir / model / 'aegean_unet_fpga_scores.npy').is_file())
 
     def test_notebook_uses_strips_when_the_cube_does_not_fit(self):
         h, w = 300, 20                       # strips of 128, 128 and 44 rows
