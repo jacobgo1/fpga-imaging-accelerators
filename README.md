@@ -20,6 +20,9 @@ fpga_build justounetsimple_opt        # bitstream + build/justounetsimple_opt/la
 
 Then upload the zip in Jupyter on the board (`http://BOARD:9090`), run
 `!unzip -o justounetsimple_opt_pynq.zip` in a cell, and run the notebook inside it.
+Put the image zip (`aegean_unet.zip`) once in the folder above the designs' folders:
+every notebook looks there, it is unpacked there once, and each notebook writes its
+results (`aegean_unet_fpga_scores.npy`) next to itself.
 
 On the lab's ZedBoard (OPU system PetaLinux, no PYNQ), step by step:
 [docs/zedboard.md](docs/zedboard.md).

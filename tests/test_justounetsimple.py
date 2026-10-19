@@ -301,7 +301,7 @@ int main(int, char** argv) {
         self.assertEqual(ns['scores'].shape, (50, 70, 3))
         self.assertTrue(ns['close'].all())
         self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        self.assertTrue((board / 'aegean_unet/fpga_scores.npy').is_file())
+        self.assertTrue((board / 'aegean_unet_fpga_scores.npy').is_file())
 
     def test_notebook_shows_a_wrong_kernel(self):
         ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
@@ -502,6 +502,17 @@ uint32_t reg_read(struct board *, unsigned offset) {
         self.assertEqual(np.load(board.parent / 'source.npy').dtype, np.float32)
         kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken, max_bytes)
         return board, self.run_notebook(board, broken, OPT_NOTEBOOK, kernel)
+
+    def test_opt_notebook_finds_the_shared_image_in_the_folder_above(self):
+        # On the board: one aegean_unet.zip above every design's folder, unpacked once.
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
+        shutil.move(str(board / 'aegean_unet.zip'), str(board.parent / 'aegean_unet.zip'))
+        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken, None)
+        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
+        self.assertTrue(ns['close'].all())
+        self.assertTrue((board.parent / 'aegean_unet/cube.npy').is_file(), 'unpacked next to its zip')
+        self.assertFalse((board / 'aegean_unet').exists(), 'no copy in the design\'s folder')
+        self.assertTrue((board / 'aegean_unet_fpga_scores.npy').is_file(), 'results next to the notebook')
 
     def test_opt_notebook_classifies_the_whole_image_in_one_start(self):
         board, (ns, kernel) = self.run_opt(70, 50)    # 3 x 2 patches, not a multiple of 32

@@ -127,7 +127,8 @@ def prepare(args):
     (out / 'meta.json').write_text(json.dumps({
         'cube': str(args.cube), 'crop': [row, col, height, width],
         'rgb_bands': args.rgb or rgb_default or DEFAULT_RGB}, indent=2))
-    print(f'Written to {out}. Zip it (fpga_zip {out.as_posix()}) and upload it next to the notebook.')
+    print(f'Written to {out}. Zip it (fpga_zip {out.as_posix()}) and upload it to the folder above '
+          "the designs' folders, once for all of them (or next to one notebook).")
 
 
 def kernel_reference(cube, weights=model.WEIGHTS, mu_sd=model.MU_SD):
@@ -164,7 +165,7 @@ def add_fixed(args):
         np.save(data, fixed)
         with zipfile.ZipFile(path, 'a', compression=compression) as z:
             z.writestr(target, data.getvalue())
-        print(f'Added {target} to {path}. Upload it next to the notebook again.')
+        print(f'Added {target} to {path}. Upload it again, where the old one was.')
     else:
         np.save(path / 'reference_fixed.npy', fixed)
         print(f'Written {path}/reference_fixed.npy. Zip it (fpga_zip {path.as_posix()}) and upload it again.')

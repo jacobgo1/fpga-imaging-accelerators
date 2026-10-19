@@ -32,7 +32,8 @@ newest bitstream build.
   fpga_runs KERNEL           the runs in build/KERNEL/ with a bitstream, newest last
   fpga_pynq KERNEL [RUN]     python3 main.py pynq --kernel KERNEL [--run RUN]
                              (re-make the PYNQ folder and zip of an existing build)
-  fpga_zip DIR               DIR -> DIR.zip, to upload an image next to the notebook
+  fpga_zip DIR               DIR -> DIR.zip, an image to upload once, in the folder above
+                             the designs' folders (or next to one notebook)
 
 What each step does: docs/framework.md
 EOF
@@ -111,7 +112,7 @@ fpga_zip() {
     [ -d "$dir" ] || { _fpga_fail "usage: fpga_zip DIR"; return; }
     (cd "$(dirname "$dir")" && rm -f "$(basename "$dir").zip" \
         && "$FPGA_PYTHON" -m zipfile -c "$(basename "$dir").zip" "$(basename "$dir")") || return
-    echo "$dir.zip: upload it next to the notebook"
+    echo "$dir.zip: upload it to the folder above the designs' folders (or next to the notebook)"
 }
 
 # ---- Tab completion (bash) ----

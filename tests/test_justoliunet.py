@@ -279,7 +279,7 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
                 self.assertTrue(ns['close'].all())
                 self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
                 self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
-                self.assertTrue((self.dir / model / 'aegean_unet/fpga_scores.npy').is_file())
+                self.assertTrue((self.dir / model / 'aegean_unet_fpga_scores.npy').is_file())
 
     def test_notebook_uses_strips_when_the_image_does_not_fit(self):
         # 300 rows: strips of 128, 128 and 44 rows; the whole image's spectra do not fit in CMA.
