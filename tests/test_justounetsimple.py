@@ -4,10 +4,12 @@ The notebook's own code cells run against a fake `pynq` whose kernel computes ea
 with the numpy model, on an image folder made by tools/justounetsimple_image.py prepare.
 That checks the register traffic, the patching and the comparison -- not PYNQ or the board.
 """
+import contextlib
 import gc
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -27,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / 'software/pynq/justounetsimple/justounetsimple.ipynb'
 OPT_NOTEBOOK = ROOT / 'software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb'
 CXX = shutil.which('g++') or shutil.which('clang++')
+CC = shutil.which('gcc') or shutil.which('clang')
 AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
 HEADER = f"""\
 #define XJUSTOUNETSIMPLE_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}
@@ -316,7 +319,7 @@ int main(int, char** argv) {
         kernels = {'justounetsimple_opt': 'uint32_t cycles; std::vector<uint32_t> trace(TRACE_WORDS); '
                                        'justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles, trace.data())',
                    'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
-                   'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, dout.data(), h, w)'}
+                   'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
             with self.subTest(kernel=name):
                 source_dir = ROOT / 'src/hls' / name
@@ -353,6 +356,103 @@ int main(int, char** argv) {{
             self.patching.place(floats, self.model.forward_patch(x, self.layers), tile)
         np.testing.assert_allclose(scores, floats, atol=0.02)
         self.assertGreater(float(scores.max() - scores.min()), 1.0, 'the reference should not be constant')
+
+    @unittest.skipUnless(CXX and CC, 'no C and C++ compiler')
+    def test_opu_classify_runs_the_kernel_and_checks_it(self):
+        """software/opu/.../classify.c, the board's program for the ZedBoard, against a fake
+        board that runs the 7020 kernel in software: the cube in, the scores out, bit-exact,
+        in one start and in strips (a reserved memory too small for the cube)."""
+        name = 'justounetsimple_opt_zynq7020'
+        prefix = '#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_'
+        header = ''.join(f'{prefix}{key} {value}\n' for key, value in (
+            ('ADDR_AP_CTRL', '0x00'), ('ADDR_DIN0_DATA', '0x10'), ('BITS_DIN0_DATA', '64'),
+            ('ADDR_DIN1_DATA', '0x1c'), ('BITS_DIN1_DATA', '64'), ('ADDR_DOUT_DATA', '0x28'),
+            ('BITS_DOUT_DATA', '64'), ('ADDR_HEIGHT_DATA', '0x34'), ('ADDR_WIDTH_DATA', '0x3c')))
+        flow = load_module('flow', ROOT / 'main.py')
+        (self.dir / 'kernel_regs.h').write_text(flow.opu_registers(header))
+        (self.dir / 'fake_board.cpp').write_text(r"""
+#include "justounetsimple_opt_zynq7020.hpp"
+#include <cstdio>
+#include <cstdlib>
+extern "C" {
+#include "kernel_regs.h"
+struct board { volatile uint32_t *regs; uint8_t *mem; uint64_t phys, size; };
+static uint32_t regs[64];
+static uint8_t *memory;
+static uint64_t size;
+static const uint64_t PHYS = 0x10000000;   // where the fake reserved memory is for the kernel
+static void *at(unsigned offset, size_t bytes) {   // a kernel address -> the fake memory
+    const uint64_t a = regs[offset / 4] | (uint64_t)regs[offset / 4 + 1] << 32;
+    if (a < PHYS || a + bytes > PHYS + size) { fprintf(stderr, "fake board: address %llx outside\n", (unsigned long long)a); exit(3); }
+    return memory + (a - PHYS);
+}
+void open_board(struct board *b) {
+    size = strtoull(getenv("FAKE_MEMORY"), 0, 0);
+    memory = (uint8_t *)calloc(size, 1);
+    b->regs = regs; b->mem = memory; b->phys = PHYS; b->size = size;
+    regs[REG_AP_CTRL / 4] = 4;                  // idle
+}
+void reg_write(struct board *, unsigned offset, uint32_t value) {
+    regs[offset / 4] = value;
+    if (offset != REG_AP_CTRL || !(value & 1)) return;
+    const int dins[] = REG_DINS;                // every port must read the same cube
+    const int h = regs[REG_HEIGHT / 4], w = regs[REG_WIDTH / 4];
+    if (regs[dins[0] / 4] != regs[dins[1] / 4]) exit(4);
+    jopt_raw_t *d = (jopt_raw_t *)at(dins[0], (size_t)h * w * RAW_BANDS * 2);
+    jopt_out_t *out = (jopt_out_t *)at(REG_DOUT, (size_t)h * w * sizeof(jopt_out_t));
+    justounetsimple_opt_zynq7020(d, d, out, h, w);
+    regs[REG_AP_CTRL / 4] = 4 | 2;              // done, idle
+    fprintf(stderr, "fake board: a start, %d x %d\n", h, w);
+}
+uint32_t reg_read(struct board *, unsigned offset) {
+    const uint32_t v = regs[offset / 4];
+    if (offset == REG_AP_CTRL) regs[offset / 4] &= ~2u;   // done clears on read
+    return v;
+}
+}
+""")
+        source_dir = ROOT / 'src/hls' / name
+        program = ROOT / 'software/opu/justounetsimple_opt/classify.c'
+        exe = self.dir / 'classify.exe'
+        subprocess.run([CC, '-std=c99', '-O2', '-Wall', '-Werror', '-DFAKE_BOARD', f'-I{self.dir}', '-c',
+                        str(program), '-o', str(self.dir / 'classify.o')], check=True)
+        subprocess.run([CXX, '-std=c++14', '-O2', f'-I{source_dir}', f'-I{ROOT / "src/common"}', f'-I{self.dir}',
+                        str(self.dir / 'fake_board.cpp'), str(source_dir / f'{name}.cpp'),
+                        str(self.dir / 'classify.o'), '-o', str(exe)], check=True)
+
+        h, w = 70, 45                                     # 3 x 2 patches, the edge ones partial
+        cube = self.raw_cube(h, w, seed=5, counts=True).astype(np.uint16)
+        want = self.model.with_class(self.model.classify_fixed(cube))
+        np.save(self.dir / 'cube.npy', cube)
+        np.save(self.dir / 'reference.npy', want)
+        # All of it at once; then 32 rows at a time: room for 64 rows of the cube, but only for
+        # 60 with their scores (a strip size that forgets the scores overruns the memory).
+        for memory, starts in ((64 << 20, 1), (4096 + 64 * w * 120 * 2, 3)):
+            with self.subTest(memory=memory):
+                result = subprocess.run([str(exe), str(self.dir / 'cube.npy'), str(self.dir / 'scores.npy'),
+                                         str(self.dir / 'reference.npy')], capture_output=True, text=True,
+                                        env={**os.environ, 'FAKE_MEMORY': str(memory)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f'PASS: 0 of {h * w} pixels differ', result.stdout)
+                self.assertIn(f'in {starts} start', result.stdout)
+                self.assertEqual(result.stderr.count('fake board: a start'), starts)
+                np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
+        # A wrong reference: FAIL and the count, exit 1.
+        wrong = want.copy()
+        wrong[3, 4, 0] += 1
+        wrong[60, 40, 3] = 9
+        np.save(self.dir / 'reference.npy', wrong)
+        result = subprocess.run([str(exe), str(self.dir / 'cube.npy'), str(self.dir / 'scores.npy'),
+                                 str(self.dir / 'reference.npy')], capture_output=True, text=True,
+                                env={**os.environ, 'FAKE_MEMORY': str(64 << 20)})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f'FAIL: 2 of {h * w} pixels differ', result.stdout)
+        # Not the cube's type: said, exit 1.
+        np.save(self.dir / 'floats.npy', cube.astype(np.float32))
+        result = subprocess.run([str(exe), str(self.dir / 'floats.npy'), str(self.dir / 'scores.npy')],
+                                capture_output=True, text=True, env={**os.environ, 'FAKE_MEMORY': '1048576'})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("expected '<u2'", result.stderr)
 
     def test_with_class_picks_the_first_highest_score(self):
         scores = np.array([[[5, 7, 7], [9, 1, 9], [-3, -2, -4]]], dtype=np.int32)
@@ -463,7 +563,36 @@ int main(int, char** argv) {{
         self.assertAlmostEqual(working, 0)
         self.assertAlmostEqual(no_input / output_full, 30 / 50, places=2)
         self.assertAlmostEqual(no_input + output_full + done, 100)
-        self.assertTrue(ns['verdict'].startswith('not the reads'), ns['verdict'])
+        # patch_buffer is the first stage not held by the next, and all after it wait
+        self.assertTrue(ns['verdict'].startswith('patch_buffer:'), ns['verdict'])
+
+    def test_opt_notebook_timeline_empty(self):
+        """A trace buffer nothing was written to: a message, no timeline, no crash."""
+        class Silent(FakeImageKernel):
+            @staticmethod
+            def trace(patches):
+                return np.zeros(TRACE_WORDS, dtype=np.uint32)
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Silent(m, l, b))
+        self.assertIsNone(ns['timeline'])
+        self.assertIn('the timeline is empty', printed.getvalue())
+
+    def test_opt_notebook_timeline_one_slow_reader_pair(self):
+        """As on the board: readers 1 and 2 wait for DDR, 0 and 3 wait for patch_buffer,
+        which takes from all four at once. That is the reads, naming the slow ones."""
+        class Uneven(FakeImageKernel):
+            @staticmethod
+            def trace(patches):
+                out = FakeImageKernel.trace(patches)
+                out[32:32 + 4] = np.array([0.05, 0.19, 0.23, 0.05]) * out[0]   # nothing from DDR
+                out[64:64 + 4] = np.array([0.21, 0.08, 0.03, 0.21]) * out[0]   # FIFO full
+                return out
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)
+        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, lambda m, l, b: Uneven(m, l, b))
+        self.assertTrue(ns['verdict'].startswith('the reads: read_rows 1, 2 wait for DDR (19%, 23%'),
+                        ns['verdict'])
 
     def test_opt_notebook_works_without_the_cycle_counter(self):
         """The Zynq-7000 kernels share the notebook and have no cycles register or trace port."""

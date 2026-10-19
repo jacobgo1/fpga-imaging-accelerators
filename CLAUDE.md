@@ -12,6 +12,9 @@ turned into FPGA accelerators with Vitis HLS. Targets:
   `boards/README.md`.
 - **Zynq-7020** (`--board zynq7020`): the PYNQ-Z2 in the lab now. Smaller still
   (220 DSPs, 140 BRAM36, 53 K LUTs); same PS and ports as the 7030.
+- **ZedBoard** (`--board zedboard`): the same 7020 chip, on the lab's ZedBoards
+  running the OPU system's PetaLinux, not PYNQ: the build packs `K_opu.zip`
+  (.bit.bin, md5sum, devicetree overlay, load.sh) for `fpgautil`. See `boards/README.md`.
 
 Trained models are the `.pt` files in `weights/fp32/`. **Never delete them**: all
 weights are extracted from them on demand.
@@ -41,22 +44,33 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/K/     the notebook for kernel K
+software/opu/K/      the C program for kernel K on the OPU system's PetaLinux (no PYNQ)
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does
+docs/justoliunet_opt_design.md  the 1D kernels: design, performance model, next ideas
+optimizations_implemented/  one .md per model: its optimizations, stages, latency, utilization, board limits
 ```
 
 Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
 per-pixel networks, from src/golden/'s 1D modules; numpy model
 tools/justoliunet_model.py; one notebook for both, software/pynq/justoliunet/),
 `justoliunet_opt` and `justoliunet_bn_opt` (fast, ZCU104: the raw cube in, a pixel
-every 18 cycles, integer fixed point, the DSPs on conv2 and conv3; the design is in
+every 18 cycles, integer fixed point, the DSPs on conv2 and conv3) and their ZedBoard
+versions `justoliunet_opt_zynq7020` / `justoliunet_bn_opt_zynq7020` (`--board zedboard`:
+folded, spectral streaming, a pixel every 108 cycles, the same answers bit for bit; OPU
+program from software/opu/) and Zynq-7030 versions `justoliunet_opt_zynq7030` /
+`justoliunet_bn_opt_zynq7030` (`--board zynq7030`: the same, wider, a pixel every 74
+cycles); the design is in
 src/hls/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
-tools/justoliunet_model.py, one notebook for both in software/pynq/justoliunet_opt/),
+tools/justoliunet_model.py, one notebook for both in software/pynq/justoliunet_opt/;
+the performance model, the predictions for the 7020/7030 and the ideas still to try,
+such as hard-wired weights, are in docs/justoliunet_opt_design.md),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
 ZCU104; records its own timeline in hardware, `src/optimized/shared/timeline.hpp`,
 which its notebook plots), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
-same, sized for those chips: build them with `--board zynq7020` / `zynq7030`; same
+same, sized for those chips (the 7030 one is the 7020's, wider: 12 bands a cycle, four
+read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks; the 7020 one also the notebook),
 `justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute
 replaced by a checksum: times the reads alone; its own notebook),
@@ -104,7 +118,7 @@ those are the user's, on the lab server, every time.
   (`src/optimized/shared/conv3x3_packed.hpp`, AMD WP486): it needs activations in
   -127..127. The DSP's wide input sets the spacing: 18 bits on the UltraScale+
   DSP48E2 (27-bit input), 16 on the 7-series DSP48E1 (25-bit). Check the DSP
-  count in the csynth report: about 864 for the ZCU104's conv1, 216 for the
+  count in the csynth report: about 864 for the ZCU104's conv1, 324 for the 7030's, 216 for the
   7020's, means the packing mapped.
   Pack the weights once at load, not next to the multiply: HLS put that addition
   in the DSP pre-adder and the RTL was slightly wrong (csim passed, cosim failed).
@@ -129,5 +143,8 @@ those are the user's, on the lab server, every time.
 ## Working with the user
 
 - Do not commit. The user reviews every change first.
+- Keep `optimizations_implemented/` current: whenever a kernel's design changes, update its
+  model's file there (the tables and a dated line under "Changes"); a new model gets a new
+  file, in the same layout. Measured numbers replace predictions as they come in.
 - Shell commands the user will paste must be complete as written: no `<placeholders>`.
 - Keep the code comments' style: short, explaining why, plain English.

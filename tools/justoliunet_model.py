@@ -31,6 +31,9 @@ The optimized kernels' integer formats (chosen on the 10 275 labelled aegean pix
 
     python tools/justoliunet_model.py          # both models on the aegean pixels: fp32, int8, fixed
     python tools/justoliunet_model.py formats  # write src/hls/justoliunet_opt/justoliunet_opt_formats.hpp
+    python tools/justoliunet_model.py reference IMAGE   # IMAGE/reference_<model>.npy for both models:
+        # what every optimized kernel of that model (ZCU104 and Zynq-7020) writes for
+        # IMAGE/cube.npy, bit for bit; the OPU's classify takes it as its reference
 """
 import sys
 from pathlib import Path
@@ -177,6 +180,27 @@ def classify_fixed(raw, model, q=None, prep=None):
     return np.concatenate([scores, scores.argmax(1)[:, None]], axis=1).astype(np.int32)
 
 
+def reference(image, models=MODELS, chunk=4096):
+    """IMAGE/reference_<model>.npy, (H, W, 4) int32, for each model: classify_fixed on
+    IMAGE/cube.npy, chunk pixels at a time (the whole capture at once would need ~9 GB)."""
+    image = Path(image)
+    cube = np.load(image / 'cube.npy', mmap_mode='r')
+    h, w, bands = cube.shape
+    pixels = np.asarray(cube).reshape(h * w, bands) if bands == 120 else None
+    if pixels is None:
+        raise ValueError(f'{image}/cube.npy has {bands} bands; the kernels take the raw 120')
+    written = []
+    for model in models:
+        q = load_quantized_int(model)
+        out = np.empty((h * w, 4), dtype=np.int32)
+        for start in range(0, h * w, chunk):
+            out[start:start + chunk] = classify_fixed(pixels[start:start + chunk], model, q)
+        path = image / f'reference_{model}.npy'
+        np.save(path, out.reshape(h, w, 4))
+        written.append(path)
+    return written
+
+
 def formats_header():
     """src/hls/justoliunet_opt/justoliunet_opt_formats.hpp: the formats above, for the
     optimized kernels."""
@@ -216,6 +240,10 @@ def aegean_pixels():
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == 'reference':
+        for path in reference(sys.argv[2]):
+            print(f'wrote {path}')
+        return
     if sys.argv[1:] == ['formats']:
         FORMATS_HEADER.parent.mkdir(parents=True, exist_ok=True)
         FORMATS_HEADER.write_text(formats_header())

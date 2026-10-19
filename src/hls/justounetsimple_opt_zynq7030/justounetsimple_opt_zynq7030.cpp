@@ -25,10 +25,13 @@ static_assert(prep::IN_FRAC == IN_FRAC && prep::IN_MAX == 127,
 constexpr int WORDS = RAW_BANDS / PORT_BANDS;           // 30 words per pixel in the cube
 constexpr int FIRST = prep::FIRST_BAND / PORT_BANDS;    // words 0-1 (raw bands 0-7) are dropped
 constexpr int KEPT = WORDS - FIRST;                      // words 2-29: kept bands 0-111
-static_assert(RAW_BANDS % PORT_BANDS == 0 && P1 == PORT_BANDS, "conv1 takes one word per cycle");
-static_assert(prep::FIRST_BAND % PORT_BANDS == 0 && KEPT * PORT_BANDS == IN_PAD &&
-              sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PORT_BANDS,
-              "the kept bands must be whole words, to the end of each pixel, and conv1's input");
+static_assert(RAW_BANDS % PORT_BANDS == 0 && P1 % PORT_BANDS == 0, "a chunk is whole words");
+// patch_buffer sends whole chunks of P1 / PORT_BANDS words, the last one padded
+// with zeros: as many chunks as conv1 takes.
+static_assert(prep::FIRST_BAND % PORT_BANDS == 0 &&
+              sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PORT_BANDS &&
+              (KEPT * PORT_BANDS + P1 - 1) / P1 * P1 == IN_PAD,
+              "the kept bands must be whole words, to the end of each pixel, and fill conv1's chunks");
 
 static_assert(OUT_CH + 1 == 4, "a pixel of dout is 3 scores and the class");
 
@@ -46,17 +49,22 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 // every sum it sees.
 
 void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
+                                  const jopt_raw_t *din2, const jopt_raw_t *din3,
                                   hls::burst_maxi<jopt_out_t> dout, int height, int width)
 {
-    // Three AXI masters, each on its own 64-bit HP port to DDR
-    // (boards/zynq7030/system.tcl): two read the cube in parallel (point both
-    // at it) through HP0-1, one writes the scores through HP2.
+    // Five AXI masters on the four 64-bit HP ports (boards/zynq7030/system.tcl):
+    // four read the cube in parallel (point all of them at it) through HP0-3,
+    // one writes the scores; gmem4, the fifth, shares HP3 with the fourth reader.
     // depth is only for co-simulation: the testbench's 40 x 50 image.
     #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
     #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
+    #pragma HLS INTERFACE mode=m_axi port=din2 bundle=gmem2 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din3 bundle=gmem3 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din2   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din3   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
@@ -76,7 +84,7 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
     #pragma HLS STREAM variable=s_raw depth=64
     #pragma HLS STREAM variable=s_in depth=64
     // conv1 hands out a patch's 16 x 16 pooled pixels during its last chunk
-    // only (1024 cycles), conv2 takes one per 72 cycles. Room for all of them,
+    // only (1024 cycles), conv2 takes one per 36 cycles. Room for all of them,
     // so conv1 never waits for conv2.
     #pragma HLS STREAM variable=s_a depth=256
     // A patch row of scores, so conv4 keeps going while store starts a burst.
@@ -85,23 +93,25 @@ void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1
     // Every process walks the same grid of H x W patches, one after another.
     read_rows<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
     read_rows<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, true>(
+    read_rows<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
+    read_rows<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
+    patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, false>(
         s_raw, s_in, height, width);
-    // conv1: 110 -> 6 at 32 x 32, 4 bands per cycle (112 with the zero ones),
-    // 6 x 4 x 9 = 216 multiply-adds per cycle, one per DSP.
+    // conv1: 110 -> 6 at 32 x 32, 12 bands per cycle (120 with the zero ones),
+    // 6 x 12 x 9 = 648 multiply-adds per cycle, two per DSP: 324 DSPs.
     conv3x3_wide<H, W, H, W, IN_CH, BASE_CH, P1, SUM1 - q::conv1_bias_frac,
-                 q::conv1_weight, q::conv1_bias, true>(s_in, s_conv1, height, width);
-    relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width);              // -> 16 x 16
-    // conv2: 6 -> 12 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, 1, SUM2 - q::conv2_bias_frac,
+                 q::conv1_weight, q::conv1_bias>(s_in, s_conv1, height, width);
+    relu_pool<H, W, H, W, SUM1 - ACT_FRAC>(s_conv1, s_a, height, width);         // -> 16 x 16
+    // conv2: 6 -> 12 at 16 x 16, 36 cycles per pixel; conv2-4 on 18 DSPs each.
+    conv3x3_serial<H, W, H / 2, W / 2, BASE_CH, 2 * BASE_CH, P2, SUM2 - q::conv2_bias_frac,
                    q::conv2_weight, q::conv2_bias, true>(s_a, s_conv2, height, width);
-    relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width);   // 16 x 16
-    // conv3: 12 -> 6 at 16 x 16, 72 cycles per pixel.
-    conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, 1, SUM3 - q::conv3_bias_frac,
+    relu_pool_up<H, W, H / 2, W / 2, SUM2 - ACT_FRAC>(s_conv2, s_b, height, width);    // 16 x 16
+    // conv3: 12 -> 6 at 16 x 16, 36 cycles per pixel.
+    conv3x3_serial<H, W, H / 2, W / 2, 2 * BASE_CH, BASE_CH, P2, SUM3 - q::conv3_bias_frac,
                    q::conv3_weight, q::conv3_bias, true>(s_b, s_conv3, height, width);
-    relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width);        // -> 32 x 32
-    // conv4: 6 -> 3 at 32 x 32, no activation, 18 cycles per pixel.
-    conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, 1, SUM4 - q::conv4_bias_frac,
+    relu_up<H, W, H / 2, W / 2, SUM3 - ACT_FRAC>(s_conv3, s_c, height, width);         // -> 32 x 32
+    // conv4: 6 -> 3 at 32 x 32, no activation, 9 cycles per pixel.
+    conv3x3_serial<H, W, H, W, BASE_CH, OUT_CH, P2, SUM4 - q::conv4_bias_frac,
                    q::conv4_weight, q::conv4_bias, true>(s_c, s_conv4, height, width);
     store_scores<H, W, SUM4 - OUT_FRAC>(s_conv4, dout, height, width);
 }

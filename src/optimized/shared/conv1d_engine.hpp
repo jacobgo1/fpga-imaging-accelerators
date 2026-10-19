@@ -184,12 +184,13 @@ void pool_assemble(hls::stream<vec_t<uact_t, POS * OCP> >& in, hls::stream<map_t
         }
         // This group's channels of the newest POS positions. With one group (GROUPS
         // == 1) the channel index is a constant; otherwise a GROUPS-way choice.
+        // (Written with the index g, not as a loop over the groups with "if (gg ==
+        // g)": Apple clang 15 at -O2 got that form wrong in conv1d_stream.hpp.)
         for (int p = 0; p < POS; p++)
-            for (int j = 0; j < OCP; j++)
-                for (int gg = 0; gg < GROUPS; gg++) {
-                    #pragma HLS UNROLL
-                    if (gg == g) conv[LP - POS + p][gg * OCP + j] = v.v[p * OCP + j];
-                }
+            for (int j = 0; j < OCP; j++) {
+                #pragma HLS UNROLL
+                conv[LP - POS + p][g * OCP + j] = v.v[p * OCP + j];
+            }
         if (ps == PSTEPS - 1 && g == GROUPS - 1) {
             map_t<uact_t, L_POOL, OC> m;
             for (int l = 0; l < L_POOL; l++)

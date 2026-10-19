@@ -1,6 +1,8 @@
-"""justoliunet_opt and justoliunet_bn_opt: the integer model against the trained model, the
-C++ kernels against the integer model, on the labelled aegean pixels, and the board notebook
-end to end against a fake pynq whose kernel is the integer model.
+"""justoliunet_opt and justoliunet_bn_opt (ZCU104) and their Zynq-7020 versions: the integer
+model against the trained model, every optimized C++ kernel against the integer model (the
+same answers on both chips) on the labelled aegean pixels, the reference files for the
+ZedBoard's classify, and the ZCU104 notebook end to end against a fake pynq whose kernel is
+the integer model.
 
 classify_fixed (tools/justoliunet_model.py) is what the kernels must write, bit for bit;
 here it is checked against the trained fp32 model on real pixels, and the kernels,
@@ -28,6 +30,14 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 CXX = shutil.which('g++') or shutil.which('clang++')
 KERNELS = {'justoliunet': 'justoliunet_opt', 'justoliunet_bn': 'justoliunet_bn_opt'}
+# Every optimized kernel: (model, its call on din, dout, height, width, cycles). The ZCU104's
+# read the cube through two ports, the Zynq-7000s' through one.
+OPTIMIZED = {'justoliunet_opt': ('justoliunet', 'justoliunet_opt(d, d, dout.data(), 1, n, cycles)'),
+             'justoliunet_bn_opt': ('justoliunet_bn', 'justoliunet_bn_opt(d, d, dout.data(), 1, n, cycles)'),
+             'justoliunet_opt_zynq7020': ('justoliunet', 'justoliunet_opt_zynq7020(d, dout.data(), 1, n, cycles)'),
+             'justoliunet_bn_opt_zynq7020': ('justoliunet_bn', 'justoliunet_bn_opt_zynq7020(d, dout.data(), 1, n, cycles)'),
+             'justoliunet_opt_zynq7030': ('justoliunet', 'justoliunet_opt_zynq7030(d, dout.data(), 1, n, cycles)'),
+             'justoliunet_bn_opt_zynq7030': ('justoliunet_bn', 'justoliunet_bn_opt_zynq7030(d, dout.data(), 1, n, cycles)')}
 NOTEBOOK = ROOT / 'software/pynq/justoliunet_opt/justoliunet_opt.ipynb'
 # Register offsets for the fake kernel, in the layout Vitis HLS gives the kernel.
 REGS = {'AP_CTRL': 0x00, 'DIN0_DATA': 0x10, 'DIN1_DATA': 0x1c, 'DOUT_DATA': 0x28,
@@ -88,7 +98,7 @@ class JustoLiuNetOptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'in.bin')
-            for model, kernel in KERNELS.items():
+            for kernel, (model, call) in OPTIMIZED.items():
                 with self.subTest(kernel=kernel):
                     source_dir = ROOT / 'src/hls' / kernel
                     source = tmp / f'run_{kernel}.cpp'
@@ -106,7 +116,7 @@ int main(int, char** argv) {{
     fclose(f);
     uint32_t cycles = 0;
     jl_raw_t *d = din.data();     // hls::burst_maxi takes a plain pointer
-    {kernel}(d, d, dout.data(), 1, n, cycles);
+    {call};
     f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jl_out_t), dout.size(), f); fclose(f);
 }}
 """)
@@ -117,6 +127,30 @@ int main(int, char** argv) {{
                     subprocess.run([str(exe), str(tmp / 'in.bin'), str(out), str(n)], check=True)
                     cpp = np.fromfile(out, dtype=np.int32).reshape(n, 4)
                     np.testing.assert_array_equal(cpp, self.model.classify_fixed(self.raw, model))
+
+    def test_reference_files_are_the_integer_model(self):
+        """tools/justoliunet_model.py reference IMAGE: what the kernels must write for
+        IMAGE/cube.npy, per model, in chunks that need not divide the image."""
+        h, w = 23, 41
+        with tempfile.TemporaryDirectory() as tmp:
+            np.save(Path(tmp) / 'cube.npy', self.raw[:h * w].astype(np.uint16).reshape(h, w, 120))
+            written = self.model.reference(tmp, chunk=100)
+            self.assertEqual(sorted(p.name for p in written),
+                             ['reference_justoliunet.npy', 'reference_justoliunet_bn.npy'])
+            for model in KERNELS:
+                got = np.load(Path(tmp) / f'reference_{model}.npy')
+                self.assertEqual((got.shape, got.dtype), ((h, w, 4), np.int32))
+                np.testing.assert_array_equal(got.reshape(-1, 4), self.model.classify_fixed(self.raw[:h * w], model))
+
+    def test_zynq7020_kernels_have_the_opu_program(self):
+        """A zedboard build packs software/opu/KERNEL/ (main.py): the generic classify.c."""
+        for kernel in ('justoliunet_opt_zynq7020', 'justoliunet_bn_opt_zynq7020'):
+            with self.subTest(kernel=kernel):
+                include = ROOT / 'software/opu' / kernel / 'include.txt'
+                files = [line.split('#')[0].strip() for line in include.read_text().splitlines()]
+                files = [f for f in files if f]
+                self.assertEqual(files, ['software/opu/justounetsimple_opt/classify.c'])
+                self.assertTrue((ROOT / files[0]).is_file())
 
 
 class FakeBuffer(np.ndarray if np is not None else object):

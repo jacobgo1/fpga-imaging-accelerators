@@ -95,7 +95,8 @@ class TclFlowTests(unittest.TestCase):
     def test_scripts_have_complete_tcl_syntax(self):
         tcl = tkinter.Tcl()
         for path in ('scripts/hls.tcl', 'scripts/vivado.tcl', 'boards/zcu104/system.tcl',
-                     'boards/zynq7020/system.tcl', 'boards/zynq7030/system.tcl'):
+                     'boards/zynq7020/system.tcl', 'boards/zedboard/system.tcl',
+                     'boards/zynq7030/system.tcl'):
             self.assertEqual(int(tcl.call('info', 'complete', (ROOT / path).read_text(encoding='utf-8'))), 1)
 
     def test_every_configured_board_has_its_script(self):
@@ -208,9 +209,28 @@ class TclFlowTests(unittest.TestCase):
         _, props = self.wire_board('zynq7020', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
         self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
 
+    def test_zedboard_is_the_7030_block_design_with_its_own_ps_preset(self):
+        masters = ['m_axi_gmem0', 'm_axi_gmem1', 'm_axi_gmem2']
+        self.assertEqual(self.wire_board('zedboard', masters), self.wire_board('zynq7030', masters))
+        _, props = self.wire_board('zedboard', [], preset='set_property -dict [list CONFIG.PCW_X 7] $ps\n')
+        self.assertEqual(props[props.index('CONFIG.PCW_X') + 1], '7')
+        self.assertEqual(flow.CONFIG['boards']['zedboard']['part'], 'xc7z020clg484-1')
+
+    def test_zynq7030_puts_a_fifth_master_on_hp3_with_the_fourth(self):
+        wires, props = self.wire_board('zynq7030', [f'm_axi_gmem{i}' for i in range(5)])
+        for i in range(4):
+            self.assertIn(f'kernel/m_axi_gmem{i} => data{i}/S00_AXI', wires)
+            self.assertIn(f'data{i}/M00_AXI => ps/S_AXI_HP{i}', wires)
+        self.assertIn('kernel/m_axi_gmem4 => data3/S01_AXI', wires)
+        self.assertEqual([w for w in wires if w.endswith('S_AXI_HP3')], ['data3/M00_AXI => ps/S_AXI_HP3'])
+        smartconnect_inputs = [props[i + 1] for i, p in enumerate(props) if p == 'CONFIG.NUM_SI']
+        self.assertEqual(smartconnect_inputs, ['1', '1', '1', '1', '2'], 'ctrl, then data0-3')
+        hp_used = [props[props.index(f'CONFIG.PCW_USE_S_AXI_HP{i}') + 1] for i in range(4)]
+        self.assertEqual(hp_used, ['1'] * 4)
+
     def test_zynq7030_rejects_more_masters_than_hp_ports(self):
         with self.assertRaisesRegex(tkinter.TclError, '4 HP ports'):
-            self.wire_board('zynq7030', [f'm_axi_gmem{i}' for i in range(5)])
+            self.wire_board('zynq7030', [f'm_axi_gmem{i}' for i in range(6)])
 
     def execute_vivado(self, progress='100%'):
         with tempfile.TemporaryDirectory() as tmp:

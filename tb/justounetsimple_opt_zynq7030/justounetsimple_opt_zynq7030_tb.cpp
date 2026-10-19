@@ -3,7 +3,7 @@
 #include "justounetsimple_opt_zynq7030.hpp"
 
 static void run_kernel(const jopt_raw_t *din, jopt_out_t *dout, int height, int width) {
-    justounetsimple_opt_zynq7030(din, din, dout, height, width);    // both ports read the cube
+    justounetsimple_opt_zynq7030(din, din, din, din, dout, height, width);    // every port reads the cube
 }
 
 #include "../justounetsimple_opt/justounetsimple_opt_check.hpp"
