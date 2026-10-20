@@ -171,15 +171,19 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IC> >& in, hls::stream<vec_t<uact_t
                     x[1 + WARM_NEXT + p][ch] = pre[p][ch];
                 }
         }
+        // One read for both (they never meet: a take is step 0 of a position, a
+        // fetch steps 1 .. PRE). Two reads of the stream in the loop would each
+        // need its port, and HLS, not seeing that they exclude each other,
+        // would make the loop II = 2: every layer twice as slow.
+        vec_t<uact_t, IC> v;
+        if (take || fetch) v = in.read();
         if (fetch) {
-            const vec_t<uact_t, IC> v = in.read();
             for (int ch = 0; ch < IC; ch++) {
                 #pragma HLS UNROLL
                 pre[s - 1][ch] = v.v[ch];
             }
         }
         if (take) {
-            const vec_t<uact_t, IC> v = in.read();
             if (!trail) {
                 for (int l = 0; l < K - 1; l++)
                     for (int ch = 0; ch < IC; ch++) {
