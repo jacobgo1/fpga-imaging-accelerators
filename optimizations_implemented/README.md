@@ -6,6 +6,7 @@ and utilization of each stage are calculated, the inference time, and each board
 | Model | File |
 |---|---|
 | 2D-JustoUNet-Simple | [justounetsimple.md](justounetsimple.md) |
+| WaveletCNN | [waveletcnn.md](waveletcnn.md) |
 | 1D-Justo-LiuNet | [justoliunet.md](justoliunet.md) |
 | 1D-Justo-LiuNet with BatchNorm | [justoliunet_bn.md](justoliunet_bn.md) |
 

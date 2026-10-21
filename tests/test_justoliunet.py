@@ -10,8 +10,10 @@ The board notebook's code cells run against a fake `pynq` whose kernel computes 
 pixels with this numpy model: that checks the register traffic, the preprocessing,
 the chunking and the comparison -- not PYNQ or the board.
 """
+import contextlib
 import gc
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -207,7 +209,7 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
         gc.collect()        # a notebook's namespace (a cycle) may still hold cube.npy; Windows locks it
         self.tmp.cleanup()
 
-    def prepare(self, model, h, w):
+    def prepare(self, model, h, w, reference=True):
         """The board's folder: what the kernel's package and an image zip put there. The
         image is aegean pixels (real spectra, so real classes) with the dropped bands at
         65535, so a wrong band selection blows the scores up."""
@@ -223,6 +225,9 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
         image.mkdir(parents=True)
         np.save(image / 'cube.npy', cube)
         np.save(image / 'labels.npy', labels[:h * w].reshape(h, w).astype(np.uint8))
+        if reference:   # the PC's answer, as python3 tools/justoliunet_model.py reference IMAGE writes it
+            np.save(image / f'reference_{model}.npy',
+                    self.model.classify_fixed(cube.reshape(-1, 120), model).reshape(h, w, 4))
         (image / 'meta.json').write_text(json.dumps({'rgb_bands': [56, 67, 86]}))
         with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:
             for f in image.iterdir():
@@ -278,7 +283,9 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
                 self.assertEqual(kernel.address(DIN), ns['spectra'].physical_address)
                 self.assertEqual(kernel.address(DOUT), ns['scores_out'].physical_address)
                 self.assertEqual(ns['scores'].shape, (50, 70, 3))
-                self.assertTrue(ns['close'].all())
+                # the PC's integer model: this float kernel has its classes, to rounding (99.4-99.7%
+                # of the aegean pixels for the two networks)
+                self.assertGreater(ns['same_class'], 0.98)
                 self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
                 self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
                 self.assertTrue((self.dir / model / 'aegean_unet_fpga_scores.npy').is_file())
@@ -290,13 +297,14 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
                                        max_bytes=h * w * 110 * 4 - 1)
         self.assertIsNotNone(ns['strips'])
         self.assertEqual(kernel.runs, [256, 128 * w, 128 * w, 44 * w] + [128 * w] * 5)
-        self.assertTrue(ns['close'].all())
+        self.assertGreater(ns['same_class'], 0.98)
         self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
 
     def test_notebook_checks_the_image_in_little_memory(self):
-        # The reference needs about 13 KB a pixel; a 128-row strip of a real capture (1092 wide)
-        # is 140 K pixels, 1.75 GB, more than the board has. 10 000 pixels in one strip here:
-        # about 128 MB in one call, under 100 MB only if the reference is fed in pieces.
+        # The network in numpy needs about 13 KB a pixel; run on the ARM over a 128-row strip of
+        # a real capture (1092 wide) it took 1.75 GB and the board killed the notebook. It no
+        # longer runs over the image (the PC's answer is loaded instead): 10 000 pixels in one
+        # strip here would be about 128 MB in it, and the notebook stays under 100 MB.
         board = self.prepare('justoliunet', 100, 100)
         tracemalloc.start()
         try:
@@ -304,12 +312,22 @@ class JustoLiuNetNotebookTests(unittest.TestCase):
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
-        self.assertTrue(ns['close'].all())
+        self.assertGreater(ns['same_class'], 0.98)
         self.assertLess(peak, 100 * 2**20, f'the notebook peaked at {peak / 2**20:.0f} MB')
 
     def test_notebook_shows_a_wrong_kernel(self):
+        # The self-test still runs the network on 256 pixels: it catches the wrong score.
         ns, _ = self.run_notebook(self.prepare('justoliunet', 40, 40), 'justoliunet', broken=True)
-        self.assertFalse(ns['close'].all())
+        self.assertGreater(ns['error'], 1e-3 * (1 + np.abs(ns['want']).max()))
+
+    def test_notebook_without_a_reference_checks_the_labels_only(self):
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            ns, _ = self.run_notebook(self.prepare('justoliunet', 40, 40, reference=False), 'justoliunet')
+        self.assertIsNone(ns['same_class'])
+        self.assertIn('no reference_justoliunet.npy', printed.getvalue())
+        self.assertIn('accuracy against the labels', printed.getvalue())
+        self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
 
 
 if __name__ == '__main__':

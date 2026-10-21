@@ -4,6 +4,7 @@ The notebook's own code cells run against a fake `pynq` whose kernel computes ea
 with the numpy model, on an image folder made by tools/justounetsimple_image.py prepare.
 That checks the register traffic, the patching and the comparison -- not PYNQ or the board.
 """
+import contextlib
 import gc
 import importlib.util
 import io
@@ -180,7 +181,7 @@ class JustoUNetSimpleTests(unittest.TestCase):
         raw[:, :, kept] = z / inv_std + mean
         return np.clip(np.rint(raw), 0, 65535) if counts else raw
 
-    def prepare(self, h, w, header=('xjustounetsimple_hw.h', HEADER), counts=False):
+    def prepare(self, h, w, header=('xjustounetsimple_hw.h', HEADER), counts=False, references=True):
         np.save(self.dir / 'source.npy', self.raw_cube(h, w, counts=counts))
         np.save(self.dir / 'source_labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
         board = self.dir / 'board'
@@ -194,7 +195,8 @@ class JustoUNetSimpleTests(unittest.TestCase):
             sys.argv = saved
         with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:
             for f in (board / 'aegean_unet').iterdir():
-                z.write(f, f'aegean_unet/{f.name}')
+                if references or not f.name.startswith('reference_'):   # without: the labels only
+                    z.write(f, f'aegean_unet/{f.name}')
         shutil.rmtree(board / 'aegean_unet')
         (board / header[0]).write_text(header[1])
         shutil.copy2(ROOT / 'mu_sd.txt', board)
@@ -278,6 +280,15 @@ int main(int, char** argv) {
     def test_notebook_shows_a_wrong_kernel(self):
         ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
         self.assertFalse(ns['close'].all())
+
+    def test_notebook_without_a_reference_checks_the_labels_only(self):
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            ns, _ = self.run_notebook(self.prepare(40, 40, references=False))
+        self.assertIsNone(ns['reference'])
+        self.assertIsNone(ns['close'])
+        self.assertIn('no reference_scores.npy', printed.getvalue())
+        self.assertIn('accuracy against the labels', printed.getvalue())
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
@@ -418,6 +429,35 @@ uint32_t reg_read(struct board *, unsigned offset) {
                                 env={**os.environ, 'FAKE_MEMORY': str(64 << 20)})
         self.assertEqual(result.returncode, 1)
         self.assertIn(f'FAIL: 2 of {h * w} pixels differ', result.stdout)
+        self.assertIn(f'same class as {self.dir / "reference.npy"}: {100 * ((h * w - 1) / (h * w)):.2f}%', result.stdout)
+        self.assertIn(f'no {self.dir / "labels.npy"}', result.stdout)
+        self.assertNotIn('accuracy', result.stdout)
+        # labels.npy next to the cube: the accuracy and each class's IoU over the labelled
+        # pixels (3: unlabeled), as the notebooks compute them; int64 as prepare writes them,
+        # uint8 as a capture's own are.
+        rng = np.random.default_rng(6)
+        classes = want[..., 3]
+        labels = np.where(rng.random((h, w)) < 0.8, classes, rng.integers(0, 4, (h, w)))
+        known = labels < 3
+        accuracy = f'accuracy against {self.dir / "labels.npy"}: {100 * (classes[known] == labels[known]).mean():.2f}% ' \
+                   f'of {known.sum()} labelled pixels'
+        iou = ', '.join(f'{name} {((classes == c) & (labels == c))[known].sum() / ((classes == c) | (labels == c))[known].sum():.3f}'
+                        for c, name in enumerate(('cloud', 'land', 'sea')))
+        self.assertLess(known.sum(), h * w, 'some unlabeled pixels, to be skipped')
+        for dtype in (np.int64, np.uint8):
+            with self.subTest(labels=np.dtype(dtype).name):
+                np.save(self.dir / 'labels.npy', labels.astype(dtype))
+                result = subprocess.run([str(exe), str(self.dir / 'cube.npy'), str(self.dir / 'scores.npy')],
+                                        capture_output=True, text=True, env={**os.environ, 'FAKE_MEMORY': str(64 << 20)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(accuracy, result.stdout)
+                self.assertIn(f'IoU {iou}', result.stdout)
+        np.save(self.dir / 'labels.npy', labels[:-1])
+        result = subprocess.run([str(exe), str(self.dir / 'cube.npy'), str(self.dir / 'scores.npy')],
+                                capture_output=True, text=True, env={**os.environ, 'FAKE_MEMORY': str(64 << 20)})
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('the labels are not H x W for this cube', result.stderr)
+        (self.dir / 'labels.npy').unlink()
         # Not the cube's type: said, exit 1.
         np.save(self.dir / 'floats.npy', cube.astype(np.float32))
         result = subprocess.run([str(exe), str(self.dir / 'floats.npy'), str(self.dir / 'scores.npy')],
@@ -530,6 +570,17 @@ uint32_t reg_read(struct board *, unsigned offset) {
     def test_opt_notebook_shows_a_wrong_kernel(self):
         _, (ns, _) = self.run_opt(40, 40, broken=True)
         self.assertFalse(ns['close'].all())
+
+    def test_opt_notebook_without_a_reference_checks_the_labels_only(self):
+        board = self.prepare(40, 40, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True, references=False)
+        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
+        self.assertIsNone(ns['reference_fixed'])
+        self.assertIsNone(ns['close'])
+        self.assertIn('no reference_fixed.npy', printed.getvalue())
+        self.assertIn('accuracy against the labels', printed.getvalue())
 
     def test_fixed_adds_the_kernel_reference_to_an_old_folder_or_zip(self):
         cube = self.raw_cube(40, 35, counts=True).astype(np.uint16)

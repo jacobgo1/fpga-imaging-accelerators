@@ -75,14 +75,19 @@ for {set i 0} {$i < [llength $ddr_ports]} {incr i} {
 }
 set_property -dict $ps_config $ps
 
-# The PLL rarely hits the requested frequency exactly. The kernel must not run
-# faster than the period HLS scheduled it for.
-set act_mhz [get_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__ACT_FREQMHZ $ps]
-set act_ns  [expr {1000.0 / $act_mhz}]
-puts "INFO: HLS target $cfg(clock_ns) ns, actual pl_clk0 [format %.3f $act_ns] ns ($act_mhz MHz)"
-if {$act_ns < $cfg(clock_ns) - 0.01} {
-    error "pl_clk0 ($act_ns ns) is faster than the HLS target ($cfg(clock_ns) ns)"
+# The PLL rarely hits the requested frequency exactly: it makes the nearest one
+# it can, which may be faster. The kernel must not run faster than the period HLS
+# scheduled it for, so ask for 1% less until it does not.
+set req_mhz [expr {1000.0 / $cfg(clock_ns)}]
+while {1} {
+    set act_mhz [get_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__ACT_FREQMHZ $ps]
+    set act_ns  [expr {1000.0 / $act_mhz}]
+    if {$act_ns >= $cfg(clock_ns) - 0.01} break
+    set req_mhz [expr {$req_mhz * 0.99}]
+    if {$req_mhz < 10.0} { error "pl_clk0: no rate found at or below the HLS target ($cfg(clock_ns) ns)" }
+    set_property CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [format %.3f $req_mhz] $ps
 }
+puts "INFO: HLS target $cfg(clock_ns) ns, actual pl_clk0 [format %.3f $act_ns] ns ($act_mhz MHz)"
 
 # Reset: turns the PS's pl_resetn0 into a reset synchronous to pl_clk0.
 set rst [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst]

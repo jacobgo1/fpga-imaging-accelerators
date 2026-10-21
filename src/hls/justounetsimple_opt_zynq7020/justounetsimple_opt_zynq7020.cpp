@@ -45,15 +45,15 @@ static_assert(SUM1 > ACT_FRAC && SUM2 > ACT_FRAC && SUM3 > ACT_FRAC &&
 // int32 never overflows, as in justounetsimple_opt: the testbench checks
 // every sum it sees.
 
-void justounetsimple_opt_zynq7020(const jopt_raw_t *din0, const jopt_raw_t *din1,
+void justounetsimple_opt_zynq7020(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
                                   hls::burst_maxi<jopt_out_t> dout, int height, int width)
 {
     // Three AXI masters, each on its own 64-bit HP port to DDR
     // (boards/zynq7020/system.tcl): two read the cube in parallel (point both
     // at it) through HP0-1, one writes the scores through HP2.
     // depth is only for co-simulation: the testbench's 40 x 50 image.
-    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=2
+    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=2
     #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
     #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
@@ -79,12 +79,20 @@ void justounetsimple_opt_zynq7020(const jopt_raw_t *din0, const jopt_raw_t *din1
     // only (1024 cycles), conv2 takes one per 36 cycles. Room for all of them,
     // so conv1 never waits for conv2.
     #pragma HLS STREAM variable=s_a depth=256
+    // relu_pool_up gives two 16-pixel rows at once (every fourth input row),
+    // relu_up two 32-pixel rows: room for a whole burst of either, so the stage
+    // before it never blocks mid-row on the default 2-deep FIFO.
+    #pragma HLS STREAM variable=s_b depth=32
+    #pragma HLS STREAM variable=s_c depth=64
     // A patch row of scores, so conv4 keeps going while store starts a burst.
     #pragma HLS STREAM variable=s_conv4 depth=32
 
     // Every process walks the same grid of H x W patches, one after another.
-    read_rows<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
-    read_rows<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
+    // A patch row is 32 x 30 = 960 words: four bursts of 8 pixels (240 <= 256),
+    // two in flight per port so the next burst's address is on the bus while
+    // the current one streams in.
+    read_rows_ahead<H, W, WORDS, PORTS, 0, 8, 2>(din0, s_raw[0], height, width);
+    read_rows_ahead<H, W, WORDS, PORTS, 1, 8, 2>(din1, s_raw[1], height, width);
     patch_buffer<H, W, WORDS, FIRST, PORT_BANDS, P1, PORTS, prep::FRAC, prep::IN_MAX, prep::A, prep::B, false>(
         s_raw, s_in, height, width);
     // conv1: 110 -> 6 at 32 x 32, 8 bands per cycle (112 with the zero ones),

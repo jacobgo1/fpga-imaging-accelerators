@@ -9,8 +9,10 @@ here it is checked against the trained fp32 model on real pixels, and the kernel
 compiled with plain g++, against it on the same pixels. The kernels' testbenches check
 them against a plain-loop integer reference of their own and the float golden network.
 """
+import contextlib
 import gc
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -232,10 +234,11 @@ class JustoLiuNetOptNotebookTests(unittest.TestCase):
         gc.collect()        # a notebook's namespace (a cycle) may still hold cube.npy; Windows locks it
         self.tmp.cleanup()
 
-    def prepare(self, model, h, w):
+    def prepare(self, model, h, w, reference=True):
         """The board's folder: what the kernel's package (main.py, include.txt) and an image
         zip put there. The image is aegean pixels (real spectra, real classes) with the
-        dropped bands at 65535, so a wrong band selection shows."""
+        dropped bands at 65535, so a wrong band selection shows; with the PC's answer for
+        the model unless reference is False."""
         if not self.model.quantized_path(model).exists():
             self.skipTest(f'no quantized weights for {model}')
         raw, labels = self.model.aegean_pixels()
@@ -247,6 +250,9 @@ class JustoLiuNetOptNotebookTests(unittest.TestCase):
         image.mkdir(parents=True)
         np.save(image / 'cube.npy', cube)
         np.save(image / 'labels.npy', labels[:h * w].reshape(h, w).astype(np.uint8))
+        if reference:   # as python3 tools/justoliunet_model.py reference IMAGE writes it
+            np.save(image / f'reference_{model}.npy',
+                    self.model.classify_fixed(cube.reshape(-1, 120), model).reshape(h, w, 4))
         (image / 'meta.json').write_text(json.dumps({'rgb_bands': [56, 67, 86]}))
         with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:
             for f in image.iterdir():
@@ -306,7 +312,7 @@ class JustoLiuNetOptNotebookTests(unittest.TestCase):
                                  'the self-test, the whole image in one start, then 5 for the speed')
                 self.assertEqual(ns['differ'], 0)
                 self.assertTrue(ns['close'].all())
-                self.assertEqual(len(ns['sample']), 40 * 60)
+                self.assertEqual(ns['close'].shape, (40, 60), 'every pixel, from the PC')
                 self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
                 self.assertTrue((self.dir / model / 'aegean_unet_fpga_scores.npy').is_file())
 
@@ -322,6 +328,17 @@ class JustoLiuNetOptNotebookTests(unittest.TestCase):
         ns, _ = self.run_notebook(self.prepare('justoliunet', 30, 30), 'justoliunet', broken=True)
         self.assertGreater(ns['differ'], 0)
         self.assertFalse(ns['close'].all())
+
+    def test_notebook_without_a_reference_checks_the_labels_only(self):
+        # The model is not run on the ARM over the image: without the PC's answer there is
+        # no comparison with it, only the labels.
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            ns, _ = self.run_notebook(self.prepare('justoliunet', 30, 30, reference=False), 'justoliunet')
+        self.assertIsNone(ns['close'])
+        self.assertIn('no reference_justoliunet.npy', printed.getvalue())
+        self.assertIn('accuracy against the labels', printed.getvalue())
+        self.assertGreater((ns['classes'] == ns['labels']).mean(), 0.9)
 
 
 if __name__ == '__main__':

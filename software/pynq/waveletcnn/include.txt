@@ -1,0 +1,2 @@
+# Repository files main.py copies into the PYNQ package, next to the notebook.
+mu_sd.txt    # training mean/std per band, for the preprocessing

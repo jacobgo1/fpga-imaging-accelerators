@@ -41,6 +41,35 @@ acc_t round_shift(acc_t v) {
     return SHIFT == 0 ? v : (v + ((acc_t)1 << (SHIFT > 0 ? SHIFT - 1 : 0))) >> SHIFT;
 }
 
+// One sum -> one signed int16 activation (no ReLU): round off SHIFT bits,
+// saturate to [-32768, 32767].
+template<int SHIFT>
+act_t requant_act(acc_t v) {
+    #pragma HLS INLINE
+    const acc_t r = round_shift<SHIFT>(v);
+    return r > 32767 ? (act_t)32767 : r < -32768 ? (act_t)-32768 : (act_t)r;
+}
+
+// LeakyReLU in integers: v >= 0 ? v : round_shift<LEAK_FRAC>(v * LEAK_NUM).
+// Default 41 * 2^-12 = 41 / 4096 = 0.01000977 (PyTorch's 0.01 negative slope);
+// 41 = 32 + 8 + 1 is a constant, so HLS turns it into two additions in LUTs.
+template<int LEAK_NUM = 41, int LEAK_FRAC = 12>
+acc_t leaky_relu(acc_t v) {
+    #pragma HLS INLINE
+    if (v >= 0) return v;
+    const int64_t p = (int64_t)v * LEAK_NUM + ((int64_t)1 << (LEAK_FRAC - 1));
+    return (acc_t)(p >> LEAK_FRAC);
+}
+
+// One sum -> one signed int16 activation with LeakyReLU(0.01): round off SHIFT
+// bits, apply leaky_relu, saturate to [-32768, 32767].
+template<int SHIFT, int LEAK_NUM = 41, int LEAK_FRAC = 12>
+act_t requant_leaky_relu(acc_t v) {
+    #pragma HLS INLINE
+    const acc_t r = leaky_relu<LEAK_NUM, LEAK_FRAC>(round_shift<SHIFT>(v));
+    return r > 32767 ? (act_t)32767 : r < -32768 ? (act_t)-32768 : (act_t)r;
+}
+
 static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE
     return a > b ? a : b;

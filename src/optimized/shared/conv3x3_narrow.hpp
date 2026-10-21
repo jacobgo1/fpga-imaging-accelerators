@@ -15,20 +15,25 @@
 // the sums' fraction bits minus the bias's. DSP: the multipliers in DSPs, or
 // in LUTs. Out: every pixel's OUT sums, unscaled, raster order.
 template<int PH, int PW, int H, int W, int IN, int OUT, int BIAS_SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP>
+         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP, int STEPS = OUT>
 void conv3x3_narrow(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
                     int height, int width) {
+    static_assert(OUT % STEPS == 0, "STEPS must divide OUT");
+    constexpr int PER_STEP = OUT / STEPS;
+    (void)PER_STEP;
     wgt_t wl[OUT][IN][3][3];
+    #pragma HLS ARRAY_PARTITION variable=wl type=cyclic factor=PER_STEP dim=1
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
     acc_t bl[OUT];
+    #pragma HLS ARRAY_PARTITION variable=bl type=cyclic factor=PER_STEP dim=1
 
     load_conv_weights<OUT, IN, BIAS_SHIFT>(WEIGHT, BIAS, wl, bl);
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_stream<H, W, IN, OUT, IN, OUT, DSP>(in, wl, bl, out);
+        conv3x3_stream<H, W, IN, OUT, IN, STEPS, DSP>(in, wl, bl, out);
     }
 }
 

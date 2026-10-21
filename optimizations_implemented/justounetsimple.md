@@ -106,3 +106,6 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 - 2026-10-16: cycle counter; timeline taps (removed again 2026-10-19, `0abe48b`); read-only test kernel; ZedBoard target.
 - 2026-10-19: Zynq-7030 version rebuilt as the 7020's, wider: conv1 packed at 12 bands (324 DSPs),
   conv2-4 on DSPs, 4 read ports (the writer shares HP3): 28 705 → 10 273 cycles/patch, 191 → 68 ms.
+- 2026-10-21: Zynq-7030 and 7020: `s_b`/`s_c` FIFO depths (32 and 64, matching ZCU104 so `relu_pool_up`
+  and `relu_up` never stall on the default 2-deep FIFOs) and `read_rows_ahead` (4 bursts of 8 pixels =
+  240 words per row, 2 in flight per port); shared `patch_buffer_run` in `src/optimized/shared/patch_buffer.hpp`.

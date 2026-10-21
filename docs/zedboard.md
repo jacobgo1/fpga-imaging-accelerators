@@ -32,9 +32,10 @@ has neither).
 sudo apt install device-tree-compiler gcc-arm-linux-gnueabihf
 ```
 
-**2. The test image on the board.** `classify` takes a raw cube (H x W x 120, **uint16**)
-and the PC's answer for it, `reference_fixed.npy`. They stay on the board; every design
-uses the same two files.
+**2. The test image on the board.** `classify` takes a raw cube (H x W x 120, **uint16**),
+and checks the classes against the true labels, `labels.npy`, which it finds next to the
+cube. Optionally also against the PC's answer for the kernel's network (a reference, one
+per network). They stay on the board; every design uses the same files.
 
 The `aegean_unet/` on the server has its cube saved as float32 (it is older than the
 uint16 format), which `classify` rejects. Its values are whole raw counts, and its
@@ -48,10 +49,20 @@ assert (c >= 0).all() and (c <= 65535).all() and (c == np.rint(c)).all(), 'not r
 np.save('aegean_unet/cube_u16.npy', c.astype(np.uint16))
 print('written aegean_unet/cube_u16.npy', c.shape)
 "
+python3 tools/justoliunet_model.py reference aegean_unet
 ssh zb05 mkdir -p /media/sd-pl/firmware
 scp aegean_unet/cube_u16.npy zb05:/media/sd-pl/firmware/cube.npy
-scp aegean_unet/reference_fixed.npy zb05:/media/sd-pl/firmware/
+scp aegean_unet/labels.npy aegean_unet/reference_fixed.npy aegean_unet/reference_justoliunet.npy aegean_unet/reference_justoliunet_bn.npy zb05:/media/sd-pl/firmware/
 ```
+
+`tools/justoliunet_model.py reference` writes the two 1D networks' references (a few
+minutes). The references, one per network:
+
+| Kernel | Its reference |
+| --- | --- |
+| `justounetsimple_opt_zynq7020` | `reference_fixed.npy` (from `tools/justounetsimple_image.py prepare`) |
+| `justoliunet_opt_zynq7020` | `reference_justoliunet.npy` (from `tools/justoliunet_model.py reference`) |
+| `justoliunet_bn_opt_zynq7020` | `reference_justoliunet_bn.npy` (the same command) |
 
 A new test image comes from a HYPSO capture with
 `python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out NAME`,
@@ -140,14 +151,35 @@ The list must contain `kernel`.
 
 ### 6. Run it on the test image
 
+With the kernel's reference from the table above (here `justoliunet_opt_zynq7020`'s):
+
 ```bash
-ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_fixed.npy"
+ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_justoliunet.npy"
+```
+
+or against the labels only, without a reference:
+
+```bash
+ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy"
 ```
 
 `classify` runs the kernel on the whole cube (in strips of 32-row multiples if it does not
-fit in the board's reserved memory, with the same answers), prints the FPGA's time and the
-wall-clock time, and compares every pixel with `reference_fixed.npy`: **PASS** or
-**FAIL**.
+fit in the board's reserved memory, with the same answers) and prints:
+
+```text
+598 x 1092 pixels, 665 patches, in 1 start of up to 598 rows
+cube into memory:      1.668 s
+FPGA:                 1851.3 ms, 2783.9 us per patch
+scores to the file:    0.563 s (and compared)
+wall clock:            4.121 s
+accuracy against labels.npy: ...% of 653016 labelled pixels      the result: the true labels
+  IoU cloud ..., land ..., sea ...                               per class, as the notebooks
+same class as reference_justoliunet.npy: ...%                    with a reference only
+PASS: 0 of 653016 pixels differ from reference_justoliunet.npy   every score bit for bit
+```
+
+A reference of another network than the kernel's differs on (almost) every pixel: FAIL
+then says nothing about the design. `classify` exits with 1 on a FAIL.
 
 ### 7. Keep the results
 
@@ -174,7 +206,7 @@ After the reboot the board runs its own design again.
 The files stay on the SD card. After a reboot, load and run in one go:
 
 ```bash
-ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_fixed.npy'
+ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_justoliunet.npy'
 ```
 
 ## When something goes wrong
@@ -183,6 +215,8 @@ ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd
 | --- | --- | --- |
 | `classify: no UIO device named kernel` | the design is not loaded: the board rebooted (`uptime`), or someone loaded another design | [load again](#again-later-without-copying) |
 | `classify: cube.npy: expected '<u2' in C order` | the cube on the board is float32 | the uint16 copy in [Once](#once-before-the-first-test) |
+| `FAIL: 653016 of 653016 pixels differ` | almost always the reference of another network | the kernel's own reference, from the table in [Once](#once-before-the-first-test) |
+| `no labels.npy: the classes are not checked against labels` | no `labels.npy` next to the cube | copy it ([Once](#once-before-the-first-test)) |
 | `md5sum: ... FAILED` | the `.bit.bin` on the board is not the one built | copy again (step 4) |
 | `load.sh` stops at `dtc: not found` | the package has no `.dtbo` | step 2's table: install `dtc`, `fpga_pynq $K $RUN`, copy again |
 | the clock after `load.sh` is above "built for" | it could not be set | do not run `classify`; paste the output |

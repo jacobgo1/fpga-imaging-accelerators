@@ -12,20 +12,23 @@
 // wider for the 7030's larger fabric (400 DSPs against 220, 79 k LUTs against
 // 53 k, 265 BRAM36 against 140) and 100 MHz clock:
 //
-//   read_rows<0..3> ─► patch_buffer ─► conv1 ─► pool ─► conv2 ─► pool+up ─►
-//   HP0-HP3 (4 ports)  z-score, BRAM          conv3 ─► up ─► conv4 ─► store (HP3)
+//   read_rows_ahead<0..3> ─► patch_buffer ─► conv1 ─► pool ─► conv2 ─► pool+up ─►
+//   HP0-HP3 (4 ports)        z-score, BRAM          conv3 ─► up ─► conv4 ─► store (HP3)
 //
 // - conv1 takes 324 of the 400 DSPs: 12 bands per cycle, two multiplies per
 //   DSP (packed as on the 7020: the same DSP48E1), 3 channel pairs x 12 x 9 =
 //   324 DSPs, 10 x 32 x 32 + 33 = 10 273 cycles per patch (7020: 8 bands, 216
 //   DSPs, 14 369). 16 bands a cycle would need 432.
 // - conv2-4 as on the 7020 (2 input x one output channel per cycle,
-//   conv3x3_serial, 9 216 cycles a patch each), but on DSPs: 18 each, 54 of the
-//   76 left. The z-score's 16 multipliers are in LUTs.
-// - Four read ports (HP0-HP3), each every fourth row of a patch: 7 680 cycles a
-//   patch, under conv1's (with two, as on the 7020, 15 360 would set the pace).
-//   The scores' writer shares HP3 with the fourth reader (boards/zynq7030/
-//   system.tcl): AXI reads and writes have their own channels.
+//   conv3x3_serial, 9 828 cycles a patch each for conv2-3, 9 483 for conv4),
+//   but on DSPs: 18 each, 54 of the 76 left. The z-score's 16 multipliers are
+//   in LUTs.
+// - Four read ports (HP0-HP3), each every fourth row of a patch in 4 bursts of
+//   8 pixels (240 words, pipelining the next burst while the current one
+//   streams): 7 680 cycles a patch, under conv1's (with two, as on the 7020,
+//   15 360 would set the pace). The scores' writer shares HP3 with the fourth
+//   reader (boards/zynq7030/system.tcl): AXI reads and writes have their own
+//   channels.
 // - The patch buffer in block RAM, 3 words a chunk: about 60 of 265 BRAM36.
 // conv1 sets the pace: 10 273 cycles a patch, 0.10 ms at 100 MHz, about 68 ms
 // for a 598 x 1092 capture (7020: 15 360 at 78.1 MHz, 131 ms).
@@ -63,8 +66,8 @@ typedef hls::vector<uint16_t, PORT_BANDS> jopt_raw_t;
 // One pixel of dout: 3 scores and the class, 128 bits.
 typedef hls::vector<int32_t, 4> jopt_out_t;
 
-void justounetsimple_opt_zynq7030(const jopt_raw_t *din0, const jopt_raw_t *din1,
-                                  const jopt_raw_t *din2, const jopt_raw_t *din3,
+void justounetsimple_opt_zynq7030(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
+                                  hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
                                   hls::burst_maxi<jopt_out_t> dout, int height, int width);
 
 #endif // JUSTOUNETSIMPLE_OPT_ZYNQ7030_HLS_HPP

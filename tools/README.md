@@ -40,7 +40,14 @@ justoliunet_model.py      numpy model of the justoliunet and justoliunet_bn kern
                           formats, src/hls/justoliunet_opt/justoliunet_opt_formats.hpp;
                           ... reference IMAGE writes IMAGE/reference_<model>.npy, what every
                           optimized kernel writes for IMAGE/cube.npy (the ZedBoard's classify
-                          compares with it).
+                          and the justoliunet notebooks compare with it; the board does not
+                          run the model itself).
+waveletcnn_model.py       numpy model of the waveletcnn kernels: preprocessing, float
+                          forward pass (1D db4 DWT + 1x1 projection + 3x3 conv_block +
+                          1x1 seg_head), and the bit-exact integer version of waveletcnn_opt
+                          (classify_fixed). Also writes
+                          src/hls/waveletcnn_opt/waveletcnn_prep.hpp:
+                          python tools/waveletcnn_model.py
 patching.py               Cuts an image into 32 x 32 patches and stitches results back,
                           the same way the kernels do.
 ```
@@ -50,4 +57,16 @@ patching.py               Cuts an image into 32 x 32 patches and stitches result
 ```text
 justounetsimple_image.py  prepare: capture -> cube.npy, labels and the reference scores,
                           for the justounetsimple and justounetsimple_opt notebooks.
+waveletcnn_image.py       prepare: capture -> cube.npy, labels and the reference scores,
+                          for the waveletcnn and waveletcnn_opt notebooks.
+```
+
+Every notebook checks the FPGA's classes against `labels.npy`, and against the PC's answer
+when the image folder has it; nothing big is computed on the board's ARM (the models there
+ran out of memory on whole captures). For the 1D networks' answers too, before zipping:
+
+```bash
+python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out aegean_unet
+python3 tools/justoliunet_model.py reference aegean_unet
+source fpga.sh; fpga_zip aegean_unet
 ```

@@ -6,8 +6,12 @@
  *   classify CUBE.npy SCORES.npy [REFERENCE.npy]
  *
  * CUBE: the raw cube, H x W x 120 uint16 (cube.npy from an image zip). SCORES: what the
- * kernel wrote, H x W x 4 int32: the 3 scores * 2^16, then the class. REFERENCE: the
- * PC's answer (reference_fixed.npy), compared pixel by pixel: PASS or FAIL.
+ * kernel wrote, H x W x 4 int32: the 3 scores * 2^16, then the class. If the cube's
+ * folder has labels.npy (H x W integers: 0 cloud, 1 land, 2 sea, anything else
+ * unlabeled), the classes' accuracy against it and each class's IoU. REFERENCE: the PC's
+ * answer for this kernel's network (reference_fixed.npy for justounetsimple_opt,
+ * reference_justoliunet.npy / reference_justoliunet_bn.npy for the 1D ones), compared
+ * pixel by pixel: the share with the same class, and PASS or FAIL for every score.
  *
  * The registers come from UIO (the overlay's "kernel" node, generic-uio), the buffers
  * from the devicetree's reserved memory (CubeDMA's: it must be idle). That memory is
@@ -124,11 +128,8 @@ static void open_board(struct board *b) {
 }
 #endif
 
-/* Opens a .npy file and checks its type (e.g. "'<u2'") and number of dimensions; shape
- * gets its size. The file is left at the start of the data. */
-static FILE *npy_open(const char *path, const char *descr, int dims, long shape[]) {
-    FILE *f = fopen(path, "rb");
-    if (!f) fail(path);
+/* A .npy file's header, the dict as text (to free), leaving f at the start of the data. */
+static char *npy_dict(FILE *f) {
     unsigned char start[12];
     if (fread(start, 1, 10, f) != 10 || memcmp(start, "\x93NUMPY", 6) != 0) fail("not a .npy file");
     unsigned long n = start[8] | (unsigned long)start[9] << 8;
@@ -139,12 +140,11 @@ static FILE *npy_open(const char *path, const char *descr, int dims, long shape[
     char *header = malloc(n + 1);
     if (!header || fread(header, 1, n, f) != n) fail("a .npy file cut short");
     header[n] = 0;
-    char want[32];
-    snprintf(want, sizeof want, "'descr': %s", descr);
-    if (!strstr(header, want) || !strstr(header, "'fortran_order': False")) {
-        fprintf(stderr, "classify: %s: expected %s in C order, the header is %s\n", path, descr, header);
-        exit(1);
-    }
+    return header;
+}
+
+/* shape: the dict's sizes, exactly dims of them. */
+static void npy_shape(const char *header, int dims, long shape[]) {
     const char *p = strstr(header, "'shape': (");
     if (!p) fail("a .npy header without a shape");
     p += strlen("'shape': (");
@@ -155,8 +155,51 @@ static FILE *npy_open(const char *path, const char *descr, int dims, long shape[
         for (p = end; *p == ',' || *p == ' '; p++) {}
     }
     if (*p != ')') fail("a .npy file with more dimensions than expected");
+}
+
+/* Opens a .npy file and checks its type (e.g. "'<u2'") and number of dimensions; shape
+ * gets its size. The file is left at the start of the data. */
+static FILE *npy_open(const char *path, const char *descr, int dims, long shape[]) {
+    FILE *f = fopen(path, "rb");
+    if (!f) fail(path);
+    char *header = npy_dict(f);
+    char want[32];
+    snprintf(want, sizeof want, "'descr': %s", descr);
+    if (!strstr(header, want) || !strstr(header, "'fortran_order': False")) {
+        fprintf(stderr, "classify: %s: expected %s in C order, the header is %s\n", path, descr, header);
+        exit(1);
+    }
+    npy_shape(header, dims, shape);
     free(header);
     return f;
+}
+
+/* Opens H x W labels of any integer type (prepare writes int64, a capture's own file is
+ * uint8): bytes and is_signed get the type. NULL when there is no such file. */
+static FILE *npy_open_labels(const char *path, long shape[2], int *bytes, int *is_signed) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    char *header = npy_dict(f);
+    const char *d = strstr(header, "'descr': '");
+    if (d) d += strlen("'descr': '");
+    if (!d || (d[0] != '<' && d[0] != '|') || (d[1] != 'i' && d[1] != 'u') || !d[2] ||
+        !strchr("1248", d[2]) || d[3] != '\'' || !strstr(header, "'fortran_order': False")) {
+        fprintf(stderr, "classify: %s: expected integer labels in C order, the header is %s\n", path, header);
+        exit(1);
+    }
+    *bytes = d[2] - '0';
+    *is_signed = d[1] == 'i';
+    npy_shape(header, 2, shape);
+    free(header);
+    return f;
+}
+
+/* A label of that type, little-endian, as a number. */
+static int64_t label_at(const unsigned char *p, int bytes, int is_signed) {
+    uint64_t v = 0;
+    for (int i = bytes - 1; i >= 0; i--) v = v << 8 | p[i];
+    if (is_signed && bytes < 8 && (v >> (8 * bytes - 1)) & 1) v |= ~(uint64_t)0 << (8 * bytes);
+    return (int64_t)v;
 }
 
 /* The header of an int32 H x W x LANES .npy file: version 1, padded to 64 bytes. */
@@ -193,6 +236,17 @@ int main(int argc, char **argv) {
         if (reference_shape[0] != h || reference_shape[1] != w || reference_shape[2] != LANES)
             fail("the reference is not H x W x 4 for this cube");
     }
+    /* labels.npy in the cube's folder, if there is one: the classes checked against it. */
+    char labels_path[4096];
+    size_t folder = 0;
+    for (size_t i = 0; argv[1][i]; i++)
+        if (argv[1][i] == '/' || argv[1][i] == '\\') folder = i + 1;
+    if (folder + sizeof "labels.npy" > sizeof labels_path) fail("the cube's path is too long");
+    snprintf(labels_path, sizeof labels_path, "%.*slabels.npy", (int)folder, argv[1]);
+    long labels_shape[2];
+    int label_bytes = 0, label_signed = 0;
+    FILE *labels = npy_open_labels(labels_path, labels_shape, &label_bytes, &label_signed);
+    if (labels && (labels_shape[0] != h || labels_shape[1] != w)) fail("the labels are not H x W for this cube");
     FILE *out = fopen(argv[2], "wb");
     if (!out) fail(argv[2]);
     npy_header(out, h, w);
@@ -210,9 +264,15 @@ int main(int argc, char **argv) {
     const int dins[] = REG_DINS;
     int32_t *expected = reference ? malloc(rows * out_row) : NULL;
     if (reference && !expected) fail("no memory for the reference");
+    unsigned char *truth = labels ? malloc((size_t)rows * w * label_bytes) : NULL;
+    if (labels && !truth) fail("no memory for the labels");
 
     double loading = 0, fpga = 0, saving = 0;
-    long patches = 0, wrong = 0, strips = 0;
+    long patches = 0, wrong = 0, strips = 0, same_class = 0;
+    /* Against the labels: the labelled pixels (0 cloud, 1 land, 2 sea; other values are
+     * unlabeled), those classified as labelled, and per class the pixels both call it
+     * and either calls it (IoU), as the notebooks count them. */
+    long labelled = 0, correct = 0, both[3] = {0, 0, 0}, either[3] = {0, 0, 0};
     for (long y = 0; y < h; y += rows) {
         const long n = h - y < rows ? h - y : rows;
         double t = now();
@@ -235,8 +295,24 @@ int main(int argc, char **argv) {
         if (fwrite(scores, out_row, n, out) != (size_t)n) fail("cannot write the scores");
         if (reference) {
             if (fread(expected, out_row, n, reference) != (size_t)n) fail("the reference file is cut short");
-            for (long p = 0; p < n * w; p++)
+            for (long p = 0; p < n * w; p++) {
                 if (memcmp(scores + LANES * p, expected + LANES * p, LANES * 4) != 0) wrong++;
+                if (scores[LANES * p + 3] == expected[LANES * p + 3]) same_class++;
+            }
+        }
+        if (labels) {
+            if (fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
+            for (long p = 0; p < n * w; p++) {
+                const int64_t label = label_at(truth + (size_t)p * label_bytes, label_bytes, label_signed);
+                const int32_t cls = scores[LANES * p + 3];
+                if (label < 0 || label > 2) continue;
+                labelled++;
+                if (cls == label) correct++;
+                for (int c = 0; c < 3; c++) {
+                    if (cls == c && label == c) both[c]++;
+                    if (cls == c || label == c) either[c]++;
+                }
+            }
         }
         saving += now() - t;
         patches += (n + PATCH - 1) / PATCH * ((w + PATCH - 1) / PATCH);
@@ -250,7 +326,21 @@ int main(int argc, char **argv) {
     printf("FPGA:               %8.1f ms, %.1f us per patch\n", 1e3 * fpga, 1e6 * fpga / patches);
     printf("scores to the file: %8.3f s%s\n", saving, reference ? " (and compared)" : "");
     printf("wall clock:         %8.3f s\n", now() - start);
+    if (labels) {
+        printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
+               labelled ? 100 * ((double)correct / labelled) : 0.0, labelled);
+        const char *names[3] = {"cloud", "land", "sea"};
+        printf("  IoU");
+        for (int c = 0; c < 3; c++) {
+            if (either[c]) printf("%s %s %.3f", c ? "," : "", names[c], (double)both[c] / either[c]);
+            else printf("%s %s -", c ? "," : "", names[c]);   /* neither has it: no IoU */
+        }
+        printf("\n");
+    } else {
+        printf("no %s: the classes are not checked against labels\n", labels_path);
+    }
     if (reference) {
+        printf("same class as %s: %.2f%%\n", argv[3], 100 * ((double)same_class / (h * w)));
         printf("%s: %ld of %ld pixels differ from %s\n", wrong ? "FAIL" : "PASS", wrong, h * w, argv[3]);
         return wrong ? 1 : 0;
     }

@@ -29,8 +29,10 @@ Zynq-7000s; `--clock-ns` still overrides it).
   ports, then the two HPC ports, at most 6; on the 7020 and 7030 the four HP ports,
   and a fifth `m_axi` port shares HP3 with the fourth through its SmartConnect
   (for a writer next to a reader: AXI reads and writes have their own channels);
-- one clock from the processor at the HLS target (`clock_ns`), checked to be no
-  faster than that target; a `proc_sys_reset` for the reset; the interrupt.
+- one clock from the processor at the HLS target (`clock_ns`), never faster than
+  that target: when the PLL can only make a slightly faster rate, the script asks
+  for 1% less until it gets one at or below the target; a `proc_sys_reset` for the
+  reset; the interrupt.
 
 So a kernel works on any board as long as it uses that interface: AXI-Lite
 control and no more `m_axi` ports than the board has ports to DDR (6 on the
