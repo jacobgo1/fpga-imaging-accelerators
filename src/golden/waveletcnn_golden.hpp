@@ -80,6 +80,7 @@ void waveletcnn_golden(
     constexpr int CAT_CH = IN_CH + 2 * ((IN_CH + L - 1) / 2);
 
     static act_t cat[H][W][CAT_CH];
+    #pragma HLS BIND_STORAGE variable=cat type=ram_2p impl=uram
     static act_t proj[H][W][MID_CH];
     static act_t conv[H][W][MID_CH];
     static act_t act1[H][W][MID_CH];
