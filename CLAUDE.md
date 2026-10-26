@@ -85,7 +85,12 @@ convs as integer Winograd F(2x2, 3x3) and the UpBlocks from the low-res maps, th
 2x2-block order, the skip in UltraRAM; T = 4 096 / 12 288 / 16 384 cycles a patch, 1 474 / 1 368 / 1 440 DSPs; the
 design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain in sp_unet_opt_dataflow.hpp,
 each size's table of PI x PO per layer in its .cpp; one testbench and one notebook,
-software/pynq/sp_unet_small_opt/), `matmul` (minimal example, used by the framework tests).
+software/pynq/sp_unet_small_opt/), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
+`_large_opt_direct` (the same kernels without Winograd, simpler: direct 3x3 convs
+(conv3x3_grouped, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
+modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patch,
+1 380 / 1 257 / 1 136 DSPs; the chain in src/hls/sp_unet_small_opt_direct/
+sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 

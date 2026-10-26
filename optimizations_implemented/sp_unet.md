@@ -43,6 +43,9 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
 | `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
+| `sp_unet_small_opt_direct` | ZCU104 | 5 ns | the same kernel without Winograd (direct convs, simpler); bit-exact in C++; cycle model below, not yet synthesized |
+| `sp_unet_medium_opt_direct` | ZCU104 | 5 ns | the same |
+| `sp_unet_large_opt_direct` | ZCU104 | 5 ns | the same |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -176,6 +179,44 @@ The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs. Zynq-7000 vers
 (7030, 7020) are not written yet: they would use the same modules with smaller PI × PO and,
 on the 7020, LUT multipliers.
 
+## The direct kernels (`sp_unet_SIZE_opt_direct`): no Winograd
+
+The same kernels, inputs, outputs and answers (bit for bit, the same testbench checks and
+notebook), built only from techniques the other models already use, for a simpler design
+to check and explain. The price: 2.3x more multiplies, so 2.4-4.3x slower for about the
+same DSPs.
+
+| | Winograd (`_opt`) | Direct (`_opt_direct`) |
+|---|---|---|
+| 3x3 convs | `wino_conv3x3`, 16 multiplies per 2x2 block and channel pair | `conv3x3_grouped`: 9 per pixel, PI inputs x PO outputs a cycle (`conv3x3_serial` with PO outputs a step) |
+| UpBlocks | `wino_up_conv3x3` from the low-res map, 9 per block | `relu_pool_up` / `relu_up` upsample, then a plain 3x3 conv (36 per 2x2 block) |
+| Map order | 2x2 blocks | raster, one pixel a vector |
+| ReLU + rounding | inside each conv | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
+| Skip FIFO | 512 blocks, UltraRAM | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
+| Window | across patches, no bubble | per patch, W + 1 steps of bubble (in the cycle counts below) |
+
+Shared with the Winograd kernels: the readers, `pixel_buffer` (raster order), the packed
+convsp1, convsp2/3 and final (`pointwise`), `store_scores`, the cycle counter, the z-score in
+LUTs.
+
+| Layer (PI x PO) | small | medium | large |
+|---|---|---|---|
+| convsp1 (P1) | 7 168 (16) | 14 336 (8) | 14 336 (8) |
+| double1 a / b | 9 513 (4×4) / 9 513 (4×4) | 33 824 (3×3) / 33 824 (6×3) | 67 648 (8×1) / 67 648 (16×1) |
+| double2 a / b | **9 828** (4×2) / **9 828** (8×2) | **34 944** (3×3) / **34 944** (6×3) | **69 888** (8×1) / **69 888** (16×1) |
+| up1 | **9 828** (8×2) | **34 944** (6×3) | **69 888** (16×1) |
+| double3 a / b | **9 828** (8×1) / **9 828** (4×1) | **34 944** (3×3) / 26 208 (6×1) | **69 888** (8×1) / **69 888** (4×1) |
+| up2 | 9 513 (4×4) | 33 824 (6×3) | 67 648 (16×1) |
+| double4 a / b | 8 456 (24×1) / 8 456 (8×1) | 33 824 (6×3) / 25 368 (6×1) | 67 648 (16×1) / 67 648 (4×1) |
+| **T** | **9 828** | **34 944** | **69 888** |
+| DSPs (convs + convsp1) | 1 188 + 192 = **1 380** (80 %) | 1 161 + 96 = **1 257** (73 %) | 1 008 + 128 = **1 136** (66 %) |
+| 665 patches at 187.5 MHz | **34.9 ms** | **124 ms** | **248 ms** |
+| Winograd kernel, for comparison | 14.5 ms, 1 474 DSPs | 43.6 ms, 1 368 | 58.2 ms, 1 440 |
+
+A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch, with 9 x PI x PO
+multipliers. Large has every channel count a power of two, so its only table between 1 136
+and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100.
+
 ## Integer formats (the bit-exact model)
 
 | Value | Format |
@@ -203,3 +244,8 @@ the aegean pixels (small / medium / large).
 - 2026-10-26: DSPs kept at 1 200-1 500 for the clock: small 1 506 → 1 474 (z-score in LUTs), medium
   1 632 → 1 368 (T 9 216 → 12 288, 32.7 → 43.6 ms, no Winograd multiplier in LUTs), large 1 568 →
   1 440 (double1a in LUTs, same T).
+- 2026-10-26: direct kernels `sp_unet_SIZE_opt_direct` (no Winograd): `conv3x3_grouped` (PI x PO a
+  cycle), `relu_act`, `relu_pool_skip`, `concat_pixels`, justounetsimple_opt's `relu_pool_up` and
+  `relu_up`; raster order; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 380 / 1 257 / 1 136 DSPs
+  (predicted 34.9 / 124 / 248 ms). The shared checks, channel counts and fraction bits moved to
+  `sp_unet_opt_common.hpp`.

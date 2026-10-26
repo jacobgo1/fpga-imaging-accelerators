@@ -289,16 +289,16 @@ class SpecPWUNetTests(unittest.TestCase):
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_optimized_kernels_match_classify_fixed_bit_for_bit(self):
-        """The whole raw-cube kernels, on a real crop of 45 x 70 pixels (2 x 3 patches, the
-        edge ones partly outside): what classify_fixed and the class say, every value."""
+        """The whole raw-cube kernels, Winograd (_opt) and direct (_opt_direct), on a real crop of
+        45 x 70 pixels (2 x 3 patches, the edge ones partly outside): what classify_fixed and
+        the class say, every value."""
         m = self.model
         cube = np.clip(np.rint(self.raw[:45, :70]), 0, 65535).astype(np.uint16)
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
-            for size in m.SIZES:
-                with self.subTest(size=size):
-                    name = f'{m.name(size)}_opt'
+            for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES for kind in ('', '_direct')]:
+                with self.subTest(kernel=name):
                     source_dir = ROOT / 'src/hls' / name
                     compile_and_run(OPT_DRIVER.format(name=name), tmp, f'run_{name}',
                                     [source_dir, ROOT / 'src/common'], sorted(source_dir.glob('*.cpp')),
