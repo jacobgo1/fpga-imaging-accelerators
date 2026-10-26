@@ -1,0 +1,3 @@
+# The same network as sp_unet_small_opt, wider: its notebook finds the kernel from the
+# .bit and x..._hw.h next to it.
+software/pynq/sp_unet_small_opt/sp_unet_small_opt.ipynb

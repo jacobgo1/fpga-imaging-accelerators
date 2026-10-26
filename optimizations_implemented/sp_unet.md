@@ -40,13 +40,24 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small` | ZCU104 | 5 ns | golden baseline: float, int8 weights, n patches per start; C++ and testbench pass, not yet synthesized |
 | `sp_unet_medium` | ZCU104 | 5 ns | the same |
 | `sp_unet_large` | ZCU104 | 5 ns | the same |
+| `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
+| `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
+| `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
 
-The bit-exact integer model for an optimized kernel is `classify_fixed` in
-`tools/specpw_unet_model.py`, and the same as plain C++ loops in
-`src/golden/specpw_unet_fixed_golden.hpp` (they agree bit for bit; the optimized kernel's
-testbench will use the C++ one).
+The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
+`tools/specpw_unet_model.py`, the same as the plain C++ loops in
+`src/golden/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
+(`tb/sp_unet_small_opt/sp_unet_opt_check.hpp`, shared by the three sizes). Same class as the
+float golden kernel on the testbench's 2 000 random pixels, scores within 0.01. On the aegean
+pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes (below).
 
-## Optimizations used
+The design: `src/hls/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain, shared by
+the sizes: `sp_unet_opt_dataflow.hpp`; each size's table of layer widths (PI x PO, DSP or
+LUTs): its `.cpp`. One notebook, `software/pynq/sp_unet_small_opt/` (the other two take it
+through `include.txt`), checked against `reference_fixed_sp_unet_SIZE.npy`
+(`python3 tools/specpw_unet_model.py fixed IMAGE`).
+
+## Golden kernels: what they do
 
 The golden kernels are plain loops, one multiply at a time, in float. Only what they
 need to fit on the chip:
@@ -70,6 +81,101 @@ need to fit on the chip:
 Counted at 4 096 floats per URAM block. The ZCU104 has 1.4 MB of BRAM, so large's weights
 take about half of it. To be replaced by the csynth reports' utilization.
 
+## Flow of the optimized kernels
+
+```
+DDR ─► read_rows_ahead x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
+     └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, pixels in 2x2-block order
+     └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3 (+ 4 pixels into a block)
+     └ double1: wino 3x3, wino 3x3 ──► pool + skip ──► skip FIFO (UltraRAM, 512 blocks) ─────┐
+     └ double2: wino, wino (16 x 16) ─► pool (block -> pixel)                                 │
+     └ up1: wino up (8 x 8 -> 16 x 16 blocks) ─► double3: wino, wino ─► blocks -> rows       │
+     └ up2: wino up (16 x 16 -> 32 x 32 blocks) ─► cat ◄─────────────────────────────────────┘
+     └ double4: wino, wino ─► blocks -> rows ─► final 1x1 ─► store (HPC0, 3 scores + class)
+```
+
+## Optimizations used
+
+| Technique | small_opt | medium_opt | large_opt |
+|---|---|---|---|
+| One start for the whole capture, loop tiling into 32 × 32 patches, edges repeated in hardware | ✓ | ✓ | ✓ |
+| Preprocessing in hardware: band drop + integer z-score (int8, 5 fraction bits), its multipliers in LUTs | ✓ | ✓ | ✓ |
+| Fixed point: int8 weights, int16 activations (10 fraction bits), int32 sums, power-of-two scales as shifts | ✓ | ✓ | ✓ |
+| DATAFLOW, one process per layer, all maps on chip, every process sized for the same T | ✓ | ✓ | ✓ |
+| 3x3 convs as integer Winograd F(2x2, 3x3): 16 multiplies per 2x2 block and channel pair, not 36, exact (U ×4, Y = 4Y >> 2) | ✓ | ✓ | ✓ |
+| UpBlock (nearest ×2 + 3x3) from the low-res map: the upsampled tile's equal rows zero a row and column of V, 9 multiplies, not 36 | ✓ | ✓ | ✓ |
+| Maps in 2x2-block order: max-pool is a block, Winograd's 2x2 outputs need no reordering | ✓ | ✓ | ✓ |
+| Window across row and patch boundaries (centre a block row + 2 behind the input): no per-patch bubble | ✓ | ✓ | ✓ |
+| Window as 4 rotating column slots, 1 write + 1 read each at fixed places (no run-time bank choice) | ✓ | ✓ | ✓ |
+| Stem without a patch buffer: 4-row strip ping-pong (`pixel_buffer`, block order) | ✓ | ✓ | ✓ |
+| convsp1 on the int8 bands, two multiplies per DSP48E2 (`pointwise_wide`, 18-bit spacing, groups of 8) | 32 bands/cycle | 16 | 8 |
+| Skip connection in an UltraRAM FIFO (512 blocks; needs up to 248) | ✓ | ✓ | ✓ |
+| Transformed weights in one wide memory a layer: LUTRAM when ≤ 64 steps deep, BRAM deeper | ✓ | ✓ | ✓ |
+| DSPs kept at 1 200-1 500 (for the clock): small layers' multipliers in LUTs (convsp2/3, final, z-score) | ✓ | ✓, T = 12 288 instead of 9 216 | ✓, + double1a, double3b, double4b in LUTs |
+| 4 read ports, read bursts requested a row ahead; score writes with acknowledgements collected later | ✓ | ✓ | ✓ |
+| Cycle counter register | ✓ | ✓ | ✓ |
+
+## Latency per stage (cycles per patch, predicted)
+
+Every process is a pipelined loop at II = 1, one patch after another without gaps.
+- Winograd layer: blocks (256 at 32 × 32, 64 at 16 × 16) × IN/PI × OUT/PO; UpBlock: low-res
+  pixels (64 for up1, 256 for up2) × IN/PI × OUT/PO.
+- convsp1: 1 024 × ceil(110 / P1); convsp2/3, final: 1 024 × OUT/PO.
+- pixel_buffer: 8 strips × max(480 words in, 4 × 32 × ceil(110 / P1) out).
+
+| Stage | small (PI × PO) | medium | large |
+|---|---|---|---|
+| read (per port) | 3 840 | 3 840 | 3 840 |
+| pixel_buffer | **4 096** | 7 168 | 14 336 |
+| convsp1 (packed) | **4 096** (P1 32) | 7 168 (P1 16) | 14 336 (P1 8) |
+| convsp2 / convsp3 | **4 096** / **4 096** | 8 192 / **12 288** | **16 384** / **16 384** |
+| double1 a / b | **4 096** (3×3) / **4 096** (3×3) | **12 288** (2×3) / **12 288** (4×3) | **16 384** (2×4, LUTs) / **16 384** (4×4) |
+| double2 a / b | 3 072 (2×3) / **4 096** (3×3) | **12 288** (2×3) / **12 288** (4×3) | **16 384** (2×4) / **16 384** (4×4) |
+| up1 | **4 096** (3×3) | **12 288** (4×3) | **16 384** (4×4) |
+| double3 a / b | 3 072 (3×2) / 3 072 (3×1) | **12 288** (3×2) / **12 288** (3×1) | **16 384** (4×2) / **16 384** (2×2, LUTs) |
+| up2 | **4 096** (3×3) | **12 288** (4×3) | **16 384** (4×4) |
+| double4 a / b | **4 096** (6×2) / **4 096** (2×2) | **12 288** (4×3) / **12 288** (3×1) | **16 384** (4×4) / **16 384** (2×2, LUTs) |
+| final, pools, reorders, concat, store | ≤ 3 072 | ≤ 3 072 | ≤ 3 072 |
+| **T** | **4 096** (DDR reads: 3 840) | **12 288** | **16 384** |
+
+## Multipliers and memory (predicted)
+
+| | small_opt | medium_opt | large_opt |
+|---|---|---|---|
+| Multiply-adds per patch, direct | 13.8 M | 40.5 M | 70.5 M |
+| Multiplies per patch done (Winograd, up trick) | 7.4 M (1.9× fewer) | 17.8 M (2.3×) | 30.1 M (2.3×) |
+| DSPs: Winograd + convsp1 | 1 090 + 384 = **1 474 of 1 728** (85 %) | 1 176 + 192 = **1 368** (79 %) | 1 312 + 128 = **1 440** (83 %) |
+| Multipliers in LUTs | 148 (convsp2/3, final, z-score) | 108 (the same) | 352 (+ double1a, double3b, double4b: 256 Winograd) |
+| Skip FIFO (UltraRAM, 72 bit each) | 11 URAM (768 bit wide) | 22 (1 536) | 29 (2 048) |
+| Weights in BRAM (layers > 64 steps) | none | ~92 BRAM36 (double2, up1, double3) | ~122 BRAM36 |
+
+The csynth reports replace these: check the DSP count against this table (more means a
+multiply was not mapped as intended), the Bind Op Report (`dsp` vs `fabric` per layer as in
+the tables), `Final II = 1` for every `conv` loop, and that no FIFO of a block stream went to
+BRAM (they are 768-4 096 bits wide: `impl=srl`).
+
+## Inference time (predicted)
+
+time = (patches + 1) × T / clock; a 598 × 1092 capture is 19 × 35 = 665 patches.
+
+| Kernel | T | clock | time |
+|---|---|---|---|
+| `sp_unet_small_opt` | 4 096 | 187.5 MHz | **14.5 ms** (memory-bound: the four read ports need 3 840) |
+| `sp_unet_medium_opt` | 12 288 | 187.5 MHz | **43.6 ms** (T = 9 216, 32.7 ms, needs ~1 760 DSPs) |
+| `sp_unet_large_opt` | 16 384 | 187.5 MHz | **58.2 ms** |
+
+## Boards: limits, differences and why
+
+| | small_opt | medium_opt | large_opt |
+|---|---|---|---|
+| Limit | DDR reads (11.2 GB/s at T), then the stem | the DSP budget (kept ≤ 1 500 for the clock) | the DSP budget, and LUTs for 256 Winograd multipliers |
+| Faster would need | more read bandwidth (5 ports) | ~1 760 DSPs for T = 9 216 | ~1 700 DSPs to have all of T = 16 384 on DSPs; the next step down, T = 12 288, does not divide the 64-channel layers |
+| If the clock still misses | small layers back to DSPs frees LUTs | — | double1a back on DSPs (1 568) if the LUTs are the problem |
+
+The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs. Zynq-7000 versions
+(7030, 7020) are not written yet: they would use the same modules with smaller PI × PO and,
+on the 7020, LUT multipliers.
+
 ## Integer formats (the bit-exact model)
 
 | Value | Format |
@@ -88,3 +194,12 @@ the aegean pixels (small / medium / large).
 - 2026-10-26: golden modules (spectral stem, conv block, up block, concat for the skip),
   the float golden model, the golden kernels for the three sizes, their testbench and
   notebook, and the bit-exact integer model (numpy and C++).
+- 2026-10-26: optimized kernels `sp_unet_small_opt`, `sp_unet_medium_opt`, `sp_unet_large_opt` (ZCU104):
+  integer Winograd F(2x2, 3x3) (`wino_conv3x3`) and UpBlocks from the low-res maps
+  (`wino_up_conv3x3`), maps in 2x2-block order (`pool_blocks`, `blocks_to_rows`, `concat_blocks`),
+  `pixel_buffer` in block order, packed convsp1 (`pointwise_wide`), skip FIFO in UltraRAM; layers
+  sized for T = 4 096 / 9 216 / 16 384 cycles a patch (predicted 14.5 / 32.7 / 58.2 ms for 665
+  patches); `specpw_unet_model.py fixed`; their notebook.
+- 2026-10-26: DSPs kept at 1 200-1 500 for the clock: small 1 506 → 1 474 (z-score in LUTs), medium
+  1 632 → 1 368 (T 9 216 → 12 288, 32.7 → 43.6 ms, no Winograd multiplier in LUTs), large 1 568 →
+  1 440 (double1a in LUTs, same T).

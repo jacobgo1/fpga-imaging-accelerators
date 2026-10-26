@@ -56,7 +56,9 @@ specpw_unet_model.py      numpy model of SpecPW-UNet (sp_unet_small/medium/large
                           python tools/specpw_unet_model.py prints each size's accuracy on the
                           labelled aegean pixels; ... reference IMAGE writes
                           IMAGE/reference_sp_unet_SIZE.npy, what each golden kernel answers
-                          for IMAGE/cube.npy (the notebook compares the board with it).
+                          for IMAGE/cube.npy (the notebook compares the board with it);
+                          ... fixed IMAGE writes IMAGE/reference_fixed_sp_unet_SIZE.npy, what
+                          each optimized kernel sp_unet_SIZE_opt writes, bit for bit.
 patching.py               Cuts an image into 32 x 32 patches and stitches results back,
                           the same way the kernels do.
 ```
@@ -78,5 +80,6 @@ ran out of memory on whole captures). For the 1D networks' answers too, before z
 python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out aegean_unet
 python3 tools/justoliunet_model.py reference aegean_unet
 python3 tools/specpw_unet_model.py reference aegean_unet
+python3 tools/specpw_unet_model.py fixed aegean_unet
 source fpga.sh; fpga_zip aegean_unet
 ```

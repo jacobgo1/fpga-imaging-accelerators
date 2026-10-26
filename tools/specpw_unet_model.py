@@ -16,19 +16,22 @@ forward_patch  what the kernel computes for one preprocessed 32 x 32 x 110 patch
 classify       a raw cube (H x W x 120) -> its scores, cut into 32 x 32 patches like the
                notebook (the last row and column repeated)
 
-The integer arithmetic of an optimized kernel, bit for bit (none is written yet; the
+The integer arithmetic of the optimized kernels (sp_unet_SIZE_opt), bit for bit (the
 C++ plain-loop version is src/golden/specpw_unet_fixed_golden.hpp, and the two agree
 exactly, tests/test_specpw_unet.py):
 forward_patch_fixed  one int8 patch (z-score * 2^IN_FRAC) -> int32 scores * 2^OUT_FRAC
 classify_fixed       a raw cube -> int32 scores, with justounetsimple_opt's integer
                      z-score (justounetsimple_model.preprocess_fixed)
+kernel_reference     a raw cube -> what sp_unet_SIZE_opt writes (H x W x 4 int32)
 
     python tools/specpw_unet_model.py                    # each size on the aegean pixels
     python tools/specpw_unet_model.py reference IMAGE    # IMAGE/reference_sp_unet_SIZE.npy
+    python tools/specpw_unet_model.py fixed IMAGE        # IMAGE/reference_fixed_sp_unet_SIZE.npy
 
 reference writes, for an image folder made by tools/justounetsimple_image.py prepare, what
 each golden kernel will answer for its cube.npy (float32 H x W x 3): the notebook compares
-the board with it.
+the board with it. fixed writes what each optimized kernel writes, bit for bit: the scores
+* 2^OUT_FRAC, then the class (int32 H x W x 4); its cube must be raw counts (uint16).
 
 The skip connection is cat([upsampled, skip]): on the aegean pixels that order gives
 94-96 % and the other 27-40 %. The aegean pixels are every 8th of the capture, so the
@@ -276,9 +279,31 @@ def reference(image, sizes=SIZES):
     return written
 
 
+def kernel_reference(cube, qlayers, prep=None):
+    """What sp_unet_SIZE_opt writes for a raw cube: H x W x 4 int32, the scores * 2^OUT_FRAC,
+    then the class (their argmax, the first one on a tie)."""
+    return justounetsimple_model.with_class(classify_fixed(cube, qlayers, prep))
+
+
+def fixed_reference(image, sizes=SIZES):
+    """IMAGE/reference_fixed_sp_unet_SIZE.npy for each size: kernel_reference on IMAGE/cube.npy."""
+    image = Path(image)
+    cube = np.load(image / 'cube.npy', mmap_mode='r')
+    if cube.dtype != np.uint16:
+        raise SystemExit(f'{image / "cube.npy"} is {cube.dtype}, not raw counts (uint16): '
+                         'make it again with tools/justounetsimple_image.py prepare')
+    prep = justounetsimple_model.prep_constants()
+    written = []
+    for size in sizes:
+        path = image / f'reference_fixed_{name(size)}.npy'
+        np.save(path, kernel_reference(cube, load_quantized(size), prep))
+        written.append(path)
+    return written
+
+
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == 'reference':
-        for path in reference(sys.argv[2]):
+    if len(sys.argv) == 3 and sys.argv[1] in ('reference', 'fixed'):
+        for path in (reference if sys.argv[1] == 'reference' else fixed_reference)(sys.argv[2]):
             print(f'wrote {path}')
         return
     if len(sys.argv) > 1:

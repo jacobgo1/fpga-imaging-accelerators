@@ -79,7 +79,13 @@ same network in three widths: n 32 x 32 patches per start, float, int8 weights; 
 from src/golden/'s spectral stem, conv block, up block and concat modules; one notebook
 for all three, software/pynq/sp_unet_small/; numpy model and the bit-exact integer model
 classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
-src/golden/specpw_unet_fixed_golden.hpp), `matmul` (minimal example, used by the framework tests).
+src/golden/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt`, `sp_unet_medium_opt`,
+`sp_unet_large_opt` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; the 3x3
+convs as integer Winograd F(2x2, 3x3) and the UpBlocks from the low-res maps, the maps in
+2x2-block order, the skip in UltraRAM; T = 4 096 / 12 288 / 16 384 cycles a patch, 1 474 / 1 368 / 1 440 DSPs; the
+design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain in sp_unet_opt_dataflow.hpp,
+each size's table of PI x PO per layer in its .cpp; one testbench and one notebook,
+software/pynq/sp_unet_small_opt/), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 
