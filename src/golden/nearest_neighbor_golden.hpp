@@ -1,7 +1,7 @@
 #pragma once
 
 template<typename data_t, int Hin, int Win, int IM_CH, int FACTOR>
-void nearest_neighbor_golden(data_t din[Hin][Win][IM_CH], data_t dout[Hin*FACTOR][Win*FACTOR][IM_CH]) {
+void nearest_neighbor_golden(const data_t din[Hin][Win][IM_CH], data_t dout[Hin*FACTOR][Win*FACTOR][IM_CH]) {
     for (int i = 0; i < Hin; i++) {
         for (int j = 0; j < Win; j++) {
             for (int k = 0; k < IM_CH; k++) {

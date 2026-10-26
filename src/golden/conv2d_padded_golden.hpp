@@ -8,9 +8,9 @@
 // the same size as the input ("same" convolution). Weight layout matches
 // PyTorch's native Conv2d weight: [out][in][kh][kw].
 template<typename data_t, int H, int W, int IN_CH, int OUT_CH, int K, int PAD>
-void conv2d_padded_golden(data_t din[H][W][IN_CH],
-                           data_t weight[OUT_CH][IN_CH][K][K],
-                           data_t bias[OUT_CH],
+void conv2d_padded_golden(const data_t din[H][W][IN_CH],
+                           const data_t weight[OUT_CH][IN_CH][K][K],
+                           const data_t bias[OUT_CH],
                            data_t dout[H + 2*PAD - K + 1][W + 2*PAD - K + 1][OUT_CH]) {
     // static: at realistic image sizes (see justounet2d_golden.hpp)
     // this is tens to hundreds of MB -- far past

@@ -12,9 +12,9 @@
 // matches whatever eps the source model was trained with (PyTorch's
 // default is 1e-5).
 template<typename data_t, int H, int W, int CH>
-void batchnorm_golden(data_t din[H][W][CH],
-                       data_t weight[CH], data_t bias[CH],
-                       data_t running_mean[CH], data_t running_var[CH],
+void batchnorm_golden(const data_t din[H][W][CH],
+                       const data_t weight[CH], const data_t bias[CH],
+                       const data_t running_mean[CH], const data_t running_var[CH],
                        data_t eps,
                        data_t dout[H][W][CH]) {
     for (int i = 0; i < H; i++) {

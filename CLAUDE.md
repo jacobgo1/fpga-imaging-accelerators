@@ -74,7 +74,12 @@ read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020
 answers, they share the testbench's checks; the 7020 one also the notebook),
 `justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute
 replaced by a checksum: times the reads alone; its own notebook),
-`matmul` (minimal example, used by the framework tests).
+`sp_unet_small`, `sp_unet_medium`, `sp_unet_large` (golden baselines of SpecPW-UNet, the
+same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
+from src/golden/'s spectral stem, conv block, up block and concat modules; one notebook
+for all three, software/pynq/sp_unet_small/; numpy model and the bit-exact integer model
+classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
+src/golden/specpw_unet_fixed_golden.hpp), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 

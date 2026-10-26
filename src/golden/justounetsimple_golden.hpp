@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quant_scale.hpp"
+#include "conv2d_same_quant_golden.hpp"
 #include "relu_golden.hpp"
 #include "maxpool_golden.hpp"
 #include "nearest_neighbor_golden.hpp"
@@ -29,35 +30,6 @@
 // Layout is the same as everywhere else: weights [out][in][kh][kw], activations
 // HWC. H and W must be divisible by 4. A 32 x 32 patch is the geometry the
 // model was trained on.
-
-// Same-padded KxK convolution (zero padding) on quantized weights. Out-of-range
-// taps are skipped instead of copying the input into a padded buffer, so
-// nothing larger than the input and output maps is needed.
-template<typename act_t, typename w_t, int H, int W, int IN_CH, int OUT_CH, int K>
-void conv2d_same_quant_golden(const act_t din[H][W][IN_CH],
-                              const w_t weight[OUT_CH][IN_CH][K][K], act_t weight_scale,
-                              const w_t bias[OUT_CH], act_t bias_scale,
-                              act_t dout[H][W][OUT_CH]) {
-    constexpr int PAD = (K - 1) / 2;
-    for (int i = 0; i < H; i++) {
-        for (int j = 0; j < W; j++) {
-            for (int oc = 0; oc < OUT_CH; oc++) {
-                act_t sum = 0;
-                for (int ic = 0; ic < IN_CH; ic++) {
-                    for (int ki = 0; ki < K; ki++) {
-                        for (int kj = 0; kj < K; kj++) {
-                            int y = i + ki - PAD;
-                            int x = j + kj - PAD;
-                            if (y < 0 || y >= H || x < 0 || x >= W) continue;
-                            sum += din[y][x][ic] * (act_t)weight[oc][ic][ki][kj];
-                        }
-                    }
-                }
-                dout[i][j][oc] = sum * weight_scale + (act_t)bias[oc] * bias_scale;
-            }
-        }
-    }
-}
 
 template<typename act_t, typename w_t, int H, int W, int IN_CH, int BASE_CH, int OUT_CH, int K>
 void justounetsimple_golden(

@@ -1,7 +1,7 @@
 #pragma once
 
 template<typename data_t, int H, int W, int IM_CH, int POOL>
-void maxpool_golden(data_t din[H][W][IM_CH], data_t dout[H/2][W/2][IM_CH]) {
+void maxpool_golden(const data_t din[H][W][IM_CH], data_t dout[H/2][W/2][IM_CH]) {
     for (int i = 0; i < H; i += 2) {
         for (int j = 0; j < W; j += 2) {
             for (int k = 0; k < IM_CH; k++) {
