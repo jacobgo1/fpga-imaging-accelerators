@@ -12,11 +12,18 @@
 // unscaled.
 //
 // The steps of a pixel: output group og outer, input group ig inner; each
-// adds PI x 9 products into each of PO running sums. The weights:
-// [og][ig][PO][PI][3][3], one memory per (PO, PI, tap), addressed by (og, ig).
+// adds PI x 9 products into each of PO running sums. The weights: one wide
+// memory word a step, its PO x PI x 9 weights, at og * IN/PI + ig. One
+// memory a layer, not one per (PO, PI, tap): a thousand small memories made
+// sp_unet_large_opt_direct too congested to route.
+template<int PI, int PO>
+struct grouped_word_t {
+    wgt_t v[PO][PI][3][3];
+};
+
 template<int H, int W, int IN_CH, int OUT_CH, int PI, int PO, bool DSP>
 void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
-                           const wgt_t wl[OUT_CH / PO][IN_CH / PI][PO][PI][3][3],
+                           const grouped_word_t<PI, PO> wl[(OUT_CH / PO) * (IN_CH / PI)],
                            const acc_t bl[OUT_CH / PO][PO],
                            hls::stream<vec_t<acc_t, OUT_CH> >& out) {
     static_assert(IN_CH % PI == 0 && OUT_CH % PO == 0, "PI must divide IN_CH, PO OUT_CH");
@@ -72,6 +79,7 @@ void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
             // Taps outside the image hold other rows' values: they count as zero.
             const bool row_ok[3] = {y > 0, true, y < H - 1};
             const bool col_ok[3] = {x > 0, true, x < W - 1};
+            const grouped_word_t<PI, PO> wd = wl[og * IG + ig];
             for (int j = 0; j < PO; j++) {
                 #pragma HLS UNROLL
                 acc_t sum = 0;
@@ -82,7 +90,7 @@ void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                         for (int kj = 0; kj < 3; kj++) {
                             #pragma HLS UNROLL
                             const act_t a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][ig * PI + p] : (act_t)0;
-                            sum += mul<DSP, acc_t>(a, wl[og][ig][j][p][ki][kj]);
+                            sum += mul<DSP, acc_t>(a, wd.v[j][p][ki][kj]);
                         }
                     }
                 }
@@ -127,32 +135,73 @@ void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
 // template arguments so that they stay a constant ROM inside this process.
 // BIAS_SHIFT: the sums' fraction bits minus the bias's. DSP: the 9 x PI x PO
 // multipliers in DSPs, or in LUTs.
-template<int PH, int PW, int H, int W, int IN, int OUT, int PI, int PO, int BIAS_SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP>
-void conv3x3_grouped(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
-                     int height, int width) {
-    wgt_t wl[OUT / PO][IN / PI][PO][PI][3][3];
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=5
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=6
-    acc_t bl[OUT / PO][PO];
-    #pragma HLS ARRAY_PARTITION variable=bl type=complete dim=2
-
-    load_w: for (int oc = 0; oc < OUT; oc++)
-        for (int ic = 0; ic < IN; ic++)
-            for (int ki = 0; ki < 3; ki++)
-                for (int kj = 0; kj < 3; kj++) {
-                    #pragma HLS PIPELINE II=1
-                    wl[oc / PO][ic / PI][oc % PO][ic % PI][ki][kj] = WEIGHT[oc][ic][ki][kj];
+// The layer's weights, a word a step: step st = og * IN/PI + ig holds output
+// channels og * PO .. + PO by input channels ig * PI .. + PI. A word's PO x PI x 9
+// weights come from the ROM at once, in as many cycles as its ports take
+// (HLS picks the II), once, when the layer starts. The biases [og][j].
+template<int IN, int OUT, int PI, int PO, int BIAS_SHIFT,
+         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT]>
+void load_grouped_weights(grouped_word_t<PI, PO> wl[(OUT / PO) * (IN / PI)], acc_t bl[OUT / PO][PO]) {
+    constexpr int IG = IN / PI, STEPS = (OUT / PO) * IG;
+    load_w: for (int st = 0; st < STEPS; st++) {
+        #pragma HLS PIPELINE
+        const int og = st / IG, ig = st % IG;
+        grouped_word_t<PI, PO> word;
+        for (int j = 0; j < PO; j++) {
+            #pragma HLS UNROLL
+            for (int p = 0; p < PI; p++) {
+                #pragma HLS UNROLL
+                for (int ki = 0; ki < 3; ki++) {
+                    #pragma HLS UNROLL
+                    for (int kj = 0; kj < 3; kj++) {
+                        #pragma HLS UNROLL
+                        word.v[j][p][ki][kj] = WEIGHT[og * PO + j][ig * PI + p][ki][kj];
+                    }
                 }
+            }
+        }
+        wl[st] = word;
+    }
     load_b: for (int oc = 0; oc < OUT; oc++) {
         #pragma HLS PIPELINE II=1
         bl[oc / PO][oc % PO] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
     }
+}
+
+// The layer: the image is cut into PH x PW patches (patch_grid.hpp); the layer
+// is H x W of each. WEIGHT and BIAS: the layer's quantized int8 arrays,
+// template arguments so that they stay a constant ROM inside this process.
+// BIAS_SHIFT: the sums' fraction bits minus the bias's. DSP: the 9 x PI x PO
+// multipliers in DSPs, or in LUTs.
+// The weight memory is block RAM when it is deep, LUTs (distributed RAM) when
+// it is shallow, where block RAM would hold a few rows of a mostly empty
+// width. HLS's impl takes only a literal word: one branch each, HLS keeps the
+// one the depth picks.
+template<int PH, int PW, int H, int W, int IN, int OUT, int PI, int PO, int BIAS_SHIFT,
+         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP>
+void conv3x3_grouped(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
+                     int height, int width) {
+    constexpr int STEPS = (OUT / PO) * (IN / PI);
+    acc_t bl[OUT / PO][PO];
+    #pragma HLS ARRAY_PARTITION variable=bl type=complete dim=2
     const int n = patch_count<PH, PW>(height, width);
-    patches: for (int k = 0; k < n; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_grouped_patch<H, W, IN, OUT, PI, PO, DSP>(in, wl, bl, out);
+    if (STEPS > 64) {
+        grouped_word_t<PI, PO> wl[STEPS];
+        #pragma HLS AGGREGATE variable=wl compact=bit
+        #pragma HLS BIND_STORAGE variable=wl type=ram_2p impl=bram
+        load_grouped_weights<IN, OUT, PI, PO, BIAS_SHIFT, WEIGHT, BIAS>(wl, bl);
+        patches_bram: for (int k = 0; k < n; k++) {
+            #pragma HLS LOOP_TRIPCOUNT min=1 max=665
+            conv3x3_grouped_patch<H, W, IN, OUT, PI, PO, DSP>(in, wl, bl, out);
+        }
+    } else {
+        grouped_word_t<PI, PO> wl[STEPS];
+        #pragma HLS AGGREGATE variable=wl compact=bit
+        #pragma HLS BIND_STORAGE variable=wl type=ram_2p impl=lutram
+        load_grouped_weights<IN, OUT, PI, PO, BIAS_SHIFT, WEIGHT, BIAS>(wl, bl);
+        patches: for (int k = 0; k < n; k++) {
+            #pragma HLS LOOP_TRIPCOUNT min=1 max=665
+            conv3x3_grouped_patch<H, W, IN, OUT, PI, PO, DSP>(in, wl, bl, out);
+        }
     }
 }

@@ -89,7 +89,7 @@ software/pynq/sp_unet_small_opt/), `sp_unet_small_opt_direct`, `_medium_opt_dire
 `_large_opt_direct` (the same kernels without Winograd, simpler: direct 3x3 convs
 (conv3x3_grouped, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
 modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patch,
-1 380 / 1 257 / 1 136 DSPs; the chain in src/hls/sp_unet_small_opt_direct/
+1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in src/hls/sp_unet_small_opt_direct/
 sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
@@ -138,6 +138,11 @@ those are the user's, on the lab server, every time.
   7020's, means the packing mapped.
   Pack the weights once at load, not next to the multiply: HLS put that addition
   in the DSP pre-adder and the RTL was slightly wrong (csim passed, cosim failed).
+- Processes sized for the same time per patch need deep FIFOs between them (16, `impl=srl`),
+  not the default 2: an HLS pipeline freezes all its stages when one read or write waits, so
+  with no slack one process's short wait freezes the next and the time is never won back.
+  sp_unet_small_opt_direct went from 11 503 to 9 856 cycles a patch with that alone, though
+  HLS reported II = 1 and the right interval for every process.
 - csim passing does not prove the RTL. After changing arithmetic, ask the user
   for a cosim (`python3 main.py cosim --kernel K`); a mismatch there is
   reproducible in minutes, a mismatch on the board is not.

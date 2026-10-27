@@ -43,7 +43,7 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
 | `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
-| `sp_unet_small_opt_direct` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | the same kernel without Winograd (direct convs, simpler); **measured 41 ms** for a whole capture, FPGA alone (predicted 34.9) |
+| `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
 | `sp_unet_medium_opt_direct` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt_direct` | ZCU104 | 5 ns | the same |
 
@@ -194,6 +194,9 @@ same DSPs.
 | ReLU + rounding | inside each conv | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
 | Skip FIFO | 512 blocks, UltraRAM | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
 | Window | across patches, no bubble | per patch, W + 1 steps of bubble (in the cycle counts below) |
+| FIFOs between the processes | 2 deep (not yet measured) | 16 deep, in LUTs (SRL): the layers run at the same rate with no time to spare (below) |
+| convsp2 / convsp3 multipliers | LUTs | DSPs (`STEM_DSP`), for the LUTs the deeper FIFOs take |
+| A conv's weights | one wide memory (a word a step) | one wide memory a layer too: block RAM when > 64 steps deep, LUTRAM when shallow (was one memory per PI × PO × tap) |
 
 Shared with the Winograd kernels: the readers, `pixel_buffer` (raster order), the packed
 convsp1, convsp2/3 and final (`pointwise`), `store_scores`, the cycle counter, the z-score in
@@ -209,14 +212,45 @@ LUTs.
 | up2 | 9 513 (4×4) | 33 824 (6×3) | 67 648 (16×1) |
 | double4 a / b | 8 456 (24×1) / 8 456 (8×1) | 33 824 (6×3) / 25 368 (6×1) | 67 648 (16×1) / 67 648 (4×1) |
 | **T** | **9 828** | **34 944** | **69 888** |
-| DSPs (convs + convsp1) | 1 188 + 192 = **1 380** (80 %) | 1 161 + 96 = **1 257** (73 %) | 1 008 + 128 = **1 136** (66 %) |
+| DSPs (convs + convsp1 + convsp2/3) | 1 188 + 192 + 72 = **1 452** (84 %) | 1 161 + 96 + 40 = **1 297** (75 %) | 1 008 + 128 + 48 = **1 184** (69 %) |
 | 665 patches at 187.5 MHz | **34.9 ms** | **124 ms** | **248 ms** |
-| measured, FPGA alone | **41 ms** (≈ 11 560 cycles a patch, 18 % over the model) | – | – |
+| measured, FPGA alone | **30.6 ms at 214 MHz** (9 856 cycles a patch; 41 ms / 11 503 with 2-deep FIFOs) | – | – |
 | Winograd kernel, for comparison | 14.5 ms, 1 474 DSPs | 43.6 ms, 1 368 | 58.2 ms, 1 440 |
 
 A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch, with 9 x PI x PO
 multipliers. Large has every channel count a power of two, so its only table between 1 136
 and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100.
+
+### Equal-rate processes need deep FIFOs between them
+
+The first board run was 17 % slower than every process's own time (11 503 cycles a patch against
+9 841), although HLS reported II = 1 everywhere and an interval of 9 842 a patch, and DDR was not the
+limit (the same cycle count at 187.5 and 214 MHz).
+
+The cause: most layers are sized for the same T (here 9 828), so none has time to spare, and an HLS
+pipeline freezes *all* of its stages whenever one read finds its FIFO empty or one write finds it
+full. A conv reads at the start of its pipeline and writes ~12 stages later, so a short wait on its
+input also holds back outputs already in flight. With the default 2-deep FIFOs one conv's few-cycle
+freeze froze the next one, and the next, and since every one of them runs at exactly T, none could
+win the cycles back: each freeze went straight onto T.
+
+The fix: every FIFO between the processes 16 deep (`#pragma HLS STREAM depth = 16`, `impl = srl`), so a
+producer can run a few pixels ahead and a short freeze on either side is absorbed. In shift-register
+LUTs (SRL16) 16 deep costs what 8 deep does, about one LUT per bit of width (~8 k LUTs here); to pay
+for them, convsp2/convsp3 moved from LUT multipliers (~25 k LUTs) to DSPs.
+
+| | cycles a patch | 665 patches |
+|---|---|---|
+| HLS interval (every process alone) | 9 842 | — |
+| board, 2-deep FIFOs | 11 503 | 41 ms (187.5 MHz), 35.7 ms (214 MHz) |
+| cycle model with HLS's pipeline stalls, 2 / 8 / 16 deep | 11 472 / 9 939 / 9 839 | — |
+| board, 16-deep FIFOs | **9 856** | **30.6 ms** (214 MHz) |
+
+The simple cycle model (an iteration's read and write in the same cycle) missed this: it gave 9 841
+with 2-deep FIFOs. Only the model with the real pipeline behaviour (reads at issue, writes at the
+loop depth from hls.log, the whole pipeline frozen on any wait, loops drained at their exit)
+reproduced the board, within 0.3 %. Deeper FIFOs in front of the DDR readers (`s_raw`, tried first)
+changed nothing.
 
 ## Integer formats (the bit-exact model)
 
@@ -270,3 +304,11 @@ the aegean pixels (small / medium / large).
   SRL: the model gives 9 839 (the convs' own 9 828 + loop exits); predicted ~35 ms at 187.5 MHz,
   ~30.6 ms at 214 MHz. convsp2/convsp3 moved to DSPs (`STEM_DSP`) for the LUTs the FIFOs take (they
   were ~25 k of the 189 k): DSPs 1 452 / 1 297 / 1 184 (small / medium / large).
+- 2026-10-27: measured with the 16-deep FIFOs: 9 856 cycles a patch, 30.6 ms at 214 MHz (model 9 839).
+  The fix is described under "Equal-rate processes need deep FIFOs between them".
+- 2026-10-27: `sp_unet_large_opt_direct` never finished routing: Vivado stayed in Phase 5.2/5.3 (global
+  iterations), estimated congestion level 6 (5 and up reduce routability). `conv3x3_grouped` kept its
+  weights in one memory per (PO, PI, tap): 1 008 memories up to 256 deep on large. Now one wide memory a
+  layer, a step's PO x PI x 9 weights a word, block RAM when deeper than 64 steps (~52 BRAM36 on large,
+  ~60 on medium, none on small), LUTRAM otherwise; the same reads, so the same speed. Bit-exact on the
+  three sizes; not yet routed.
