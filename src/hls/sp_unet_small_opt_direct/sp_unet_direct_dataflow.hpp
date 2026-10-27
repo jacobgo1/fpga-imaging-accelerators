@@ -57,7 +57,12 @@ static void sp_unet_direct_dataflow(hls::burst_maxi<spu_raw_t> din0, hls::burst_
     hls::stream<vec_t<acc_t, CLASSES> > s_scores("s_scores");
     hls::stream<bool> s_finished("s_finished");
 // Let the readers run ahead of pixel_buffer, which takes a word from all four at once.
-#pragma HLS STREAM variable = s_raw depth = 64
+// It takes a strip's words in the first 480 steps of each 896-step round, 64 bytes a
+// cycle, more than DDR gives: with room for a strip row (480 words a port), the readers
+// keep reading through the other 416 steps, so DDR has the whole round. On the board
+// (2026-10-27) the 64-deep FIFOs gave 11 503 cycles a patch against the convs' 9 828.
+#pragma HLS STREAM variable = s_raw depth = 512
+#pragma HLS BIND_STORAGE variable = s_raw type = fifo impl = bram
 #pragma HLS STREAM variable = s_bands depth = 64
 // The skip connection: double1's activations wait here until up2's come back.
 // Each patch is done on its own, so a patch (1 024 pixels) is the most that can

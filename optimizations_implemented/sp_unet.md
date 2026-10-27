@@ -43,7 +43,7 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
 | `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
-| `sp_unet_small_opt_direct` | ZCU104 | 5 ns | the same kernel without Winograd (direct convs, simpler); bit-exact in C++; cycle model below, not yet synthesized |
+| `sp_unet_small_opt_direct` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | the same kernel without Winograd (direct convs, simpler); **measured 41 ms** for a whole capture, FPGA alone (predicted 34.9) |
 | `sp_unet_medium_opt_direct` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt_direct` | ZCU104 | 5 ns | the same |
 
@@ -211,6 +211,7 @@ LUTs.
 | **T** | **9 828** | **34 944** | **69 888** |
 | DSPs (convs + convsp1) | 1 188 + 192 = **1 380** (80 %) | 1 161 + 96 = **1 257** (73 %) | 1 008 + 128 = **1 136** (66 %) |
 | 665 patches at 187.5 MHz | **34.9 ms** | **124 ms** | **248 ms** |
+| measured, FPGA alone | **41 ms** (≈ 11 560 cycles a patch, 18 % over the model) | – | – |
 | Winograd kernel, for comparison | 14.5 ms, 1 474 DSPs | 43.6 ms, 1 368 | 58.2 ms, 1 440 |
 
 A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch, with 9 x PI x PO
@@ -249,3 +250,13 @@ the aegean pixels (small / medium / large).
   `relu_up`; raster order; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 380 / 1 257 / 1 136 DSPs
   (predicted 34.9 / 124 / 248 ms). The shared checks, channel counts and fraction bits moved to
   `sp_unet_opt_common.hpp`.
+- 2026-10-27: `sp_unet_small_opt_direct` on the board: 41 ms for a whole capture, FPGA alone, at
+  187.5 MHz, against 34.9 ms predicted (≈ 11 560 cycles a patch against 9 828). A cycle simulation
+  puts only ~3 % of it on `relu_pool_up`'s and `relu_up`'s take-then-give; with ideal memory the chain
+  runs at 9 841. The rest is the reads: `pixel_buffer` takes a strip's words in 480 of its 896 steps
+  per round, and the 64-word `s_raw` FIFOs stop the readers for the other 416; each restart waits for
+  DDR again (justounetsimple_opt's `patch_buffer` takes words in 3 840 of 4 096 steps, so its readers
+  never stop, and read a patch in under 6 000 cycles: ≥ 7.7 GB/s). `s_raw` deepened to 512 words a port
+  (8 BRAM36): the readers read through the round, and need 6.4 GB/s at T = 9 828, so the convs should
+  set the pace again (predicted 9 828 cycles a patch, ~35 ms). The Winograd small kernel needs 11.2 GB/s
+  at its T = 4 096: memory-bound like justounetsimple_opt, ~6 000 cycles a patch (~21 ms, not 14.5).
