@@ -253,10 +253,20 @@ the aegean pixels (small / medium / large).
 - 2026-10-27: `sp_unet_small_opt_direct` on the board: 41 ms for a whole capture, FPGA alone, at
   187.5 MHz, against 34.9 ms predicted (≈ 11 560 cycles a patch against 9 828). A cycle simulation
   puts only ~3 % of it on `relu_pool_up`'s and `relu_up`'s take-then-give; with ideal memory the chain
-  runs at 9 841. The rest is the reads: `pixel_buffer` takes a strip's words in 480 of its 896 steps
-  per round, and the 64-word `s_raw` FIFOs stop the readers for the other 416; each restart waits for
-  DDR again (justounetsimple_opt's `patch_buffer` takes words in 3 840 of 4 096 steps, so its readers
-  never stop, and read a patch in under 6 000 cycles: ≥ 7.7 GB/s). `s_raw` deepened to 512 words a port
-  (8 BRAM36): the readers read through the round, and need 6.4 GB/s at T = 9 828, so the convs should
-  set the pace again (predicted 9 828 cycles a patch, ~35 ms). The Winograd small kernel needs 11.2 GB/s
-  at its T = 4 096: memory-bound like justounetsimple_opt, ~6 000 cycles a patch (~21 ms, not 14.5).
+  runs at 9 841, so the rest is not in its model of the chain.
+- 2026-10-27: rebuilt with `s_raw` 512 deep and at 214 MHz: again exactly 11 503 cycles a patch (35.7 ms).
+  The same count at another clock means the limit is in the kernel's logic, not DDR (DDR-bound, the
+  faster clock would have needed more cycles a patch). `s_raw` back to 64.
+- 2026-10-27: csynth: interval 6 545 040 cycles for 665 patches (9 842 a patch, the 16 x 16 convs; every
+  other process below), clock estimate 3.65 ns, LUT 189 k (82 %), DSP 1 380, BRAM18 102, URAM 3. Cosim:
+  RTL bit-exact (8 000 outputs), cycles register 52 558 for the testbench's 4 patches, against 49 062 in
+  a cycle simulation of the chain with its weight loads: ~875 cycles a patch of stalls the simulation
+  does not have, even with cosim's fast memory. Next: `--dataflow-profile` to see which process waits.
+- 2026-10-27: the cause found: equal-rate processes freezing each other. An HLS pipeline freezes all
+  its stages when one read or write must wait; the convs run at the same rate with no time to spare,
+  so with 2-deep FIFOs one conv's short wait froze the next and neither caught up. A cycle model with
+  these pipeline stalls (reads at issue, writes at the depth from hls.log, the loops' exits) gives
+  11 472 cycles a patch, against 11 503 measured. Every FIFO between the processes now 16 deep, in
+  SRL: the model gives 9 839 (the convs' own 9 828 + loop exits); predicted ~35 ms at 187.5 MHz,
+  ~30.6 ms at 214 MHz. convsp2/convsp3 moved to DSPs (`STEM_DSP`) for the LUTs the FIFOs take (they
+  were ~25 k of the 189 k): DSPs 1 452 / 1 297 / 1 184 (small / medium / large).

@@ -14,8 +14,9 @@ namespace q = sp_unet_small_int8;
 namespace cfg {
 constexpr int P1 = 16;              // convsp1: 16 bands a cycle, 7 cycles a pixel (7 168), 192 DSPs
 constexpr bool ZSCORE_DSP = false;  // the z-score's 32 multipliers in LUTs: the DSPs are for the convs
-constexpr int SP2_PO = 2;           // convsp2 24 -> 12: 6 cycles a pixel (6 144), 48 multipliers in LUTs
-constexpr int SP3_PO = 2;           // convsp3 12 -> 12: 6 (6 144), 24 in LUTs
+constexpr bool STEM_DSP = true;     // convsp2 and convsp3 on DSPs: in LUTs they took ~25 k LUTs (small)
+constexpr int SP2_PO = 2;           // convsp2 24 -> 12: 6 cycles a pixel (6 144), 48 DSPs
+constexpr int SP3_PO = 2;           // convsp3 12 -> 12: 6 (6 144), 24 DSPs
 constexpr int FIN_PO = 1;           // final 8 -> 3: 3 (3 072), 8 in LUTs
 //                       PI  PO DSP          channels  cycles a pixel  a patch (+ W + 1)   multipliers
 typedef spu_layer< 4, 4, true> D1A;  // 12 -> 12   3 x 3 = 9      x 1 057 = 9 513      144
@@ -28,7 +29,7 @@ typedef spu_layer< 4, 1, true> D3B;  // 12 -> 12   3 x 12 = 36    x 273 = 9 828 
 typedef spu_layer< 4, 4, true> UP2;  // 12 -> 12   3 x 3 = 9      x 1 057 = 9 513      144
 typedef spu_layer<24, 1, true> D4A;  // 24 -> 8    1 x 8 = 8      x 1 057 = 8 456      216
 typedef spu_layer< 8, 1, true> D4B;  // 8 -> 8     1 x 8 = 8      x 1 057 = 8 456       72
-// DSPs: 1 188 direct + 192 convsp1 = 1 380 of 1 728 (80 %).
+// DSPs: 1 188 direct + 192 convsp1 + 72 convsp2/3 = 1 452 of 1 728 (84 %).
 }
 
 #include "../sp_unet_small_opt_direct/sp_unet_direct_dataflow.hpp"

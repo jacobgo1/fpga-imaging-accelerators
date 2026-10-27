@@ -81,6 +81,53 @@ static void sp_unet_direct_dataflow(hls::burst_maxi<spu_raw_t> din0, hls::burst_
 #pragma HLS BIND_STORAGE variable = s_dec3 type = fifo impl = srl
 // A patch row of scores, so the final layer keeps going while store starts a burst.
 #pragma HLS STREAM variable = s_scores depth = 32
+// Between the layers, 16 deep, not 2. The convs run at the same rate, with no time to
+// spare, and an HLS pipeline freezes all of its stages when one read or write must wait:
+// with 2-deep FIFOs one conv's short wait froze the next, and neither caught up. On the
+// board that was 11 503 cycles a patch instead of 9 841; a cycle model with the pipelines'
+// stalls gives 11 472, and 9 839 with 16 (8: 9 939). 16 costs what 8 does in LUTs (SRL16).
+#pragma HLS STREAM variable = s_sp1 depth = 16
+#pragma HLS STREAM variable = s_sp2 depth = 16
+#pragma HLS STREAM variable = s_stem depth = 16
+#pragma HLS STREAM variable = s_d1a depth = 16
+#pragma HLS STREAM variable = s_a1 depth = 16
+#pragma HLS STREAM variable = s_d1b depth = 16
+#pragma HLS STREAM variable = s_d2a depth = 16
+#pragma HLS STREAM variable = s_a2 depth = 16
+#pragma HLS STREAM variable = s_d2b depth = 16
+#pragma HLS STREAM variable = s_up1 depth = 16
+#pragma HLS STREAM variable = s_u1 depth = 16
+#pragma HLS STREAM variable = s_d3a depth = 16
+#pragma HLS STREAM variable = s_a3 depth = 16
+#pragma HLS STREAM variable = s_d3b depth = 16
+#pragma HLS STREAM variable = s_up2 depth = 16
+#pragma HLS STREAM variable = s_u2 depth = 16
+#pragma HLS STREAM variable = s_cat depth = 16
+#pragma HLS STREAM variable = s_d4a depth = 16
+#pragma HLS STREAM variable = s_a4 depth = 16
+#pragma HLS STREAM variable = s_d4b depth = 16
+#pragma HLS STREAM variable = s_dec4 depth = 16
+#pragma HLS BIND_STORAGE variable = s_sp1 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_sp2 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_stem type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d1a type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_a1 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d1b type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d2a type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_a2 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d2b type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_up1 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_u1 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d3a type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_a3 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d3b type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_up2 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_u2 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_cat type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d4a type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_a4 type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_d4b type = fifo impl = srl
+#pragma HLS BIND_STORAGE variable = s_dec4 type = fifo impl = srl
 
     read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
     read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
@@ -90,13 +137,14 @@ static void sp_unet_direct_dataflow(hls::burst_maxi<spu_raw_t> din0, hls::burst_
     pixel_buffer<H, W, WORDS, FIRST, PORT_BANDS, cfg::P1, PORTS, CHUNKS, prep::FRAC, prep::IN_MAX,
                  prep::A, prep::B, cfg::ZSCORE_DSP>(s_raw, s_bands, height, width);
 
-    // The spectral stem, 1x1 convs per pixel: convsp1 two multiplies per DSP, the others in LUTs.
+    // The spectral stem, 1x1 convs per pixel: convsp1 two multiplies per DSP, convsp2/3 where
+    // cfg::STEM_DSP says (in LUTs they took ~25 k LUTs on small).
     pointwise_wide<H, W, H * W, IN_CH, S1, cfg::P1, F_SP1::BIAS_SHIFT, F_SP1::SHIFT,
                    q::convsp1_weight, q::convsp1_bias>(s_bands, s_sp1, height, width);
     pointwise<H, W, H * W, S1, S2, cfg::SP2_PO, 1, true, F_SP2::BIAS_SHIFT, F_SP2::SHIFT,
-              q::convsp2_weight, q::convsp2_bias, false>(s_sp1, s_sp2, height, width);
+              q::convsp2_weight, q::convsp2_bias, cfg::STEM_DSP>(s_sp1, s_sp2, height, width);
     pointwise<H, W, H * W, S2, S3, cfg::SP3_PO, 1, true, F_SP3::BIAS_SHIFT, F_SP3::SHIFT,
-              q::convsp3_weight, q::convsp3_bias, false>(s_sp2, s_stem, height, width);
+              q::convsp3_weight, q::convsp3_bias, cfg::STEM_DSP>(s_sp2, s_stem, height, width);
 
     // The encoder: double1 at 32 x 32 (its output also the skip), double2 at 16 x 16.
     conv3x3_grouped<H, W, H, W, S3, C1, SPU_CONV(D1A, F_D1A, double1_block_0)>(s_stem, s_d1a, height, width);
