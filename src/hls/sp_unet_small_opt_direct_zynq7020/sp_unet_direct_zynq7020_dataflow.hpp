@@ -57,42 +57,14 @@ static void sp_unet_direct_zynq7020_dataflow(hls::burst_maxi<spu_raw_t> din0, hl
 #pragma HLS STREAM variable = s_dec3 depth = 64
 // A patch row of scores, so the final layer keeps going while store starts a burst.
 #pragma HLS STREAM variable = s_scores depth = 32
-// Between the layers, 16 deep, not 2: the convs run at the same rate, and an
-// HLS pipeline freezes all its stages when one read or write must wait, so
-// with 2 a conv's short wait froze the next (7 % in the cycle model of small;
-// 17 % on the ZCU104's board). In LUTRAM, cheaper per bit than shift registers.
-#pragma HLS STREAM variable = s_sp1 depth = 16
-#pragma HLS STREAM variable = s_sp2 depth = 16
-#pragma HLS STREAM variable = s_stem depth = 16
-#pragma HLS STREAM variable = s_a1 depth = 16
-#pragma HLS STREAM variable = s_d1b depth = 16
+// Between the layers, HLS's default 2 deep. 16 deep, as on the ZCU104, keeps a
+// conv's short wait from freezing the next (7 % in the cycle model of small:
+// 76 202 cycles a patch with 16, 81 386 with 2), but cost the LUTs this chip did
+// not have (small: ~98 % with them). The pooled pixels come only on odd rows: 16 deep.
 #pragma HLS STREAM variable = s_pool1 depth = 16
-#pragma HLS STREAM variable = s_a2 depth = 16
-#pragma HLS STREAM variable = s_d2b depth = 16
-#pragma HLS STREAM variable = s_u1 depth = 16
-#pragma HLS STREAM variable = s_a3 depth = 16
-#pragma HLS STREAM variable = s_d3b depth = 16
-#pragma HLS STREAM variable = s_u2 depth = 16
-#pragma HLS STREAM variable = s_cat depth = 16
-#pragma HLS STREAM variable = s_a4 depth = 16
-#pragma HLS STREAM variable = s_dec4 depth = 16
-#pragma HLS BIND_STORAGE variable = s_sp1 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_sp2 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_stem type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_a1 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_d1b type = fifo impl = lutram
 #pragma HLS BIND_STORAGE variable = s_pool1 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_a2 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_d2b type = fifo impl = lutram
 #pragma HLS BIND_STORAGE variable = s_pool2 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_u1 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_a3 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_d3b type = fifo impl = lutram
 #pragma HLS BIND_STORAGE variable = s_dec3 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_u2 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_cat type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_a4 type = fifo impl = lutram
-#pragma HLS BIND_STORAGE variable = s_dec4 type = fifo impl = lutram
 
     // A patch row is 32 x 30 = 960 words: four bursts of 8 pixels (240 <= 256),
     // the next requested while the current one streams in.

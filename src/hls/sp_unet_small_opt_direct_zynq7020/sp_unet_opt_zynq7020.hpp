@@ -35,9 +35,9 @@
 //   convsp2/3, the final layer and the z-score on a few DSPs (pointwise's PI), not
 //   dozens of LUT multipliers; convsp1 rounds a pass's pairs at a time; one read port (the DSPs, not the
 //   reads, set the pace: 30 720 cycles a patch of reads against T of 76 000 or
-//   more); the FIFOs between the processes 16 deep, as on the ZCU104 (a conv's
-//   short wait otherwise freezes the next, 7 % in the cycle model of small),
-//   in LUTRAM, cheaper per bit than shift registers.
+//   more); the FIFOs between the processes 2 deep: 16, as on the ZCU104, would
+//   save 7 % of the time (a conv's short wait freezes the next), but the LUTs
+//   are not there.
 // - No UltraRAM: the skip connection waits in block RAM.
 //
 // din0: the raw cube, [height][width][120] uint16. A pixel is 30 words of 4

@@ -302,7 +302,7 @@ below), and the LUTs and flip-flops are what is short. So:
 | convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`), a pass's pairs rounded at a time |
 | convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`pointwise`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
 | Read ports | 4 x 128 bit | **1 x 64 bit** (30 720 cycles a patch; T is 76 000 or more) |
-| FIFOs between the processes | 16 deep, shift registers | 16 deep, **LUTRAM** (about 0.7 LUT a bit, not 1) |
+| FIFOs between the processes | 16 deep, shift registers | **2 deep** (16 deep: 7 % faster, but the LUTs are not there) |
 | Skip FIFO | UltraRAM | block RAM, 2 048 deep |
 | Clock | 214 MHz | the board's 12.8 ns (78.1 MHz) |
 
@@ -333,11 +333,12 @@ multipliers (the window trails the input by a row and two pixels).
 
 | Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
 |---|---|---|---|
-| `sp_unet_small_opt_direct_zynq7020` | 76 176 | **649 ms** | 507 ms |
-| `sp_unet_medium_opt_direct_zynq7020` | 228 528 | **1.95 s** | 1.52 s |
-| `sp_unet_large_opt_direct_zynq7020` | 420 864 | **3.59 s** | 2.80 s |
+| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | **~694 ms** | ~542 ms |
+| `sp_unet_medium_opt_direct_zynq7020` | 228 528 (+ ~7 %) | **~2.1 s** | ~1.6 s |
+| `sp_unet_large_opt_direct_zynq7020` | 420 864 (+ ~7 %) | **~3.8 s** | ~3.0 s |
 
-Predicted the same way as the ZCU104 direct kernels' (see "Predicted and measured times"): the
+The + 7 % is the 2-deep FIFOs between the processes (the cycle model of small: 81 386 cycles a
+patch against 76 202 with 16 deep); for medium and large it is assumed the same. Predicted the same way as the ZCU104 direct kernels' (see "Predicted and measured times"): the
 slowest process's cycles a patch, from the table; the pipeline-stall model for the FIFOs;
 (patches + 1) x T / clock. On the ZCU104 that came within 0.2 % of the board. To be replaced by
 measurements.
@@ -462,3 +463,7 @@ the aegean pixels (small / medium / large).
   arrays of a struct declared inside the function template, packed with AGGREGATE; now plain arrays
   (`act_t rows[3][PI][W * IN/PI]`, a small memory per row and lane), as the synthesized kernels use.
   Bit-exact.
+- 2026-10-28: csynth of small with `conv3x3_lines`: interval 76 193 cycles a patch, FF 67 602 estimated
+  (63 %, was 92 496), but LUT 95 489 estimated (~52 k real at the earlier ratio, ~98 %) and BRAM18 172.
+  To be sure it places: the FIFOs between the processes 2 deep instead of 16 (s_pool1 16, s_pool2 32,
+  s_dec3 64 for their bursts): a few thousand LUTs, ~7 % more time (small ~694 ms predicted).
