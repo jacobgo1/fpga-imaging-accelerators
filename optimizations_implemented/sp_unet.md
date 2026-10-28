@@ -454,3 +454,7 @@ the aegean pixels (small / medium / large).
   placement failed: 7 816 slices needed, 6 321 free of 13 300 (LUTs ~96 %, flip-flops ~87 %, too many
   to pack into slices together). The row-memory engine (`conv3x3_lines`) removes the window registers,
   ~23.6 k of small's flip-flops, and the multiplexers on them: to be built.
+- 2026-10-28: first csynth with `conv3x3_lines`: Vitis HLS 2025.2 crashed (segfault) generating the RTL of
+  a 24 -> 24 conv; the conv before it had a 36-cycle signed divider in its loop, from turning the step
+  into a tap row and column with / 3 and % 3. Now counters (the tap's column and row, the weight
+  address), and nested loops for the weight load: no dividers. Bit-exact; the counters' bugs caught.

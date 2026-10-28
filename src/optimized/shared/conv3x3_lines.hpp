@@ -18,7 +18,7 @@
 // its taps (KT = 3: the whole column; KT = 1: one tap, the row picked from the
 // three reads), times PO output channels: KT x PI x PO multipliers,
 // 9/KT x IN/PI x OUT/PO steps a pixel. Steps: output group, input group, then
-// the window's taps, inner.
+// the window's taps, inner (its columns, then for one tap a step its rows).
 //
 // The input pixel comes in at a pixel's first step and is written to its row's
 // memory group by group, one a step in its first IN/PI steps (a run-time choice
@@ -58,15 +58,20 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
     int s = 0, wr = 0;          // the input's column, and its row's memory (row mod 3)
     int y = 0, x = 0;           // position of the window's centre
     int top = 2;                // the memory of the centre's row above: (y - 1) mod 3
-    int og = 0, ig = 0, nt = 0; // this step's output group, input group, window step
+    // This step's output group, input group, and the window's column kc and (one
+    // tap a step) row kr: counters, not nt / 3 and nt % 3, which HLS built as a
+    // 36-cycle divider in the loop. wa: the step's weight word, one after another.
+    int og = 0, ig = 0, kc = 0, kr = 0, wa = 0;
     int g = 0;                  // input pixels so far, the last W + 2 without input
 
     conv: for (int t = 0; t < (VECTORS + LAG) * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         // A row's word is written a pixel or more before the centre reads it.
         #pragma HLS DEPENDENCE variable=rows type=inter false
-        const bool first_step = og == 0 && ig == 0 && nt == 0;
-        const bool last_in = ig == IG - 1 && nt == NT - 1;
+        const bool first_tap = kc == 0 && (KT == 3 || kr == 0);
+        const bool last_tap = kc == 2 && (KT == 3 || kr == 2);
+        const bool first_step = og == 0 && ig == 0 && first_tap;
+        const bool last_in = ig == IG - 1 && last_tap;
         const bool last_step = og == OG - 1 && last_in;
         const bool have = g < VECTORS;
 
@@ -77,7 +82,7 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                 x_in[c] = v.v[c];
             }
         }
-        if (og == 0 && nt == 0 && have) {
+        if (og == 0 && first_tap && have) {
             // Input group ig of this pixel into its row's memory.
             word_t wd;
             for (int p = 0; p < PI; p++) {
@@ -91,9 +96,6 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
         }
 
         if (g >= LAG) {
-            // This step's window column kc and, one tap a step, its row kr.
-            const int kc = KT == 3 ? nt : nt % 3;
-            const int kr = KT == 3 ? 0 : nt / 3;
             const int col = x + kc - 1;
             const int addr = (col < 0 ? 0 : col > W - 1 ? W - 1 : col) * IG + ig;
             word_t rd[3];
@@ -117,7 +119,7 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                     a[r][p] = (row_ok[ki] && col_ok) ? v : (act_t)0;
                 }
             }
-            const lines_word_t<PI, PO, KT> wd = wl[(og * IG + ig) * NT + nt];
+            const lines_word_t<PI, PO, KT> wd = wl[wa];
             for (int j = 0; j < PO; j++) {
                 #pragma HLS UNROLL
                 acc_t sum = 0;
@@ -128,7 +130,7 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                         sum += mul<DSP, acc_t>(a[r][p], wd.v[j][p][r]);
                     }
                 }
-                const acc_t total = (ig == 0 && nt == 0 ? bl[og][j] : run[j]) + sum;
+                const acc_t total = (ig == 0 && first_tap ? bl[og][j] : run[j]) + sum;
                 run[j] = total;
                 // Rounded as its output group finishes: PO of these, not OUT_CH.
                 const out_t done = sums_out<RELU_SHIFT>::of(total);
@@ -147,10 +149,17 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
             }
         }
 
-        if (nt < NT - 1) {
-            nt++;
+        // The next step: the window's taps (columns, then for one tap a step the
+        // rows), then the input group, then the output group, then the pixel.
+        wa = last_step ? 0 : wa + 1;
+        if (kc < 2) {
+            kc++;
+        } else if (KT == 1 && kr < 2) {
+            kc = 0;
+            kr++;
         } else {
-            nt = 0;
+            kc = 0;
+            kr = 0;
             if (ig < IG - 1) {
                 ig++;
             } else {
@@ -176,29 +185,35 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
 // The layer's weights, a word a step: step (og * IN/PI + ig) * 9/KT + nt holds
 // output channels og * PO .. + PO by input channels ig * PI .. + PI, the
 // window's taps nt (KT = 1: tap nt, row nt / 3, column nt % 3) or column nt
-// (KT = 3, rows 0-2). A word's weights come from the ROM at once, in as many
+// (KT = 3, rows 0-2), in the order the steps take them. A word's weights come from the ROM at once, in as many
 // cycles as its ports take, once, when the layer starts. The biases [og][j].
 template<int IN, int OUT, int PI, int PO, int KT, int BIAS_SHIFT,
          const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT]>
 void load_lines_weights(lines_word_t<PI, PO, KT> wl[(OUT / PO) * (IN / PI) * (9 / KT)], acc_t bl[OUT / PO][PO]) {
-    constexpr int IG = IN / PI, NT = 9 / KT, STEPS = (OUT / PO) * IG * NT;
-    load_w: for (int st = 0; st < STEPS; st++) {
-        #pragma HLS PIPELINE
-        const int og = st / (IG * NT), ig = (st / NT) % IG, nt = st % NT;
-        lines_word_t<PI, PO, KT> word;
-        for (int j = 0; j < PO; j++) {
-            #pragma HLS UNROLL
-            for (int p = 0; p < PI; p++) {
-                #pragma HLS UNROLL
-                for (int r = 0; r < KT; r++) {
+    constexpr int IG = IN / PI, NT = 9 / KT;
+    // Nested loops, not st / ... and st % ...: no dividers, even at load time.
+    int st = 0;
+    load_w: for (int og = 0; og < OUT / PO; og++)
+        for (int ig = 0; ig < IG; ig++)
+            for (int nt = 0; nt < NT; nt++) {
+                #pragma HLS PIPELINE
+                lines_word_t<PI, PO, KT> word;
+                for (int j = 0; j < PO; j++) {
                     #pragma HLS UNROLL
-                    const int ki = KT == 3 ? r : nt / 3, kj = KT == 3 ? nt : nt % 3;
-                    word.v[j][p][r] = WEIGHT[og * PO + j][ig * PI + p][ki][kj];
+                    for (int p = 0; p < PI; p++) {
+                        #pragma HLS UNROLL
+                        for (int r = 0; r < KT; r++) {
+                            #pragma HLS UNROLL
+                            // one tap a step: tap nt is row nt / 3, column nt % 3, without dividing
+                            const int ki = KT == 3 ? r : nt >= 6 ? 2 : nt >= 3 ? 1 : 0;
+                            const int kj = KT == 3 ? nt : nt - 3 * ki;
+                            word.v[j][p][r] = WEIGHT[og * PO + j][ig * PI + p][ki][kj];
+                        }
+                    }
                 }
+                wl[st] = word;
+                st++;
             }
-        }
-        wl[st] = word;
-    }
     load_b: for (int oc = 0; oc < OUT; oc++) {
         #pragma HLS PIPELINE II=1
         bl[oc / PO][oc % PO] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
