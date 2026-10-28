@@ -94,7 +94,15 @@ sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook
 `sp_unet_small_opt_direct_zynq7020`, `_medium_`, `_large_` (the direct kernels for the 7020,
 `--board zynq7020`: at most 205 DSPs, convs a window row a step and their ReLU inside, one
 64-bit read port; T = 76 104 / 228 312 / 419 328 cycles a patch; the chain in
-src/hls/sp_unet_small_opt_direct_zynq7020/), `matmul` (minimal example, used by the framework tests).
+src/hls/sp_unet_small_opt_direct_zynq7020/), `spectralpointwise1d` (golden baseline of
+1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
+the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
+and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
+`spectralpointwise1d_opt_zynq7020` (`--board zynq7030` / `zedboard`): DDR-bound, so the whole
+network is copied once per read port (a lane: 4, 4 and 2), convsp1 fused with the z-score word
+by word; a pixel every 3.75 / 7.5 / 15 cycles, the same answers bit for bit; the design in
+src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check and one
+notebook for all), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 
