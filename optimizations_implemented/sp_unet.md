@@ -458,3 +458,7 @@ the aegean pixels (small / medium / large).
   a 24 -> 24 conv; the conv before it had a 36-cycle signed divider in its loop, from turning the step
   into a tap row and column with / 3 and % 3. Now counters (the tap's column and row, the weight
   address), and nested loops for the weight load: no dividers. Bit-exact; the counters' bugs caught.
+- 2026-10-28: the HLS crash again, in the same 24 -> 24 conv, without the divider. The row memories were
+  arrays of a struct declared inside the function template, packed with AGGREGATE; now plain arrays
+  (`act_t rows[3][PI][W * IN/PI]`, a small memory per row and lane), as the synthesized kernels use.
+  Bit-exact.

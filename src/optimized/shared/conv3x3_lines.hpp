@@ -43,11 +43,14 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
     constexpr int IG = IN_CH / PI, OG = OUT_CH / PO, NT = 9 / KT, STEPS = OG * IG * NT;
     constexpr int VECTORS = H * W, LAG = W + 2;
     typedef typename sums_out<RELU_SHIFT>::type out_t;
-    struct word_t { act_t v[PI]; };
 
-    word_t rows[3][W * IG];     // the last three input rows, a memory each
+    // The last three input rows, [row memory][channel lane][column * IG + group]:
+    // plain arrays, one small memory per (row, lane), all read at one address.
+    // (Arrays of a struct declared in here, packed with AGGREGATE, made Vitis HLS
+    // 2025.2 crash generating this loop's pipeline.)
+    act_t rows[3][PI][W * IG];
     #pragma HLS ARRAY_PARTITION variable=rows type=complete dim=1
-    #pragma HLS AGGREGATE variable=rows compact=bit
+    #pragma HLS ARRAY_PARTITION variable=rows type=complete dim=2
     act_t x_in[IN_CH];          // this pixel's input, written to its row a group a step
     #pragma HLS ARRAY_PARTITION variable=x_in type=complete
     out_t pix[OUT_CH];          // the finished outputs of one pixel
@@ -84,25 +87,27 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
         }
         if (og == 0 && first_tap && have) {
             // Input group ig of this pixel into its row's memory.
-            word_t wd;
             for (int p = 0; p < PI; p++) {
                 #pragma HLS UNROLL
-                wd.v[p] = x_in[(IG == 1 ? 0 : ig * PI) + p];
-            }
-            for (int m = 0; m < 3; m++) {
-                #pragma HLS UNROLL
-                if (wr == m) rows[m][s * IG + ig] = wd;
+                const act_t v = x_in[(IG == 1 ? 0 : ig * PI) + p];
+                for (int m = 0; m < 3; m++) {
+                    #pragma HLS UNROLL
+                    if (wr == m) rows[m][p][s * IG + ig] = v;
+                }
             }
         }
 
         if (g >= LAG) {
             const int col = x + kc - 1;
             const int addr = (col < 0 ? 0 : col > W - 1 ? W - 1 : col) * IG + ig;
-            word_t rd[3];
-            #pragma HLS ARRAY_PARTITION variable=rd type=complete
+            act_t rd[3][PI];
+            #pragma HLS ARRAY_PARTITION variable=rd type=complete dim=0
             for (int m = 0; m < 3; m++) {
                 #pragma HLS UNROLL
-                rd[m] = rows[m][addr];
+                for (int p = 0; p < PI; p++) {
+                    #pragma HLS UNROLL
+                    rd[m][p] = rows[m][p][addr];
+                }
             }
             const bool row_ok[3] = {y > 0, true, y < H - 1};
             const bool col_ok = (kc != 0 || x > 0) && (kc != 2 || x < W - 1);
@@ -115,7 +120,7 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                 const int m = top + ki >= 3 ? top + ki - 3 : top + ki;
                 for (int p = 0; p < PI; p++) {
                     #pragma HLS UNROLL
-                    const act_t v = m == 0 ? rd[0].v[p] : m == 1 ? rd[1].v[p] : rd[2].v[p];
+                    const act_t v = m == 0 ? rd[0][p] : m == 1 ? rd[1][p] : rd[2][p];
                     a[r][p] = (row_ok[ki] && col_ok) ? v : (act_t)0;
                 }
             }
