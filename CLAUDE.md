@@ -85,7 +85,15 @@ convs as integer Winograd F(2x2, 3x3) and the UpBlocks from the low-res maps, th
 2x2-block order, the skip in UltraRAM; T = 4 096 / 12 288 / 16 384 cycles a patch, 1 474 / 1 368 / 1 440 DSPs; the
 design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain in sp_unet_opt_dataflow.hpp,
 each size's table of PI x PO per layer in its .cpp; one testbench and one notebook,
-software/pynq/sp_unet_small_opt/), `matmul` (minimal example, used by the framework tests).
+software/pynq/sp_unet_small_opt/), `spectralpointwise1d` (golden baseline of
+1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
+the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
+and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
+`spectralpointwise1d_opt_zynq7020` (`--board zynq7030` / `zedboard`): DDR-bound, so the whole
+network is copied once per read port (a lane: 4, 4 and 2), convsp1 fused with the z-score word
+by word; a pixel every 3.75 / 7.5 / 15 cycles, the same answers bit for bit; the design in
+src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check and one
+notebook for all), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 
