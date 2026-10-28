@@ -92,8 +92,9 @@ modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patc
 1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in src/hls/sp_unet_small_opt_direct/
 sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook),
 `sp_unet_small_opt_direct_zynq7020`, `_medium_`, `_large_` (the direct kernels for the 7020,
-`--board zynq7020`: at most 205 DSPs, convs a window row a step and their ReLU inside, one
-64-bit read port; T = 76 104 / 228 312 / 419 328 cycles a patch; the chain in
+`--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
+memories (conv3x3_lines), a tap or a window column a step, their ReLU inside, one 64-bit read
+port; T = 76 176 / 228 528 / 420 864 cycles a patch; the chain in
 src/hls/sp_unet_small_opt_direct_zynq7020/), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)

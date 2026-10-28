@@ -8,33 +8,33 @@
 #include "../../../weights/quantized/sp_unet_medium/sp_unet_medium_int8.hpp"
 namespace q = sp_unet_medium_int8;
 
-// The DSPs set the pace: every process takes at most T = 228 312 cycles a patch,
-// about 1 946 ms for a 598 x 1092 capture at 78.1 MHz (the board's 12.8 ns). A conv
-// layer takes (H x W + W + 1) x IN/PI x OUT/PO x 3/KR cycles a patch
-// (conv3x3_grouped), with 3 x KR x PI x PO multipliers; the table is the
-// fastest that fits 205 DSPs.
+// The DSPs set the pace: every process takes at most T = 228 528 cycles a patch,
+// about 1 948 ms for a 598 x 1092 capture at 78.1 MHz (the board's 12.8 ns). A conv
+// layer takes (H x W + W + 2) x 9/KT x IN/PI x OUT/PO cycles a patch
+// (conv3x3_lines), with KT x PI x PO multipliers; the table is the fastest
+// that fits 205 DSPs.
 namespace cfg {
 constexpr int P1 = 4;               // convsp1: 4 bands a chunk, 28 chunks
 constexpr int SP1_PASSES = 6;       // ... x 6 passes over its pairs: 172 032 cycles a patch, 8 DSPs
-constexpr bool ZSCORE_DSP = false;  // the z-score's 4 multipliers in LUTs
+constexpr bool ZSCORE_DSP = true;  // the z-score's 4 multipliers on DSPs
 constexpr int SP2_PI = 2, SP2_PO = 1;  // convsp2 24 -> 16: 12 x 16 = 192 cycles a pixel (196 608), 2 DSPs
 constexpr bool SP2_DSP = true;
 constexpr int SP3_PI = 1, SP3_PO = 1;  // convsp3 16 -> 12: 16 x 12 = 192 cycles a pixel (196 608), 1 DSPs
 constexpr bool SP3_DSP = true;
 constexpr int FIN_PI = 1, FIN_PO = 1;  // final 12 -> 3: 12 x 3 = 36 cycles a pixel (36 864), 1 DSP
 constexpr bool FIN_DSP = true;
-//                       PI  PO KR DSP           channels  cycles a pixel          a patch    multipliers
-typedef spu7_layer< 4, 1, 1, true> D1A;  // 12 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   12
-typedef spu7_layer< 8, 1, 1, true> D1B;  // 24 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   24
-typedef spu7_layer< 6, 1, 1, true> D2A;  // 24 -> 48   4 x 48 x 3 =  576 a pixel  x  273 = 157 248   18
-typedef spu7_layer< 3, 3, 1, true> D2B;  // 48 -> 48  16 x 16 x 3 =  768 a pixel  x  273 = 209 664   27
-typedef spu7_layer< 3, 3, 1, true> UP1;  // 48 -> 48  16 x 16 x 3 =  768 a pixel  x  273 = 209 664   27
-typedef spu7_layer< 6, 1, 1, true> D3A;  // 48 -> 24   8 x 24 x 3 =  576 a pixel  x  273 = 157 248   18
-typedef spu7_layer< 3, 1, 1, true> D3B;  // 24 -> 24   8 x 24 x 3 =  576 a pixel  x  273 = 157 248    9
-typedef spu7_layer< 8, 1, 1, true> UP2;  // 24 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   24
-typedef spu7_layer< 8, 1, 1, true> D4A;  // 48 -> 12   6 x 12 x 3 =  216 a pixel  x 1057 = 228 312   24
-typedef spu7_layer< 2, 1, 1, true> D4B;  // 12 -> 12   6 x 12 x 3 =  216 a pixel  x 1057 = 228 312    6
-// DSPs: 189 convs + 8 convsp1 + 4 convsp2/3 and final = 201 of 220 (the budget: 205).
+//                       PI  PO KT DSP           channels  taps x in x out groups      a patch    multipliers
+typedef spu7_layer<12, 1, 1, true> D1A;  // 12 -> 24  9 x  1 x 24 =  216 a pixel  x 1058 = 228 528   12
+typedef spu7_layer<24, 1, 1, true> D1B;  // 24 -> 24  9 x  1 x 24 =  216 a pixel  x 1058 = 228 528   24
+typedef spu7_layer< 8, 2, 1, true> D2A;  // 24 -> 48  9 x  3 x 24 =  648 a pixel  x  274 = 177 552   16
+typedef spu7_layer< 3, 3, 3, true> D2B;  // 48 -> 48  3 x 16 x 16 =  768 a pixel  x  274 = 210 432   27
+typedef spu7_layer< 3, 3, 3, true> UP1;  // 48 -> 48  3 x 16 x 16 =  768 a pixel  x  274 = 210 432   27
+typedef spu7_layer<16, 1, 1, true> D3A;  // 48 -> 24  9 x  3 x 24 =  648 a pixel  x  274 = 177 552   16
+typedef spu7_layer< 8, 1, 1, true> D3B;  // 24 -> 24  9 x  3 x 24 =  648 a pixel  x  274 = 177 552    8
+typedef spu7_layer<24, 1, 1, true> UP2;  // 24 -> 24  9 x  1 x 24 =  216 a pixel  x 1058 = 228 528   24
+typedef spu7_layer<24, 1, 1, true> D4A;  // 48 -> 12  9 x  2 x 12 =  216 a pixel  x 1058 = 228 528   24
+typedef spu7_layer< 6, 1, 1, true> D4B;  // 12 -> 12  9 x  2 x 12 =  216 a pixel  x 1058 = 228 528    6
+// DSPs: 184 convs + 8 convsp1 + 4 convsp2/3 and final + 4 z-score = 200 of 220 (the budget: 205).
 }
 
 #include "../sp_unet_small_opt_direct_zynq7020/sp_unet_direct_zynq7020_dataflow.hpp"

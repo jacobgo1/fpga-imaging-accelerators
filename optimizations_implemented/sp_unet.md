@@ -46,9 +46,9 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
 | `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
 | `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 196 DSPs; bit-exact in C++; predicted 649 ms. First build 124 % of the LUTs; cut, to be built again |
-| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 201 DSPs; predicted 1.95 s |
-| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 184 DSPs; predicted 3.6 s |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; bit-exact in C++; predicted 649 ms. First build 124 % of the LUTs; cut, to be built again |
+| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 200 DSPs; predicted 1.95 s |
+| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 184 DSPs; predicted 3.59 s |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -295,8 +295,9 @@ below), and the LUTs and flip-flops are what is short. So:
 
 | | ZCU104 direct | Zynq-7020 direct |
 |---|---|---|
-| DSPs | 1 184-1 452 | **197 / 197 / 192** (small / medium / large), at most 205 |
-| A conv's step | PI x PO x the whole 3x3 window (9 multipliers a unit) | PI x PO x **one row of the window** (`conv3x3_grouped`'s `KR = 1`): sized in units of 3 DSPs, not 9 |
+| DSPs | 1 184-1 452 | **195 / 200 / 184** (small / medium / large), at most 205 |
+| A conv's 3x3 window | in registers (9 x IN activations), picked by multiplexers | **in three row memories** (`conv3x3_lines`): a step reads one column of the window at one address; no window registers |
+| A conv's step | PI x PO x the whole window (9 multipliers a unit) | PI x PO x **one tap or one column** of the window (`KT` = 1 or 3): sized in units of 1-3 DSPs, not 9 |
 | ReLU and rounding | `relu_act` / ReLU modules, 32-bit sums on the FIFOs, every channel rounded at once | **inside every conv** (`RELU_SHIFT`), rounded as each output group finishes (PO rounding units, not OUT): int16 activations on every FIFO, 7 processes fewer, the pooling only takes maxima (SHIFT 0) |
 | convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`), a pass's pairs rounded at a time |
 | convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`pointwise`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
@@ -306,30 +307,35 @@ below), and the LUTs and flip-flops are what is short. So:
 | Clock | 214 MHz | the board's 12.8 ns (78.1 MHz) |
 
 Finer steps were worth it: with whole-window steps the fastest tables within 205 DSPs were
-78 624 / 304 416 / 541 184 cycles a patch; a row a step gives 76 104 / 228 312 / 419 328 (-3 %,
--25 %, -23 %). The 16-deep FIFOs were checked with the pipeline-stall model for the 7020 small
+78 624 / 304 416 / 541 184 cycles a patch; a tap or a column a step gives 76 176 / 228 528 / 420 864
+(-3 %, -25 %, -22 %). The window in memory: in registers, the ten convs' windows alone would take
+23.6 k / 45 k / 60 k of the 106 k flip-flops (small / medium / large), and multiplexers to pick each
+step's channels out of them, on top of the rest (small's first csynth: 92.5 k flip-flops estimated). The 16-deep FIFOs were checked with the pipeline-stall model for the 7020 small
 table: 81 386 cycles a patch with 2-deep FIFOs (+7 %), 79 190 with 4, 76 202 with 16.
 
-| Layer (PI x PO x KR, cycles a patch) | small | medium | large |
+| Layer (PI x PO x KT, cycles a patch) | small | medium | large |
 |---|---|---|---|
 | convsp1 (P1, passes) | 73 728 (20, 12) | 172 032 (4, 6) | 229 376 (4, 8) |
-| double1 a / b | **76 104** (6x1x1) / **76 104** (6x1x1) | **228 312** (4x1x1) / **228 312** (8x1x1) | 405 888 (4x1x1) / 405 888 (8x1x1) |
-| double2 a / b | 58 968 (4x1x1) / 58 968 (8x1x1) | 157 248 (6x1x1) / 209 664 (3x3x1) | **419 328** (4x1x1) / **419 328** (8x1x1) |
-| up1 | 58 968 (8x1x1) | 209 664 (3x3x1) | **419 328** (8x1x1) |
-| double3 a / b | 58 968 (4x1x1) / 58 968 (2x1x1) | 157 248 (6x1x1) / 157 248 (3x1x1) | **419 328** (4x1x1) / **419 328** (2x1x1) |
-| up2 | **76 104** (6x1x1) | **228 312** (8x1x1) | 405 888 (8x1x1) |
-| double4 a / b | **76 104** (8x1x1) / 67 648 (1x1x3) | **228 312** (8x1x1) / **228 312** (2x1x1) | 405 888 (8x1x1) / 405 888 (2x1x1) |
-| **T** | **76 104** | **228 312** | **419 328** |
-| DSPs (convs + convsp1 + convsp2/3, final + z-score) | 165 + 20 + 7 + 4 = **196** | 189 + 8 + 4 = **201** | 168 + 8 + 4 + 4 = **184** |
-| Block RAM (rough: weights as ROM and copy, skip FIFO) | ~30 of 140 BRAM36 | ~65 | ~105 |
+| double1 a / b | **76 176** (6x3x1) / **76 176** (6x3x1) | **228 528** (12x1x1) / **228 528** (24x1x1) | 406 272 (4x1x3) / 406 272 (8x1x3) |
+| double2 a / b | 59 184 (12x1x1) / 59 184 (24x1x1) | 157 824 (8x2x1) / 210 432 (3x3x3) | **420 864** (4x1x3) / **420 864** (8x1x3) |
+| up1 | 59 184 (24x1x1) | 210 432 (3x3x3) | **420 864** (8x1x3) |
+| double3 a / b | 59 184 (12x1x1) / 59 184 (6x1x1) | 157 824 (16x1x1) / 157 824 (8x1x1) | **420 864** (4x1x3) / **420 864** (2x1x3) |
+| up2 | **76 176** (6x3x1) | **228 528** (24x1x1) | 406 272 (8x1x3) |
+| double4 a / b | **76 176** (24x1x1) / **76 176** (8x1x1) | **228 528** (24x1x1) / **228 528** (6x1x1) | 406 272 (8x1x3) / 406 272 (2x1x3) |
+| **T** | **76 176** | **228 528** | **420 864** |
+| DSPs (convs + convsp1 + convsp2/3, final + z-score) | 164 + 20 + 7 + 4 = **195** | 184 + 8 + 4 + 4 = **200** | 168 + 8 + 4 + 4 = **184** |
+| Block RAM (rough: weights as ROM and copy, row memories, skip FIFO) | ~35 of 140 BRAM36 | ~75 | ~115 |
+
+A conv layer takes (H x W + W + 2) x 9/KT x IN/PI x OUT/PO cycles a patch, with KT x PI x PO
+multipliers (the window trails the input by a row and two pixels).
 
 ### Predicted times
 
 | Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
 |---|---|---|---|
-| `sp_unet_small_opt_direct_zynq7020` | 76 104 | **649 ms** | 507 ms |
-| `sp_unet_medium_opt_direct_zynq7020` | 228 312 | **1.95 s** | 1.52 s |
-| `sp_unet_large_opt_direct_zynq7020` | 419 328 | **3.58 s** | 2.79 s |
+| `sp_unet_small_opt_direct_zynq7020` | 76 176 | **649 ms** | 507 ms |
+| `sp_unet_medium_opt_direct_zynq7020` | 228 528 | **1.95 s** | 1.52 s |
+| `sp_unet_large_opt_direct_zynq7020` | 420 864 | **3.59 s** | 2.80 s |
 
 Predicted the same way as the ZCU104 direct kernels' (see "Predicted and measured times"): the
 slowest process's cycles a patch, from the table; the pipeline-stall model for the FIFOs;
@@ -344,10 +350,13 @@ measurements.
   modules' 32-bit rounding. Cut (the same answers): every conv rounds only its PO lanes as each
   output group finishes and sends activations; the pooling modules then only take maxima; convsp2/3,
   the final layer and the z-score on 1-4 DSPs (`pointwise`'s `PI`); convsp1 rounds a pass at a time.
-- **LUTs and flip-flops** remain the risk, large most: each conv keeps its 3x3 window of every
-  input channel in registers (9 x 64 x 16 bits on the 64-channel layers) and picks the step's
-  channels and row with a multiplexer. If large does not fit, the FIFOs between the processes
-  can go back to 2 deep (+7 % time, a few thousand LUTs less), and convsp3 to LUTs.
+- **LUTs and flip-flops**: the windows are in memory now; what is left in LUTs are the FIFOs
+  between the processes (16 deep, wider on the larger models), the reader and pixel buffer, and
+  each conv's adder tree and control. If one does not fit, the FIFOs can go back to 2 deep (+7 %
+  time, a few thousand LUTs less).
+- **Block RAM** is the next to watch on large (~115 of 140): the weights are stored twice (the
+  ROM and the copy each conv reads), and the skip FIFO is 2 048 deep. Generated weight memories
+  (once) or a 1 024-deep skip FIFO would free ~35 and ~15.
 - **Speed**: the Winograd design would need 2.3x fewer multiplies, but more LUTs, which this chip
   has least of; not tried here.
 
@@ -432,3 +441,16 @@ the aegean pixels (small / medium / large).
   take activations, SHIFT 0, `relu_in`); `pointwise` takes PI inputs a step (convsp2/3 and final on 1-4
   DSPs instead of up to 32 LUT multipliers); `pointwise_packed` rounds a pass's pairs at a time; z-score
   on DSPs on small and large. DSPs 196 / 201 / 184, the same T. Bit-exact; the other kernels unchanged.
+- 2026-10-28: csynth of the cut small 7020 kernel: HLS's LUT estimate 121 293 -> 93 231 (-23 %); the first
+  build's real count was 66 239 for HLS's 121 293, so ~51 000 of 53 200 expected (~96 %). DSP 201 (5 more
+  than the table: HLS put something else on DSPs), FF 92 496 estimated (87 %), BRAM18 116 / 280; interval
+  76 119 cycles a patch, as predicted; clock estimate 9.93 ns (~100 MHz) against the 12.8 ns target.
+- 2026-10-28: 7020 convs keep their 3x3 window in three row memories (`conv3x3_lines`: a step reads one
+  column of the window at one address; one tap or a column a step, `KT`): the window registers would
+  have taken 45 k / 60 k of the 106 k flip-flops on medium / large. New tables: DSPs 195 / 200 / 184,
+  T = 76 176 / 228 528 / 420 864 cycles a patch (the window trails by W + 2). Bit-exact; 9 injected
+  bugs caught. The small build running when this was made is of the earlier engine (`conv3x3_grouped`).
+- 2026-10-28: second small 7020 build (the LUT cuts, still `conv3x3_grouped`): past the LUT check, but
+  placement failed: 7 816 slices needed, 6 321 free of 13 300 (LUTs ~96 %, flip-flops ~87 %, too many
+  to pack into slices together). The row-memory engine (`conv3x3_lines`) removes the window registers,
+  ~23.6 k of small's flip-flops, and the multiplexers on them: to be built.

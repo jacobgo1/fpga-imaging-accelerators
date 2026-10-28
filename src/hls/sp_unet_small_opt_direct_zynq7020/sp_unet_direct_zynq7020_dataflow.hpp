@@ -10,7 +10,7 @@
 #include "../../optimized/shared/pixel_buffer.hpp"
 #include "../../optimized/zynq7020/pointwise_wide.hpp"
 #include "../../optimized/shared/pointwise.hpp"
-#include "../../optimized/shared/conv3x3_grouped.hpp"
+#include "../../optimized/shared/conv3x3_lines.hpp"
 #include "../../optimized/shared/relu_pool_skip.hpp"
 #include "../../optimized/shared/relu_pool_up.hpp"
 #include "../../optimized/shared/relu_up.hpp"
@@ -19,11 +19,12 @@
 #include "../../optimized/shared/count_cycles.hpp"
 
 // A conv layer's template arguments from its table entry and fractions. Every
-// conv sends ReLU'd activations, rounded to ACT_FRAC as each output group
+// conv keeps its 3x3 window in three row memories (conv3x3_lines: the window
+// registers alone would not fit the 7020's flip-flops on medium and large) and sends ReLU'd activations, rounded to ACT_FRAC as each output group
 // finishes: the pooling and upsampling after double1b, double2b and double3b
 // only take maxima and copy (their SHIFT 0), and no 32-bit sums cross a FIFO.
 #define SPU7_CONV(L, F, layer) cfg::L::PI, cfg::L::PO, F::BIAS_SHIFT, q::layer##_weight, \
-                               q::layer##_bias, cfg::L::DSP, cfg::L::KR, F::SHIFT
+                               q::layer##_bias, cfg::L::DSP, cfg::L::KT, F::SHIFT
 
 static void sp_unet_direct_zynq7020_dataflow(hls::burst_maxi<spu_raw_t> din0, hls::burst_maxi<spu_out_t> dout,
                                              int height, int width, uint32_t& cycles)
@@ -110,25 +111,25 @@ static void sp_unet_direct_zynq7020_dataflow(hls::burst_maxi<spu_raw_t> din0, hl
               q::convsp3_weight, q::convsp3_bias, cfg::SP3_DSP, cfg::SP3_PI>(s_sp2, s_stem, height, width);
 
     // The encoder: double1 at 32 x 32 (its output also the skip), double2 at 16 x 16.
-    conv3x3_grouped<H, W, H, W, S3, C1, SPU7_CONV(D1A, F_D1A, double1_block_0)>(s_stem, s_a1, height, width);
-    conv3x3_grouped<H, W, H, W, C1, C1, SPU7_CONV(D1B, F_D1B, double1_block_3)>(s_a1, s_d1b, height, width);
+    conv3x3_lines<H, W, H, W, S3, C1, SPU7_CONV(D1A, F_D1A, double1_block_0)>(s_stem, s_a1, height, width);
+    conv3x3_lines<H, W, H, W, C1, C1, SPU7_CONV(D1B, F_D1B, double1_block_3)>(s_a1, s_d1b, height, width);
     relu_pool_skip<H, W, H, W, 0>(s_d1b, s_skip, s_pool1, height, width);   // -> 16 x 16
-    conv3x3_grouped<H, W, H2, W2, C1, C2, SPU7_CONV(D2A, F_D2A, double2_block_0)>(s_pool1, s_a2, height, width);
-    conv3x3_grouped<H, W, H2, W2, C2, C2, SPU7_CONV(D2B, F_D2B, double2_block_3)>(s_a2, s_d2b, height, width);
+    conv3x3_lines<H, W, H2, W2, C1, C2, SPU7_CONV(D2A, F_D2A, double2_block_0)>(s_pool1, s_a2, height, width);
+    conv3x3_lines<H, W, H2, W2, C2, C2, SPU7_CONV(D2B, F_D2B, double2_block_3)>(s_a2, s_d2b, height, width);
     // pool to 8 x 8, then nearest up to 16 x 16: each 2x2 block its maximum
     relu_pool_up<H, W, H2, W2, 0>(s_d2b, s_pool2, height, width);
 
     // The decoder: up1's conv at 16 x 16, double3, up to 32 x 32, up2's conv.
-    conv3x3_grouped<H, W, H2, W2, C2, C2, SPU7_CONV(UP1, F_UP1, up1_1)>(s_pool2, s_u1, height, width);
-    conv3x3_grouped<H, W, H2, W2, C2, C3, SPU7_CONV(D3A, F_D3A, double3_block_0)>(s_u1, s_a3, height, width);
-    conv3x3_grouped<H, W, H2, W2, C3, C3, SPU7_CONV(D3B, F_D3B, double3_block_3)>(s_a3, s_d3b, height, width);
+    conv3x3_lines<H, W, H2, W2, C2, C2, SPU7_CONV(UP1, F_UP1, up1_1)>(s_pool2, s_u1, height, width);
+    conv3x3_lines<H, W, H2, W2, C2, C3, SPU7_CONV(D3A, F_D3A, double3_block_0)>(s_u1, s_a3, height, width);
+    conv3x3_lines<H, W, H2, W2, C3, C3, SPU7_CONV(D3B, F_D3B, double3_block_3)>(s_a3, s_d3b, height, width);
     relu_up<H, W, H2, W2, 0>(s_d3b, s_dec3, height, width);               // -> 32 x 32
-    conv3x3_grouped<H, W, H, W, C3, C3, SPU7_CONV(UP2, F_UP2, up2_1)>(s_dec3, s_u2, height, width);
+    conv3x3_lines<H, W, H, W, C3, C3, SPU7_CONV(UP2, F_UP2, up2_1)>(s_dec3, s_u2, height, width);
 
     // The skip connection, then double4 and the final 1x1 conv: the scores.
     concat_pixels<H, W, H * W, C3, C1>(s_u2, s_skip, s_cat, height, width);
-    conv3x3_grouped<H, W, H, W, C3 + C1, C4, SPU7_CONV(D4A, F_D4A, double4_block_0)>(s_cat, s_a4, height, width);
-    conv3x3_grouped<H, W, H, W, C4, C4, SPU7_CONV(D4B, F_D4B, double4_block_3)>(s_a4, s_dec4, height, width);
+    conv3x3_lines<H, W, H, W, C3 + C1, C4, SPU7_CONV(D4A, F_D4A, double4_block_0)>(s_cat, s_a4, height, width);
+    conv3x3_lines<H, W, H, W, C4, C4, SPU7_CONV(D4B, F_D4B, double4_block_3)>(s_a4, s_dec4, height, width);
     pointwise<H, W, H * W, C4, CLASSES, cfg::FIN_PO, 1, false, F_FIN::BIAS_SHIFT, F_FIN::SHIFT,
               q::final_weight, q::final_bias, cfg::FIN_DSP, cfg::FIN_PI>(s_dec4, s_scores, height, width);
     store_scores<H, W, F_FIN::SHIFT>(s_scores, dout, height, width, s_finished);

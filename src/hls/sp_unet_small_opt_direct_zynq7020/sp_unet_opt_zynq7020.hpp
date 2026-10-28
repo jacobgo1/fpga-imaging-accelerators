@@ -19,14 +19,17 @@
 //   up1 (conv) ─► double3 (conv, conv) ─► up ─► up2 (conv) ─► cat ◄─────────────┘
 //   ─► double4 (conv, conv) ─► final 1x1 ─► store (HP1)      every conv with its ReLU
 //
-// - Every multiplier counts: a conv may take one row of its 3x3 window a step
-//   (conv3x3_grouped's KR = 1), so its size goes in steps of 3 DSPs, not 9;
+// - Every multiplier counts: a conv takes one tap or one column of its 3x3
+//   window a step (conv3x3_lines' KT = 1 or 3), so its size goes in steps of 1-3
+//   DSPs, not 9;
 //   convsp1 packs two multiplies per DSP48E1 (16 bits apart, groups of 2) and
 //   goes over its output pairs in passes (zynq7020/pointwise_wide.hpp);
 //   convsp2/3 and the final layer have time to spare, and take PI inputs a
 //   step on 1-4 DSPs (the .cpp's table).
 // - LUTs and flip-flops are the scarce part (the first small build needed 66 k
-//   LUTs of 53 k): every conv sends ReLU'd int16 activations itself, rounded as
+//   LUTs of 53 k; the 3x3 windows in registers would take 45 k of the 106 k
+//   flip-flops on medium, 60 k on large): every conv keeps its window in three
+//   row memories (conv3x3_lines) and sends ReLU'd int16 activations itself, rounded as
 //   each output group finishes (conv3x3_grouped's RELU_SHIFT: PO rounding units,
 //   not OUT), so no 32-bit sums cross a FIFO and the pooling only takes maxima;
 //   convsp2/3, the final layer and the z-score on a few DSPs (pointwise's PI), not
@@ -62,11 +65,11 @@ typedef hls::vector<uint16_t, PORT_BANDS> spu_raw_t;
 // One pixel of dout: 3 scores and the class, 128 bits.
 typedef hls::vector<int32_t, 4> spu_out_t;
 
-// A conv layer's size in a kernel's table: PI input x PO output channels x KR
-// rows of the 3x3 window a cycle, its multipliers in DSPs or in LUTs.
-template<int PI_, int PO_, int KR_, bool DSP_>
+// A conv layer's size in a kernel's table: PI input x PO output channels x KT
+// taps of the 3x3 window a cycle (1, or a column of 3), its multipliers in DSPs or in LUTs.
+template<int PI_, int PO_, int KT_, bool DSP_>
 struct spu7_layer {
-    static constexpr int PI = PI_, PO = PO_, KR = KR_;
+    static constexpr int PI = PI_, PO = PO_, KT = KT_;
     static constexpr bool DSP = DSP_;
 };
 

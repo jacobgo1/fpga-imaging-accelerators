@@ -8,11 +8,11 @@
 #include "../../../weights/quantized/sp_unet_large/sp_unet_large_int8.hpp"
 namespace q = sp_unet_large_int8;
 
-// The DSPs set the pace: every process takes at most T = 419 328 cycles a patch,
-// about 3 575 ms for a 598 x 1092 capture at 78.1 MHz (the board's 12.8 ns). A conv
-// layer takes (H x W + W + 1) x IN/PI x OUT/PO x 3/KR cycles a patch
-// (conv3x3_grouped), with 3 x KR x PI x PO multipliers; the table is the
-// fastest that fits 205 DSPs.
+// The DSPs set the pace: every process takes at most T = 420 864 cycles a patch,
+// about 3 588 ms for a 598 x 1092 capture at 78.1 MHz (the board's 12.8 ns). A conv
+// layer takes (H x W + W + 2) x 9/KT x IN/PI x OUT/PO cycles a patch
+// (conv3x3_lines), with KT x PI x PO multipliers; the table is the fastest
+// that fits 205 DSPs.
 namespace cfg {
 constexpr int P1 = 4;               // convsp1: 4 bands a chunk, 28 chunks
 constexpr int SP1_PASSES = 8;       // ... x 8 passes over its pairs: 229 376 cycles a patch, 8 DSPs
@@ -23,17 +23,17 @@ constexpr int SP3_PI = 1, SP3_PO = 1;  // convsp3 16 -> 16: 16 x 16 = 256 cycles
 constexpr bool SP3_DSP = true;
 constexpr int FIN_PI = 1, FIN_PO = 1;  // final 16 -> 3: 16 x 3 = 48 cycles a pixel (49 152), 1 DSP
 constexpr bool FIN_DSP = true;
-//                       PI  PO KR DSP           channels  cycles a pixel          a patch    multipliers
-typedef spu7_layer< 4, 1, 1, true> D1A;  // 16 -> 32   4 x 32 x 3 =  384 a pixel  x 1057 = 405 888   12
-typedef spu7_layer< 8, 1, 1, true> D1B;  // 32 -> 32   4 x 32 x 3 =  384 a pixel  x 1057 = 405 888   24
-typedef spu7_layer< 4, 1, 1, true> D2A;  // 32 -> 64   8 x 64 x 3 = 1536 a pixel  x  273 = 419 328   12
-typedef spu7_layer< 8, 1, 1, true> D2B;  // 64 -> 64   8 x 64 x 3 = 1536 a pixel  x  273 = 419 328   24
-typedef spu7_layer< 8, 1, 1, true> UP1;  // 64 -> 64   8 x 64 x 3 = 1536 a pixel  x  273 = 419 328   24
-typedef spu7_layer< 4, 1, 1, true> D3A;  // 64 -> 32  16 x 32 x 3 = 1536 a pixel  x  273 = 419 328   12
-typedef spu7_layer< 2, 1, 1, true> D3B;  // 32 -> 32  16 x 32 x 3 = 1536 a pixel  x  273 = 419 328    6
-typedef spu7_layer< 8, 1, 1, true> UP2;  // 32 -> 32   4 x 32 x 3 =  384 a pixel  x 1057 = 405 888   24
-typedef spu7_layer< 8, 1, 1, true> D4A;  // 64 -> 16   8 x 16 x 3 =  384 a pixel  x 1057 = 405 888   24
-typedef spu7_layer< 2, 1, 1, true> D4B;  // 16 -> 16   8 x 16 x 3 =  384 a pixel  x 1057 = 405 888    6
+//                       PI  PO KT DSP           channels  taps x in x out groups      a patch    multipliers
+typedef spu7_layer< 4, 1, 3, true> D1A;  // 16 -> 32  3 x  4 x 32 =  384 a pixel  x 1058 = 406 272   12
+typedef spu7_layer< 8, 1, 3, true> D1B;  // 32 -> 32  3 x  4 x 32 =  384 a pixel  x 1058 = 406 272   24
+typedef spu7_layer< 4, 1, 3, true> D2A;  // 32 -> 64  3 x  8 x 64 = 1536 a pixel  x  274 = 420 864   12
+typedef spu7_layer< 8, 1, 3, true> D2B;  // 64 -> 64  3 x  8 x 64 = 1536 a pixel  x  274 = 420 864   24
+typedef spu7_layer< 8, 1, 3, true> UP1;  // 64 -> 64  3 x  8 x 64 = 1536 a pixel  x  274 = 420 864   24
+typedef spu7_layer< 4, 1, 3, true> D3A;  // 64 -> 32  3 x 16 x 32 = 1536 a pixel  x  274 = 420 864   12
+typedef spu7_layer< 2, 1, 3, true> D3B;  // 32 -> 32  3 x 16 x 32 = 1536 a pixel  x  274 = 420 864    6
+typedef spu7_layer< 8, 1, 3, true> UP2;  // 32 -> 32  3 x  4 x 32 =  384 a pixel  x 1058 = 406 272   24
+typedef spu7_layer< 8, 1, 3, true> D4A;  // 64 -> 16  3 x  8 x 16 =  384 a pixel  x 1058 = 406 272   24
+typedef spu7_layer< 2, 1, 3, true> D4B;  // 16 -> 16  3 x  8 x 16 =  384 a pixel  x 1058 = 406 272    6
 // DSPs: 168 convs + 8 convsp1 + 4 convsp2/3 and final + 4 z-score = 184 of 220 (the budget: 205).
 }
 
