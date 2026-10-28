@@ -109,3 +109,14 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 - 2026-10-21: Zynq-7030 and 7020: `s_b`/`s_c` FIFO depths (32 and 64, matching ZCU104 so `relu_pool_up`
   and `relu_up` never stall on the default 2-deep FIFOs) and `read_rows_ahead` (4 bursts of 8 pixels =
   240 words per row, 2 in flight per port); shared `patch_buffer_run` in `src/optimized/shared/patch_buffer.hpp`.
+- 2026-10-27: ZCU104 measured 6 707 cycles a patch, 17.8 ms at 250 MHz (conv1: 4 129). Not the FIFOs
+  between the stages: a cycle model with HLS's pipeline stalls (the one that matched
+  sp_unet_small_opt_direct within 0.3 %) gives 4 140 with ideal memory, as built, because every
+  stage after conv1 has time to spare. With DDR in the model, the kernel takes exactly as long as the
+  read-only kernel (`patch_buffer` hides nothing and loses nothing; deeper `s_raw` changes nothing):
+  6 707 cycles at 250 MHz is DDR giving the four ports ~9.2 GB/s together. conv1's 4 129 would need
+  ~14.9 GB/s. So it is memory-bound: compare in microseconds, not cycles (26.8 us a patch); a faster
+  clock adds cycles, not speed. To confirm: `justounetsimple_opt_readonly` at 250 MHz, ~6 700 cycles a patch.
+  Repeated runs give 6 700-7 000 cycles a patch, different each time: what a memory-bound kernel does
+  (DDR is shared with the ARM, refresh, page conflicts that depend on where the buffer lies); a
+  logic-bound one gives the same count every run (sp_unet_small_opt_direct: 11 503 twice, at two clocks).

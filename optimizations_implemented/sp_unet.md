@@ -44,8 +44,11 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
-| `sp_unet_medium_opt_direct` | ZCU104 | 5 ns | the same |
-| `sp_unet_large_opt_direct` | ZCU104 | 5 ns | the same |
+| `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
+| `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 (`--board zynq7020`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 197 DSPs; bit-exact in C++; predicted 649 ms, not yet synthesized |
+| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 | 12.8 ns | the same, 197 DSPs; predicted 1.95 s |
+| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 | 12.8 ns | the same, 192 DSPs; predicted 3.6 s |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -213,13 +216,39 @@ LUTs.
 | double4 a / b | 8 456 (24×1) / 8 456 (8×1) | 33 824 (6×3) / 25 368 (6×1) | 67 648 (16×1) / 67 648 (4×1) |
 | **T** | **9 828** | **34 944** | **69 888** |
 | DSPs (convs + convsp1 + convsp2/3) | 1 188 + 192 + 72 = **1 452** (84 %) | 1 161 + 96 + 40 = **1 297** (75 %) | 1 008 + 128 + 48 = **1 184** (69 %) |
-| 665 patches at 187.5 MHz | **34.9 ms** | **124 ms** | **248 ms** |
-| measured, FPGA alone | **30.6 ms at 214 MHz** (9 856 cycles a patch; 41 ms / 11 503 with 2-deep FIFOs) | – | – |
+| predicted, 665 patches at 187.5 MHz | 34.9 ms | 124 ms | 248 ms |
+| predicted, 665 patches at 214 MHz | 30.6 ms (9 839 cycles a patch) | 109 ms (34 960) | 218 ms (69 900) |
+| **measured, FPGA alone, 214 MHz** | **30.6 ms** (9 856 cycles a patch; 41 ms / 11 503 with 2-deep FIFOs) | **as predicted** | **as predicted** |
 | Winograd kernel, for comparison | 14.5 ms, 1 474 DSPs | 43.6 ms, 1 368 | 58.2 ms, 1 440 |
 
 A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch, with 9 x PI x PO
 multipliers. Large has every channel count a power of two, so its only table between 1 136
 and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100.
+
+### Predicted and measured times, and how the predictions are made
+
+| Kernel | Predicted cycles a patch | Predicted, 665 patches at 214 MHz | Measured |
+|---|---|---|---|
+| `sp_unet_small_opt_direct` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms) |
+| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **as predicted** (2026-10-28) |
+| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **as predicted** (2026-10-28) |
+
+Why these are predictions: they come from a model of the design, made before the kernel ran,
+not from a run.
+- **Cycles a patch:** every process works on one patch after another, so the slowest one sets the
+  pace, T. A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch (its pixels plus the
+  W + 1 steps its 3x3 window trails the input, IN/PI x OUT/PO steps each, one a cycle at II = 1),
+  plus its loop's exit (~12-15 cycles). HLS's csynth report gives the same per process (an interval
+  of 9 842 a patch for small).
+- **That the processes do not slow each other down:** checked with a cycle model of the whole chain
+  that stalls the way HLS pipelines do (reads at issue, writes at the loop depth from hls.log, the
+  whole pipeline frozen while one read or write waits). It reproduced the board within 0.3 % both
+  with the 2-deep FIFOs (11 472 against 11 503) and with the 16-deep ones (9 839 against 9 856).
+- **That memory is not the limit:** the reads needed at T (245 KB a patch: 5.3 / 1.5 / 0.75 GB/s for
+  small / medium / large at 214 MHz) are below what the four ports get from DDR (~9.2 GB/s measured
+  with justounetsimple_opt).
+- **Time:** (patches + 1) x T / clock; the + 1 is the first patch's way through the chain. The clock
+  is the one the bitstream was built for: 214 MHz.
 
 ### Equal-rate processes need deep FIFOs between them
 
@@ -251,6 +280,71 @@ with 2-deep FIFOs. Only the model with the real pipeline behaviour (reads at iss
 loop depth from hls.log, the whole pipeline frozen on any wait, loops drained at their exit)
 reproduced the board, within 0.3 %. Deeper FIFOs in front of the DDR readers (`s_raw`, tried first)
 changed nothing.
+
+## The Zynq-7020 kernels (`sp_unet_SIZE_opt_direct_zynq7020`)
+
+The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the same
+arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
+chip with 220 DSP48E1 (these use at most 205), 53 k LUTs, 106 k flip-flops, 140 BRAM36, no
+UltraRAM and 64-bit HP ports. The design: `src/hls/sp_unet_small_opt_direct_zynq7020/
+sp_unet_opt_zynq7020.hpp`; the chain, shared by the sizes: `sp_unet_direct_zynq7020_dataflow.hpp`;
+each size's table in its `.cpp`.
+
+On this chip the DSPs set the pace (the reads need 30 720 cycles a patch through one port, far
+below), and the LUTs and flip-flops are what is short. So:
+
+| | ZCU104 direct | Zynq-7020 direct |
+|---|---|---|
+| DSPs | 1 184-1 452 | **197 / 197 / 192** (small / medium / large), at most 205 |
+| A conv's step | PI x PO x the whole 3x3 window (9 multipliers a unit) | PI x PO x **one row of the window** (`conv3x3_grouped`'s `KR = 1`): sized in units of 3 DSPs, not 9 |
+| ReLU between two convs | `relu_act` processes, 32-bit sums on the FIFOs | **inside the conv** (`RELU_SHIFT`): int16 activations on the FIFOs, 7 processes fewer |
+| convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`) |
+| convsp2 / convsp3 / final | DSPs / DSPs / LUTs | LUTs, or DSPs where the budget leaves room (convsp3 on small and large) |
+| Read ports | 4 x 128 bit | **1 x 64 bit** (30 720 cycles a patch; T is 76 000 or more) |
+| FIFOs between the processes | 16 deep, shift registers | 16 deep, **LUTRAM** (about 0.7 LUT a bit, not 1) |
+| Skip FIFO | UltraRAM | block RAM, 2 048 deep |
+| Clock | 214 MHz | the board's 12.8 ns (78.1 MHz) |
+
+Finer steps were worth it: with whole-window steps the fastest tables within 205 DSPs were
+78 624 / 304 416 / 541 184 cycles a patch; a row a step gives 76 104 / 228 312 / 419 328 (-3 %,
+-25 %, -23 %). The 16-deep FIFOs were checked with the pipeline-stall model for the 7020 small
+table: 81 386 cycles a patch with 2-deep FIFOs (+7 %), 79 190 with 4, 76 202 with 16.
+
+| Layer (PI x PO x KR, cycles a patch) | small | medium | large |
+|---|---|---|---|
+| convsp1 (P1, passes) | 73 728 (20, 12) | 172 032 (4, 6) | 229 376 (4, 8) |
+| double1 a / b | **76 104** (6x1x1) / **76 104** (6x1x1) | **228 312** (4x1x1) / **228 312** (8x1x1) | 405 888 (4x1x1) / 405 888 (8x1x1) |
+| double2 a / b | 58 968 (4x1x1) / 58 968 (8x1x1) | 157 248 (6x1x1) / 209 664 (3x3x1) | **419 328** (4x1x1) / **419 328** (8x1x1) |
+| up1 | 58 968 (8x1x1) | 209 664 (3x3x1) | **419 328** (8x1x1) |
+| double3 a / b | 58 968 (4x1x1) / 58 968 (2x1x1) | 157 248 (6x1x1) / 157 248 (3x1x1) | **419 328** (4x1x1) / **419 328** (2x1x1) |
+| up2 | **76 104** (6x1x1) | **228 312** (8x1x1) | 405 888 (8x1x1) |
+| double4 a / b | **76 104** (8x1x1) / 67 648 (1x1x3) | **228 312** (8x1x1) / **228 312** (2x1x1) | 405 888 (8x1x1) / 405 888 (2x1x1) |
+| **T** | **76 104** | **228 312** | **419 328** |
+| DSPs (convs + convsp1 + convsp3) | 165 + 20 + 12 = **197** | 189 + 8 = **197** | 168 + 8 + 16 = **192** |
+| Block RAM (rough: weights as ROM and copy, skip FIFO) | ~30 of 140 BRAM36 | ~65 | ~105 |
+
+### Predicted times
+
+| Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
+|---|---|---|---|
+| `sp_unet_small_opt_direct_zynq7020` | 76 104 | **649 ms** | 507 ms |
+| `sp_unet_medium_opt_direct_zynq7020` | 228 312 | **1.95 s** | 1.52 s |
+| `sp_unet_large_opt_direct_zynq7020` | 419 328 | **3.58 s** | 2.79 s |
+
+Predicted the same way as the ZCU104 direct kernels' (see "Predicted and measured times"): the
+slowest process's cycles a patch, from the table; the pipeline-stall model for the FIFOs;
+(patches + 1) x T / clock. On the ZCU104 that came within 0.2 % of the board. To be replaced by
+measurements.
+
+### Limits and risks
+
+- **DSPs**: the next faster table needs more than 205 on every size.
+- **LUTs and flip-flops** are the risk, large most: each conv keeps its 3x3 window of every
+  input channel in registers (9 x 64 x 16 bits on the 64-channel layers) and picks the step's
+  channels and row with a multiplexer. If large does not fit, the FIFOs between the processes
+  can go back to 2 deep (+7 % time, a few thousand LUTs less), and convsp3 to LUTs.
+- **Speed**: the Winograd design would need 2.3x fewer multiplies, but more LUTs, which this chip
+  has least of; not tried here.
 
 ## Integer formats (the bit-exact model)
 
@@ -312,3 +406,12 @@ the aegean pixels (small / medium / large).
   layer, a step's PO x PI x 9 weights a word, block RAM when deeper than 64 steps (~52 BRAM36 on large,
   ~60 on medium, none on small), LUTRAM otherwise; the same reads, so the same speed. Bit-exact on the
   three sizes; not yet routed.
+- 2026-10-28: `sp_unet_medium_opt_direct` and `sp_unet_large_opt_direct` on the board at 214 MHz: at the
+  predicted ~109 ms and ~218 ms. Predicted and measured times, and how the predictions are made, in
+  "Predicted and measured times".
+- 2026-10-28: Zynq-7020 kernels `sp_unet_SIZE_opt_direct_zynq7020`: one 64-bit read port, convs with a
+  row of the window a step (`conv3x3_grouped`'s `KR`) and their ReLU inside (`RELU_SHIFT`), convsp1
+  packed for the DSP48E1 in passes (`pointwise_packed`'s `OPASS`, `zynq7020/pointwise_wide.hpp`), FIFOs
+  16 deep in LUTRAM, the skip in block RAM; 197 / 197 / 192 DSPs, T = 76 104 / 228 312 / 419 328
+  cycles a patch (predicted 649 ms / 1.95 s / 3.58 s at 78.1 MHz). `sp_unet_opt_common.hpp` no longer
+  includes the ZCU104 header (each kernel's .cpp includes its own first).

@@ -3,10 +3,11 @@
 // What the optimized SpecPW-UNet kernels' DATAFLOW chains share (the Winograd one,
 // sp_unet_opt_dataflow.hpp, and the direct one, sp_unet_direct_dataflow.hpp): the
 // checks on the weights and the preprocessing, the channel counts, the fraction
-// bits. Before including it, a kernel's .cpp includes its model's int8 weights as
+// bits. Before including it, a kernel's .cpp includes its header and its model's int8 weights as
 // namespace q and its table of sizes as namespace cfg.
 
-#include "sp_unet_opt.hpp"
+// The kernel's header comes first (sp_unet_opt.hpp, or sp_unet_opt_zynq7020.hpp):
+// it sets the ports, the word width and the formats this file checks against.
 #include "../justounetsimple_opt/justounetsimple_prep.hpp"
 #include "../../optimized/shared/fixed_point.hpp"
 #include <type_traits>

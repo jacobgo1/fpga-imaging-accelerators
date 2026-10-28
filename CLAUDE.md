@@ -90,7 +90,11 @@ software/pynq/sp_unet_small_opt/), `sp_unet_small_opt_direct`, `_medium_opt_dire
 (conv3x3_grouped, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
 modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patch,
 1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in src/hls/sp_unet_small_opt_direct/
-sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook), `matmul` (minimal example, used by the framework tests).
+sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook),
+`sp_unet_small_opt_direct_zynq7020`, `_medium_`, `_large_` (the direct kernels for the 7020,
+`--board zynq7020`: at most 205 DSPs, convs a window row a step and their ReLU inside, one
+64-bit read port; T = 76 104 / 228 312 / 419 328 cycles a patch; the chain in
+src/hls/sp_unet_small_opt_direct_zynq7020/), `matmul` (minimal example, used by the framework tests).
 
 ## How a model is built (follow justounetsimple_opt)
 

@@ -134,7 +134,7 @@ int main(int, char** argv) {{
     for (size_t i = 0; i < cube.size(); i++) din[i / PORT_BANDS][i % PORT_BANDS] = cube[i];
     std::vector<spu_out_t> dout((size_t)h * w);
     uint32_t cycles = 0;
-    {name}(din.data(), din.data(), din.data(), din.data(), dout.data(), h, w, cycles);
+    {name}({ports}dout.data(), h, w, cycles);
     f = fopen(argv[2], "wb");
     for (auto &o : dout) for (int c = 0; c < 4; c++) {{ const int32_t v = o[c]; fwrite(&v, 4, 1, f); }}
     fclose(f);
@@ -289,7 +289,7 @@ class SpecPWUNetTests(unittest.TestCase):
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_optimized_kernels_match_classify_fixed_bit_for_bit(self):
-        """The whole raw-cube kernels, Winograd (_opt) and direct (_opt_direct), on a real crop of
+        """The whole raw-cube kernels, Winograd (_opt), direct (_opt_direct) and the Zynq-7020's, on a real crop of
         45 x 70 pixels (2 x 3 patches, the edge ones partly outside): what classify_fixed and
         the class say, every value."""
         m = self.model
@@ -297,10 +297,12 @@ class SpecPWUNetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
-            for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES for kind in ('', '_direct')]:
+            for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES
+                               for kind in ('', '_direct', '_direct_zynq7020')]:
                 with self.subTest(kernel=name):
                     source_dir = ROOT / 'src/hls' / name
-                    compile_and_run(OPT_DRIVER.format(name=name), tmp, f'run_{name}',
+                    ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports
+                    compile_and_run(OPT_DRIVER.format(name=name, ports=ports), tmp, f'run_{name}',
                                     [source_dir, ROOT / 'src/common'], sorted(source_dir.glob('*.cpp')),
                                     [tmp / 'cube.bin', tmp / 'out.bin', 45, 70])
                     got = np.fromfile(tmp / 'out.bin', dtype=np.int32).reshape(45, 70, 4)

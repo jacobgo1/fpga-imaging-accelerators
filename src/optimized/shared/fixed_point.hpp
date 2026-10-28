@@ -70,6 +70,24 @@ act_t requant_leaky_relu(acc_t v) {
     return r > 32767 ? (act_t)32767 : r < -32768 ? (act_t)-32768 : (act_t)r;
 }
 
+// What a conv layer sends on: with RELU_SHIFT 0 its sums as they are (for a
+// ReLU module after it, or a final layer's scores); otherwise each ReLU'd and
+// rounded off RELU_SHIFT bits to an int16 activation, the next conv's input.
+template<int RELU_SHIFT> struct sums_out {
+    typedef act_t type;
+    static type of(acc_t v) {
+        #pragma HLS INLINE
+        return requant_relu<RELU_SHIFT>(v);
+    }
+};
+template<> struct sums_out<0> {
+    typedef acc_t type;
+    static type of(acc_t v) {
+        #pragma HLS INLINE
+        return v;
+    }
+};
+
 static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE
     return a > b ? a : b;
