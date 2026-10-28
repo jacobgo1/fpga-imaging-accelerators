@@ -94,7 +94,8 @@ sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook
 `sp_unet_small_opt_direct_zynq7020`, `_medium_`, `_large_` (the direct kernels for the 7020,
 `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_lines), a tap or a window column a step, their ReLU inside, one 64-bit read
-port; T = 76 176 / 228 528 / 420 864 cycles a patch; the chain in
+port, 2-deep FIFOs between the processes; T = 76 176 / 228 528 / 420 864 cycles a patch; small
+measured 665 ms on the ZedBoard; the chain in
 src/hls/sp_unet_small_opt_direct_zynq7020/), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)

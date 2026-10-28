@@ -46,7 +46,7 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
 | `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
 | `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; bit-exact in C++; predicted 649 ms. First build 124 % of the LUTs; cut, to be built again |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665 ms** on the ZedBoard (≈ 78 100 cycles a patch; predicted ~694) |
 | `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 200 DSPs; predicted 1.95 s |
 | `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 184 DSPs; predicted 3.59 s |
 
@@ -333,7 +333,7 @@ multipliers (the window trails the input by a row and two pixels).
 
 | Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
 |---|---|---|---|
-| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | **~694 ms** | ~542 ms |
+| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | ~694 ms; **measured 665 ms** (≈ 78 100 cycles a patch, +2.6 %) | ~542 ms |
 | `sp_unet_medium_opt_direct_zynq7020` | 228 528 (+ ~7 %) | **~2.1 s** | ~1.6 s |
 | `sp_unet_large_opt_direct_zynq7020` | 420 864 (+ ~7 %) | **~3.8 s** | ~3.0 s |
 
@@ -467,3 +467,12 @@ the aegean pixels (small / medium / large).
   (63 %, was 92 496), but LUT 95 489 estimated (~52 k real at the earlier ratio, ~98 %) and BRAM18 172.
   To be sure it places: the FIFOs between the processes 2 deep instead of 16 (s_pool1 16, s_pool2 32,
   s_dec3 64 for their bursts): a few thousand LUTs, ~7 % more time (small ~694 ms predicted).
+- 2026-10-28: `sp_unet_small_opt_direct_zynq7020` built and ran on the ZedBoard: 665 ms for a whole capture
+  at 78.1 MHz, ≈ 78 100 cycles a patch: 2.6 % over the convs' 76 176, not the 7 % the cycle model gave the
+  2-deep FIFOs (predicted ~694 ms). Its design: `conv3x3_lines` (the window in row memories), the ReLU in
+  every conv, convsp2/3 and final on a few DSPs, 2-deep FIFOs between the processes.
+- 2026-10-28: csynth of medium and large (7020): LUT 107 943 / 124 987 estimated (~59 k / ~69 k real of
+  53 200), BRAM18 257 / 362 of 280. The row memories, split into a memory per channel lane to get past the
+  HLS crash, were 3 x PI small memories a conv (168 on large), a block RAM or a few LUTs each: now one
+  memory per row again, with ARRAY_RESHAPE on the lanes (plain arrays, no struct). Skip FIFO 1 024 deep on
+  medium and large (a patch, the most it holds; `cfg::SKIP_DEPTH`), 2 048 on small. Bit-exact.

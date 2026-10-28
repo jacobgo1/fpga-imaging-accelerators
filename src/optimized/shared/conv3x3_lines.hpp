@@ -45,12 +45,13 @@ void conv3x3_lines_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
     typedef typename sums_out<RELU_SHIFT>::type out_t;
 
     // The last three input rows, [row memory][channel lane][column * IG + group]:
-    // plain arrays, one small memory per (row, lane), all read at one address.
-    // (Arrays of a struct declared in here, packed with AGGREGATE, made Vitis HLS
-    // 2025.2 crash generating this loop's pipeline.)
+    // a plain array, reshaped so that each row is one memory of PI-lane words,
+    // all read at one address. (Arrays of a struct declared in here, packed with
+    // AGGREGATE, made Vitis HLS 2025.2 crash generating this loop's pipeline; a
+    // memory per lane instead cost a block RAM or a few LUTs each: 3 x PI of them.)
     act_t rows[3][PI][W * IG];
     #pragma HLS ARRAY_PARTITION variable=rows type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=rows type=complete dim=2
+    #pragma HLS ARRAY_RESHAPE variable=rows type=complete dim=2
     act_t x_in[IN_CH];          // this pixel's input, written to its row a group a step
     #pragma HLS ARRAY_PARTITION variable=x_in type=complete
     out_t pix[OUT_CH];          // the finished outputs of one pixel

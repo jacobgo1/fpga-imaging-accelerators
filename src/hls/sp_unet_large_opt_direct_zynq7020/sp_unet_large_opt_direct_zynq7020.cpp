@@ -16,6 +16,7 @@ namespace q = sp_unet_large_int8;
 namespace cfg {
 constexpr int P1 = 4;               // convsp1: 4 bands a chunk, 28 chunks
 constexpr int SP1_PASSES = 8;       // ... x 8 passes over its pairs: 229 376 cycles a patch, 8 DSPs
+constexpr int SKIP_DEPTH = 1024;    // the skip FIFO, pixels (a patch: the block RAM is short)
 constexpr bool ZSCORE_DSP = true;  // the z-score's 4 multipliers on DSPs
 constexpr int SP2_PI = 2, SP2_PO = 1;  // convsp2 32 -> 16: 16 x 16 = 256 cycles a pixel (262 144), 2 DSPs
 constexpr bool SP2_DSP = true;

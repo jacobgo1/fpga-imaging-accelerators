@@ -49,8 +49,9 @@ static void sp_unet_direct_zynq7020_dataflow(hls::burst_maxi<spu_raw_t> din0, hl
 // The skip connection: double1's activations wait here until up2's come back,
 // less than a patch later (1 024 pixels), each patch being done on its own; too
 // shallow and the encoder stops while the decoder waits for it, a deadlock.
-// No UltraRAM on the 7020: block RAM.
-#pragma HLS STREAM variable = s_skip depth = 2048
+// No UltraRAM on the 7020: block RAM. cfg::SKIP_DEPTH: 2 048 (room to spare), or
+// 1 024 (a patch, the most it holds) where the block RAM is short.
+#pragma HLS STREAM variable = s_skip depth = cfg::SKIP_DEPTH
 #pragma HLS BIND_STORAGE variable = s_skip type = fifo impl = bram
 // relu_pool_up gives a row pair (32 pixels) at once, relu_up two rows (64).
 #pragma HLS STREAM variable = s_pool2 depth = 32
