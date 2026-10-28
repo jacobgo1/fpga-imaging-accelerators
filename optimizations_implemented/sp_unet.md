@@ -47,8 +47,8 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
 | `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
 | `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665 ms** on the ZedBoard (≈ 78 100 cycles a patch; predicted ~694) |
-| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 200 DSPs; predicted 1.95 s |
-| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 184 DSPs; predicted 3.59 s |
+| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); bit-exact in C++; not to be built |
+| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); bit-exact in C++; not to be built |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -343,7 +343,31 @@ slowest process's cycles a patch, from the table; the pipeline-stall model for t
 (patches + 1) x T / clock. On the ZCU104 that came within 0.2 % of the board. To be replaced by
 measurements.
 
-### Limits and risks
+### Medium and large do not fit the 7020 (decided 2026-10-28)
+
+Only small runs on the 7020 (665 ms measured). Medium and large run on the ZCU104; on a Zynq-7000,
+the 7030 (HYPSO-2: 400 DSPs, 79 k LUTs) is the place to size them for. Their 7020 kernels stay in the
+repository, bit-exact in C++, as the starting point if that changes, but they do not fit:
+
+| | LUT, HLS estimate (~real at 0.55) | BRAM18 | FF |
+|---|---|---|---|
+| small (built, 665 ms) | 95 489 before the 2-deep FIFOs | 172 | 67 602 |
+| medium | 107 943 (~59 k of 53.2 k) | 257 of 280 | 71 503 |
+| large | 124 987 (~69 k) | 328-362 of 280 | 56 862-76 445 |
+
+Why: large's csynth report puts 65 % of the LUTs in the 10 conv engines (5.6-10 k each) and 8 %
+in `relu_pool_up`. Each engine has a fixed cost (its row memories, input buffer, step control,
+rounding) whatever its number of multipliers; small's narrow channels keep it inside the chip,
+medium needs ~20 % less, large ~30 %. Trimming single modules does not get there.
+
+What would: one shared conv engine running the layers one after another for each patch, the maps
+in block RAM between them: the same DSPs busy all the time, one engine's overhead instead of ten.
+Not built.
+
+Tried on the way and undone: the row memories reshaped into one word per row (ARRAY_RESHAPE): HLS
+made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 975 644 694).
+
+
 
 - **DSPs**: the next faster table needs more than 205 on every size.
 - **LUTs**: the first small build needed 66 239 LUTs as logic of 53 200. Its csynth report put
@@ -476,3 +500,8 @@ the aegean pixels (small / medium / large).
   HLS crash, were 3 x PI small memories a conv (168 on large), a block RAM or a few LUTs each: now one
   memory per row again, with ARRAY_RESHAPE on the lanes (plain arrays, no struct). Skip FIFO 1 024 deep on
   medium and large (a patch, the most it holds; `cfg::SKIP_DEPTH`), 2 048 on small. Bit-exact.
+- 2026-10-28: the reshape undone: HLS made each lane's write to the reshaped word its own cycle, and the
+  intervals went from 151 982 571 / 279 885 962 to 1 975 644 694 / 1 399 385 553 cycles (medium / large);
+  medium's BRAM18 rose to 407. Back to a memory per (row, lane); the 1 024-deep skip FIFOs stay.
+- 2026-10-28: decided: the 7020 runs small only; medium and large stay on the ZCU104 (their 7020 kernels
+  do not fit: ~59 k / ~69 k LUTs of 53.2 k; see "Medium and large do not fit the 7020").
