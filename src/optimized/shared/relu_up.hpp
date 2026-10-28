@@ -8,17 +8,20 @@
 // bits, and writes activations with S - SHIFT the same way. Each row is taken
 // in, then given out twice, every pixel twice. The image is cut into PH x PW
 // patches (patch_grid.hpp); H x W is the layer's input size of a patch.
-template<int H, int W, int SHIFT, int CH>
-void relu_up_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
+// The input can also be activations a conv already ReLU'd and rounded
+// (conv3x3_grouped's RELU_SHIFT): then SHIFT is 0 and this only moves them
+// (relu_in, fixed_point.hpp).
+template<int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_up_patch(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
     act_t line[W][CH];
     #pragma HLS ARRAY_PARTITION variable=line type=complete dim=2
     rows: for (int y = 0; y < H; y++) {
         take: for (int x = 0; x < W; x++) {
             #pragma HLS PIPELINE II=1
-            const vec_t<acc_t, CH> v = in.read();
+            const vec_t<IN_T, CH> v = in.read();
             for (int ch = 0; ch < CH; ch++) {
                 #pragma HLS UNROLL
-                line[x][ch] = requant_relu<SHIFT>(v.v[ch]);
+                line[x][ch] = relu_in<SHIFT>(v.v[ch]);
             }
         }
         give: for (int i = 0; i < 4 * W; i++) {
@@ -33,8 +36,8 @@ void relu_up_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, 
     }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH>
-void relu_up(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
+template<int PH, int PW, int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_up(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
              int height, int width) {
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {

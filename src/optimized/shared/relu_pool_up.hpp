@@ -9,8 +9,11 @@
 // writes activations with S - SHIFT the same way. Each pair of rows is taken
 // in, then given out. The image is cut into PH x PW patches (patch_grid.hpp);
 // H x W is the layer's size of a patch.
-template<int H, int W, int SHIFT, int CH>
-void relu_pool_up_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
+// The input can also be activations a conv already ReLU'd and rounded
+// (conv3x3_grouped's RELU_SHIFT): then SHIFT is 0 and this only moves them
+// (relu_in, fixed_point.hpp).
+template<int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_pool_up_patch(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
     act_t blk[W / 2][CH];   // the maxima of this row pair's 2x2 blocks
     #pragma HLS ARRAY_PARTITION variable=blk type=complete dim=2
     act_t left[CH];
@@ -20,10 +23,10 @@ void relu_pool_up_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<ac
             #pragma HLS PIPELINE II=1
             #pragma HLS DEPENDENCE variable=blk type=inter false
             const int x = i % W;
-            const vec_t<acc_t, CH> v = in.read();
+            const vec_t<IN_T, CH> v = in.read();
             for (int ch = 0; ch < CH; ch++) {
                 #pragma HLS UNROLL
-                const act_t a = requant_relu<SHIFT>(v.v[ch]);
+                const act_t a = relu_in<SHIFT>(v.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = a;
                 } else {
@@ -44,8 +47,8 @@ void relu_pool_up_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<ac
     }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH>
-void relu_pool_up(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
+template<int PH, int PW, int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_pool_up(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
                   int height, int width) {
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {

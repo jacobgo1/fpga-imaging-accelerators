@@ -54,6 +54,8 @@ void pointwise_packed(hls::stream<vec_t<act8_t, P> >& in, hls::stream<vec_t<act_
 
     acc_t acc[OUT];             // the pixel's sums so far
     #pragma HLS ARRAY_PARTITION variable=acc type=complete
+    act_t ob[OUT];              // its activations, a pass's pairs at a time
+    #pragma HLS ARRAY_PARTITION variable=ob type=complete
     act8_t x[P];                // this chunk, kept for its passes
     #pragma HLS ARRAY_PARTITION variable=x type=complete
     const int pixels = patch_count<PH, PW>(height, width) * PIX;
@@ -85,13 +87,22 @@ void pointwise_packed(hls::stream<vec_t<act8_t, P> >& in, hls::stream<vec_t<act_
                 lo += pack_low<PSHIFT>((int64_t)sum);
                 hi += pack_high<PSHIFT>((int64_t)sum);
             }
-            // The pass picks its pairs: a run-time choice of which statement runs.
+            // The pass's pair j = o * PP + jj: its sums so far picked by o, one
+            // adder and one rounding unit a lane whatever OPASS is; written back
+            // by the pass whose turn it is (a run-time choice of which statement runs).
+            const int j = o * PP + jj;
+            const acc_t lo_total = (c == 0 ? bl[2 * j] : acc[2 * j]) + lo;
+            const acc_t hi_total = (c == 0 ? bl[2 * j + 1] : acc[2 * j + 1]) + hi;
+            const act_t lo_act = requant_relu<SHIFT>(lo_total), hi_act = requant_relu<SHIFT>(hi_total);
             for (int k = 0; k < OPASS; k++) {
                 #pragma HLS UNROLL
                 if (o == k) {
-                    const int j = k * PP + jj;
-                    acc[2 * j] = (c == 0 ? bl[2 * j] : acc[2 * j]) + lo;
-                    acc[2 * j + 1] = (c == 0 ? bl[2 * j + 1] : acc[2 * j + 1]) + hi;
+                    acc[2 * (k * PP + jj)] = lo_total;
+                    acc[2 * (k * PP + jj) + 1] = hi_total;
+                    if (c == CHUNKS - 1) {
+                        ob[2 * (k * PP + jj)] = lo_act;
+                        ob[2 * (k * PP + jj) + 1] = hi_act;
+                    }
                 }
             }
         }
@@ -99,7 +110,7 @@ void pointwise_packed(hls::stream<vec_t<act8_t, P> >& in, hls::stream<vec_t<act_
             vec_t<act_t, OUT> out_v;
             for (int oc = 0; oc < OUT; oc++) {
                 #pragma HLS UNROLL
-                out_v.v[oc] = requant_relu<SHIFT>(acc[oc]);
+                out_v.v[oc] = ob[oc];
             }
             out.write(out_v);
         }

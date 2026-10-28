@@ -33,62 +33,69 @@ template<int SHIFT> struct pointwise_out<false, SHIFT> {
     }
 };
 
+// PI: the input channels a step (default all of them): IN/PI x OUT/PO steps a
+// pixel, PI x PO multipliers, for a layer with time to spare on a chip with
+// few multipliers. Steps: output group outer, input group inner, PO running sums.
 template<int PH, int PW, int PIX, int IN, int OUT, int PO, int G, bool RELU, int BIAS_SHIFT, int SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][1][1], const wgt_t (&BIAS)[OUT], bool DSP>
+         const wgt_t (&WEIGHT)[OUT][IN][1][1], const wgt_t (&BIAS)[OUT], bool DSP, int PI = IN>
 void pointwise(hls::stream<vec_t<act_t, IN> >& in,
                hls::stream<vec_t<typename pointwise_out<RELU, SHIFT>::type, G * OUT> >& out,
                int height, int width) {
-    static_assert(OUT % PO == 0 && PIX % G == 0, "PO must divide OUT, G the pixels");
+    static_assert(OUT % PO == 0 && IN % PI == 0 && PIX % G == 0, "PO must divide OUT, PI IN, G the pixels");
     typedef typename pointwise_out<RELU, SHIFT>::type out_t;
-    constexpr int STEPS = OUT / PO;
-    wgt_t wl[STEPS][PO][IN];
+    constexpr int OG = OUT / PO, IG = IN / PI, STEPS = OG * IG;
+    wgt_t wl[STEPS][PO][PI];    // step og * IG + ig: its PO x PI weights
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    acc_t bl[STEPS][PO];
+    acc_t bl[OG][PO];
     #pragma HLS ARRAY_PARTITION variable=bl type=complete dim=2
     load: for (int oc = 0; oc < OUT; oc++) {
         for (int ic = 0; ic < IN; ic++) {
             #pragma HLS PIPELINE II=1
-            wl[oc / PO][oc % PO][ic] = WEIGHT[oc][ic][0][0];
+            wl[(oc / PO) * IG + ic / PI][oc % PO][ic % PI] = WEIGHT[oc][ic][0][0];
         }
         bl[oc / PO][oc % PO] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
     }
 
     act_t x[IN];                // this pixel
     #pragma HLS ARRAY_PARTITION variable=x type=complete
+    acc_t run[PO];              // this output group's sums so far
+    #pragma HLS ARRAY_PARTITION variable=run type=complete
     out_t ob[G * OUT];          // the G pixels' outputs
     #pragma HLS ARRAY_PARTITION variable=ob type=complete
     const int pixels = patch_count<PH, PW>(height, width) * PIX;
-    int st = 0, g = 0;          // the step of the pixel, the pixel of the G
+    int og = 0, ig = 0, g = 0;  // the step's output and input group, the pixel of the G
     constexpr int TRIPS = PIX * STEPS, MAX_TRIPS = 665 * TRIPS;   // a patch; a 598 x 1092 capture
     (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
     px: for (int t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
-        if (st == 0) {
+        if (og == 0 && ig == 0) {
             const vec_t<act_t, IN> v = in.read();
             for (int i = 0; i < IN; i++) {
                 #pragma HLS UNROLL
                 x[i] = v.v[i];
             }
         }
+        const int st = og * IG + ig;
         for (int j = 0; j < PO; j++) {
             #pragma HLS UNROLL
-            acc_t sum = bl[st][j];
-            for (int i = 0; i < IN; i++) {
+            acc_t sum = ig == 0 ? bl[og][j] : run[j];
+            for (int i = 0; i < PI; i++) {
                 #pragma HLS UNROLL
-                sum += mul<DSP, acc_t>(x[i], wl[st][j][i]);
+                sum += mul<DSP, acc_t>(x[(IG == 1 ? 0 : ig * PI) + i], wl[st][j][i]);
             }
+            run[j] = sum;
             const out_t y = pointwise_out<RELU, SHIFT>::of(sum);
-            for (int s = 0; s < STEPS; s++) {
+            for (int s2 = 0; s2 < OG; s2++) {
                 #pragma HLS UNROLL
                 for (int q = 0; q < G; q++) {
                     #pragma HLS UNROLL
-                    if (st == s && g == q) ob[q * OUT + s * PO + j] = y;
+                    if (ig == IG - 1 && og == s2 && g == q) ob[q * OUT + s2 * PO + j] = y;
                 }
             }
         }
-        if (st == STEPS - 1 && g == G - 1) {
+        if (og == OG - 1 && ig == IG - 1 && g == G - 1) {
             vec_t<out_t, G * OUT> o;
             for (int i = 0; i < G * OUT; i++) {
                 #pragma HLS UNROLL
@@ -96,11 +103,16 @@ void pointwise(hls::stream<vec_t<act_t, IN> >& in,
             }
             out.write(o);
         }
-        if (st < STEPS - 1) {
-            st++;
+        if (ig < IG - 1) {
+            ig++;
         } else {
-            st = 0;
-            g = g < G - 1 ? g + 1 : 0;
+            ig = 0;
+            if (og < OG - 1) {
+                og++;
+            } else {
+                og = 0;
+                g = g < G - 1 ? g + 1 : 0;
+            }
         }
     }
 }

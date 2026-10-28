@@ -46,9 +46,9 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
 | `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
 | `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 (`--board zynq7020`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 197 DSPs; bit-exact in C++; predicted 649 ms, not yet synthesized |
-| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 | 12.8 ns | the same, 197 DSPs; predicted 1.95 s |
-| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 | 12.8 ns | the same, 192 DSPs; predicted 3.6 s |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 196 DSPs; bit-exact in C++; predicted 649 ms. First build 124 % of the LUTs; cut, to be built again |
+| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 201 DSPs; predicted 1.95 s |
+| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | the same, 184 DSPs; predicted 3.6 s |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -297,9 +297,9 @@ below), and the LUTs and flip-flops are what is short. So:
 |---|---|---|
 | DSPs | 1 184-1 452 | **197 / 197 / 192** (small / medium / large), at most 205 |
 | A conv's step | PI x PO x the whole 3x3 window (9 multipliers a unit) | PI x PO x **one row of the window** (`conv3x3_grouped`'s `KR = 1`): sized in units of 3 DSPs, not 9 |
-| ReLU between two convs | `relu_act` processes, 32-bit sums on the FIFOs | **inside the conv** (`RELU_SHIFT`): int16 activations on the FIFOs, 7 processes fewer |
-| convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`) |
-| convsp2 / convsp3 / final | DSPs / DSPs / LUTs | LUTs, or DSPs where the budget leaves room (convsp3 on small and large) |
+| ReLU and rounding | `relu_act` / ReLU modules, 32-bit sums on the FIFOs, every channel rounded at once | **inside every conv** (`RELU_SHIFT`), rounded as each output group finishes (PO rounding units, not OUT): int16 activations on every FIFO, 7 processes fewer, the pooling only takes maxima (SHIFT 0) |
+| convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`), a pass's pairs rounded at a time |
+| convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`pointwise`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
 | Read ports | 4 x 128 bit | **1 x 64 bit** (30 720 cycles a patch; T is 76 000 or more) |
 | FIFOs between the processes | 16 deep, shift registers | 16 deep, **LUTRAM** (about 0.7 LUT a bit, not 1) |
 | Skip FIFO | UltraRAM | block RAM, 2 048 deep |
@@ -320,7 +320,7 @@ table: 81 386 cycles a patch with 2-deep FIFOs (+7 %), 79 190 with 4, 76 202 wit
 | up2 | **76 104** (6x1x1) | **228 312** (8x1x1) | 405 888 (8x1x1) |
 | double4 a / b | **76 104** (8x1x1) / 67 648 (1x1x3) | **228 312** (8x1x1) / **228 312** (2x1x1) | 405 888 (8x1x1) / 405 888 (2x1x1) |
 | **T** | **76 104** | **228 312** | **419 328** |
-| DSPs (convs + convsp1 + convsp3) | 165 + 20 + 12 = **197** | 189 + 8 = **197** | 168 + 8 + 16 = **192** |
+| DSPs (convs + convsp1 + convsp2/3, final + z-score) | 165 + 20 + 7 + 4 = **196** | 189 + 8 + 4 = **201** | 168 + 8 + 4 + 4 = **184** |
 | Block RAM (rough: weights as ROM and copy, skip FIFO) | ~30 of 140 BRAM36 | ~65 | ~105 |
 
 ### Predicted times
@@ -339,12 +339,21 @@ measurements.
 ### Limits and risks
 
 - **DSPs**: the next faster table needs more than 205 on every size.
-- **LUTs and flip-flops** are the risk, large most: each conv keeps its 3x3 window of every
+- **LUTs**: the first small build needed 66 239 LUTs as logic of 53 200. Its csynth report put
+  57 % of them in the 10 convs, 7 % in convsp2's 24 LUT multipliers, 11 % in the three ReLU
+  modules' 32-bit rounding. Cut (the same answers): every conv rounds only its PO lanes as each
+  output group finishes and sends activations; the pooling modules then only take maxima; convsp2/3,
+  the final layer and the z-score on 1-4 DSPs (`pointwise`'s `PI`); convsp1 rounds a pass at a time.
+- **LUTs and flip-flops** remain the risk, large most: each conv keeps its 3x3 window of every
   input channel in registers (9 x 64 x 16 bits on the 64-channel layers) and picks the step's
   channels and row with a multiplexer. If large does not fit, the FIFOs between the processes
   can go back to 2 deep (+7 % time, a few thousand LUTs less), and convsp3 to LUTs.
 - **Speed**: the Winograd design would need 2.3x fewer multiplies, but more LUTs, which this chip
   has least of; not tried here.
+
+On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) the build packs
+`K_opu.zip` with the generic `classify` program (`software/opu/justounetsimple_opt/classify.c`):
+`classify cube.npy scores.npy reference_fixed_sp_unet_SIZE.npy`.
 
 ## Integer formats (the bit-exact model)
 
@@ -415,3 +424,11 @@ the aegean pixels (small / medium / large).
   16 deep in LUTRAM, the skip in block RAM; 197 / 197 / 192 DSPs, T = 76 104 / 228 312 / 419 328
   cycles a patch (predicted 649 ms / 1.95 s / 3.58 s at 78.1 MHz). `sp_unet_opt_common.hpp` no longer
   includes the ZCU104 header (each kernel's .cpp includes its own first).
+- 2026-10-28: first 7020 build (small, `--board zedboard`): HLS and Vivado synthesis pass, placement
+  refused: 66 239 LUTs as logic needed, 53 200 on the chip (124 %). To cut. OPU program for the
+  ZedBoard: the generic `classify.c` (`software/opu/sp_unet_SIZE_opt_direct_zynq7020/include.txt`).
+- 2026-10-28: 7020 LUT cuts after the first build: convs round PO lanes as each output group finishes
+  and every conv sends activations (double1b/2b/3b too: `relu_pool_skip` / `relu_pool_up` / `relu_up`
+  take activations, SHIFT 0, `relu_in`); `pointwise` takes PI inputs a step (convsp2/3 and final on 1-4
+  DSPs instead of up to 32 LUT multipliers); `pointwise_packed` rounds a pass's pairs at a time; z-score
+  on DSPs on small and large. DSPs 196 / 201 / 184, the same T. Bit-exact; the other kernels unchanged.

@@ -88,6 +88,21 @@ template<> struct sums_out<0> {
     }
 };
 
+// A ReLU module's input -> an activation: a conv's sums, ReLU'd and rounded
+// off SHIFT bits; or activations a conv already ReLU'd and rounded (SHIFT 0),
+// as they are. The input's type picks which.
+template<int SHIFT>
+act_t relu_in(acc_t v) {
+    #pragma HLS INLINE
+    return requant_relu<SHIFT>(v);
+}
+template<int SHIFT>
+act_t relu_in(act_t v) {
+    #pragma HLS INLINE
+    static_assert(SHIFT == 0, "activations in are rounded already: SHIFT 0");
+    return v;
+}
+
 static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE
     return a > b ? a : b;

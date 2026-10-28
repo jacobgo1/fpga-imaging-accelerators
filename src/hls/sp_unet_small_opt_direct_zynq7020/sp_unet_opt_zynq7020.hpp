@@ -14,20 +14,23 @@
 // 53 k LUTs, 140 BRAM36, no UltraRAM, 64-bit HP ports.
 //
 //   read_rows_ahead (HP0) ─► pixel_buffer ─► convsp1 ─► convsp2 ─► convsp3 ─►
-//   double1 (conv+relu, conv) ─► relu + pool + skip ─┬──► skip FIFO (BRAM) ──────┐
-//   double2 (conv+relu, conv) ─► relu + pool + up ───┘                          │
-//   up1 (conv+relu) ─► double3 (conv+relu, conv) ─► relu + up ─► up2 (conv+relu) ─► cat
-//   ─► double4 (conv+relu, conv+relu) ─► final 1x1 ─► store (HP1)
+//   double1 (conv, conv) ─► pool + skip ─┬──► skip FIFO (BRAM) ──────────────────┐
+//   double2 (conv, conv) ─► pool + up ───┘                                      │
+//   up1 (conv) ─► double3 (conv, conv) ─► up ─► up2 (conv) ─► cat ◄─────────────┘
+//   ─► double4 (conv, conv) ─► final 1x1 ─► store (HP1)      every conv with its ReLU
 //
 // - Every multiplier counts: a conv may take one row of its 3x3 window a step
 //   (conv3x3_grouped's KR = 1), so its size goes in steps of 3 DSPs, not 9;
 //   convsp1 packs two multiplies per DSP48E1 (16 bits apart, groups of 2) and
 //   goes over its output pairs in passes (zynq7020/pointwise_wide.hpp);
-//   convsp2/3 and the final layer are small, and go where the DSP budget
-//   leaves room (the .cpp's table).
-// - LUTs and flip-flops are the scarce part: a conv sends ReLU'd int16
-//   activations itself (conv3x3_grouped's RELU_SHIFT), so no relu module and
-//   no 32-bit sums sit between two convs; one read port (the DSPs, not the
+//   convsp2/3 and the final layer have time to spare, and take PI inputs a
+//   step on 1-4 DSPs (the .cpp's table).
+// - LUTs and flip-flops are the scarce part (the first small build needed 66 k
+//   LUTs of 53 k): every conv sends ReLU'd int16 activations itself, rounded as
+//   each output group finishes (conv3x3_grouped's RELU_SHIFT: PO rounding units,
+//   not OUT), so no 32-bit sums cross a FIFO and the pooling only takes maxima;
+//   convsp2/3, the final layer and the z-score on a few DSPs (pointwise's PI), not
+//   dozens of LUT multipliers; convsp1 rounds a pass's pairs at a time; one read port (the DSPs, not the
 //   reads, set the pace: 30 720 cycles a patch of reads against T of 76 000 or
 //   more); the FIFOs between the processes 16 deep, as on the ZCU104 (a conv's
 //   short wait otherwise freezes the next, 7 % in the cycle model of small),

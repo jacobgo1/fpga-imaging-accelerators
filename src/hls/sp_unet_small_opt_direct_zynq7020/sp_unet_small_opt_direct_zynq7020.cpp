@@ -16,12 +16,13 @@ namespace q = sp_unet_small_int8;
 namespace cfg {
 constexpr int P1 = 20;               // convsp1: 20 bands a chunk, 6 chunks
 constexpr int SP1_PASSES = 12;       // ... x 12 passes over its pairs: 73 728 cycles a patch, 20 DSPs
-constexpr bool ZSCORE_DSP = false;  // the z-score's 4 multipliers in LUTs
-constexpr int SP2_PO = 1;           // convsp2 24 -> 12: 12 cycles a pixel (12 288), 24 multipliers in LUTs
-constexpr bool SP2_DSP = false;
-constexpr int SP3_PO = 1;           // convsp3 12 -> 12: 12 cycles a pixel (12 288), 12 multipliers on DSPs
+constexpr bool ZSCORE_DSP = true;  // the z-score's 4 multipliers on DSPs
+constexpr int SP2_PI = 4, SP2_PO = 1;  // convsp2 24 -> 12: 6 x 12 = 72 cycles a pixel (73 728), 4 DSPs
+constexpr bool SP2_DSP = true;
+constexpr int SP3_PI = 2, SP3_PO = 1;  // convsp3 12 -> 12: 6 x 12 = 72 cycles a pixel (73 728), 2 DSPs
 constexpr bool SP3_DSP = true;
-constexpr int FIN_PO = 1;           // final 8 -> 3: 3 cycles a pixel, 8 multipliers in LUTs
+constexpr int FIN_PI = 1, FIN_PO = 1;  // final 8 -> 3: 8 x 3 = 24 cycles a pixel (24 576), 1 DSP
+constexpr bool FIN_DSP = true;
 //                       PI  PO KR DSP           channels  cycles a pixel          a patch    multipliers
 typedef spu7_layer< 6, 1, 1, true> D1A;  // 12 -> 12   2 x 12 x 3 =   72 a pixel  x 1057 =  76 104   18
 typedef spu7_layer< 6, 1, 1, true> D1B;  // 12 -> 12   2 x 12 x 3 =   72 a pixel  x 1057 =  76 104   18
@@ -33,7 +34,7 @@ typedef spu7_layer< 2, 1, 1, true> D3B;  // 12 -> 12   6 x 12 x 3 =  216 a pixel
 typedef spu7_layer< 6, 1, 1, true> UP2;  // 12 -> 12   2 x 12 x 3 =   72 a pixel  x 1057 =  76 104   18
 typedef spu7_layer< 8, 1, 1, true> D4A;  // 24 ->  8   3 x  8 x 3 =   72 a pixel  x 1057 =  76 104   24
 typedef spu7_layer< 1, 1, 3, true> D4B;  //  8 ->  8   8 x  8 x 1 =   64 a pixel  x 1057 =  67 648    9
-// DSPs: 197 of 220 (the budget: 205).
+// DSPs: 165 convs + 20 convsp1 + 7 convsp2/3 and final + 4 z-score = 196 of 220 (the budget: 205).
 }
 
 #include "../sp_unet_small_opt_direct_zynq7020/sp_unet_direct_zynq7020_dataflow.hpp"

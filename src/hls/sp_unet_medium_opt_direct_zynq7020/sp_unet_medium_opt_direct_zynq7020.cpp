@@ -17,11 +17,12 @@ namespace cfg {
 constexpr int P1 = 4;               // convsp1: 4 bands a chunk, 28 chunks
 constexpr int SP1_PASSES = 6;       // ... x 6 passes over its pairs: 172 032 cycles a patch, 8 DSPs
 constexpr bool ZSCORE_DSP = false;  // the z-score's 4 multipliers in LUTs
-constexpr int SP2_PO = 1;           // convsp2 24 -> 16: 16 cycles a pixel (16 384), 24 multipliers in LUTs
-constexpr bool SP2_DSP = false;
-constexpr int SP3_PO = 1;           // convsp3 16 -> 12: 12 cycles a pixel (12 288), 16 multipliers in LUTs
-constexpr bool SP3_DSP = false;
-constexpr int FIN_PO = 1;           // final 12 -> 3: 3 cycles a pixel, 12 multipliers in LUTs
+constexpr int SP2_PI = 2, SP2_PO = 1;  // convsp2 24 -> 16: 12 x 16 = 192 cycles a pixel (196 608), 2 DSPs
+constexpr bool SP2_DSP = true;
+constexpr int SP3_PI = 1, SP3_PO = 1;  // convsp3 16 -> 12: 16 x 12 = 192 cycles a pixel (196 608), 1 DSPs
+constexpr bool SP3_DSP = true;
+constexpr int FIN_PI = 1, FIN_PO = 1;  // final 12 -> 3: 12 x 3 = 36 cycles a pixel (36 864), 1 DSP
+constexpr bool FIN_DSP = true;
 //                       PI  PO KR DSP           channels  cycles a pixel          a patch    multipliers
 typedef spu7_layer< 4, 1, 1, true> D1A;  // 12 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   12
 typedef spu7_layer< 8, 1, 1, true> D1B;  // 24 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   24
@@ -33,7 +34,7 @@ typedef spu7_layer< 3, 1, 1, true> D3B;  // 24 -> 24   8 x 24 x 3 =  576 a pixel
 typedef spu7_layer< 8, 1, 1, true> UP2;  // 24 -> 24   3 x 24 x 3 =  216 a pixel  x 1057 = 228 312   24
 typedef spu7_layer< 8, 1, 1, true> D4A;  // 48 -> 12   6 x 12 x 3 =  216 a pixel  x 1057 = 228 312   24
 typedef spu7_layer< 2, 1, 1, true> D4B;  // 12 -> 12   6 x 12 x 3 =  216 a pixel  x 1057 = 228 312    6
-// DSPs: 197 of 220 (the budget: 205).
+// DSPs: 189 convs + 8 convsp1 + 4 convsp2/3 and final = 201 of 220 (the budget: 205).
 }
 
 #include "../sp_unet_small_opt_direct_zynq7020/sp_unet_direct_zynq7020_dataflow.hpp"

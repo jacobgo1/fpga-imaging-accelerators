@@ -9,8 +9,11 @@
 // conv layer's sums with S fraction bits, all channels of a pixel, raster
 // order; out: activations with S - SHIFT, the same order. The image is cut
 // into PH x PW patches (patch_grid.hpp); H x W is the layer's size of a patch.
-template<int H, int W, int SHIFT, int CH>
-void relu_pool_skip_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
+// The input can also be activations a conv already ReLU'd and rounded
+// (conv3x3_grouped's RELU_SHIFT): then SHIFT is 0 and this only moves them
+// (relu_in, fixed_point.hpp).
+template<int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
                           hls::stream<vec_t<act_t, CH> >& out) {
     act_t row[W / 2][CH];   // the even row's pairs, pooled
     #pragma HLS ARRAY_PARTITION variable=row type=complete dim=2
@@ -20,11 +23,11 @@ void relu_pool_skip_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<
         for (int x = 0; x < W; x++) {
             #pragma HLS PIPELINE II=1
             #pragma HLS DEPENDENCE variable=row type=inter false
-            const vec_t<acc_t, CH> v = in.read();
+            const vec_t<IN_T, CH> v = in.read();
             vec_t<act_t, CH> a, o;
             for (int ch = 0; ch < CH; ch++) {
                 #pragma HLS UNROLL
-                a.v[ch] = requant_relu<SHIFT>(v.v[ch]);
+                a.v[ch] = relu_in<SHIFT>(v.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = a.v[ch];
                 } else {
@@ -38,8 +41,8 @@ void relu_pool_skip_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<
         }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH>
-void relu_pool_skip(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
+template<int PH, int PW, int H, int W, int SHIFT, int CH, typename IN_T>
+void relu_pool_skip(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
                     hls::stream<vec_t<act_t, CH> >& out, int height, int width) {
     const int n = patch_count<PH, PW>(height, width);
     patches: for (int k = 0; k < n; k++) {

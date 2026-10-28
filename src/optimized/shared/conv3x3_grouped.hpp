@@ -42,7 +42,7 @@ void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
     #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=3
     act_t win[3][3][IN_CH];     // the 3x3 window, in registers
     #pragma HLS ARRAY_PARTITION variable=win type=complete dim=0
-    acc_t pix[OUT_CH];          // the finished sums of one pixel
+    out_t pix[OUT_CH];          // the finished outputs of one pixel
     #pragma HLS ARRAY_PARTITION variable=pix type=complete
     acc_t run[PO];              // the sums of this output group so far
     #pragma HLS ARRAY_PARTITION variable=run type=complete
@@ -108,16 +108,18 @@ void conv3x3_grouped_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
                 }
                 const acc_t total = (ig == 0 && first_row ? bl[og][j] : run[j]) + sum;
                 run[j] = total;
+                // Rounded as its output group finishes: PO of these, not OUT_CH.
+                const out_t done = sums_out<RELU_SHIFT>::of(total);
                 for (int k = 0; k < OG; k++) {
                     #pragma HLS UNROLL
-                    if (last_in && og == k) pix[k * PO + j] = total;
+                    if (last_in && og == k) pix[k * PO + j] = done;
                 }
             }
             if (last_step) {
                 vec_t<out_t, OUT_CH> o;
                 for (int c = 0; c < OUT_CH; c++) {
                     #pragma HLS UNROLL
-                    o.v[c] = sums_out<RELU_SHIFT>::of(pix[c]);
+                    o.v[c] = pix[c];
                 }
                 out.write(o);
             }
