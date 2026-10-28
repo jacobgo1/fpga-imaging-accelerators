@@ -42,6 +42,16 @@ justoliunet_model.py      numpy model of the justoliunet and justoliunet_bn kern
                           optimized kernel writes for IMAGE/cube.npy (the ZedBoard's classify
                           and the justoliunet notebooks compare with it; the board does not
                           run the model itself).
+spectralpointwise1d_model.py  numpy model of the spectralpointwise1d kernels (1D-SpectralPointwise:
+                          three 1x1 convs per pixel): the trained model with its BatchNorm, the
+                          int8 network the golden kernel runs, and classify_fixed, the
+                          optimized kernels (spectralpointwise1d_opt and its Zynq-7030 and
+                          Zynq-7020 versions) bit for bit, on 1D-Justo-LiuNet's 12-bit input.
+                          python tools/spectralpointwise1d_model.py compares them on the
+                          labelled aegean pixels; ... formats writes the activations' formats,
+                          src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp;
+                          ... reference IMAGE writes IMAGE/reference_spectralpointwise1d.npy,
+                          what every optimized kernel writes for IMAGE/cube.npy.
 waveletcnn_model.py       numpy model of the waveletcnn kernels: preprocessing, float
                           forward pass (1D db4 DWT + 1x1 projection + 3x3 conv_block +
                           1x1 seg_head), and the bit-exact integer version of waveletcnn_opt
@@ -79,6 +89,7 @@ ran out of memory on whole captures). For the 1D networks' answers too, before z
 ```bash
 python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out aegean_unet
 python3 tools/justoliunet_model.py reference aegean_unet
+python3 tools/spectralpointwise1d_model.py reference aegean_unet
 python3 tools/specpw_unet_model.py reference aegean_unet
 python3 tools/specpw_unet_model.py fixed aegean_unet
 source fpga.sh; fpga_zip aegean_unet

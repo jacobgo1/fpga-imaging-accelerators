@@ -10,8 +10,8 @@
  * folder has labels.npy (H x W integers: 0 cloud, 1 land, 2 sea, anything else
  * unlabeled), the classes' accuracy against it and each class's IoU. REFERENCE: the PC's
  * answer for this kernel's network (reference_fixed.npy for justounetsimple_opt,
- * reference_justoliunet.npy / reference_justoliunet_bn.npy for the 1D ones,
- * reference_fixed_sp_unet_SIZE.npy for the SpecPW-UNet ones), compared
+ * reference_justoliunet.npy / reference_justoliunet_bn.npy / reference_spectralpointwise1d.npy
+ * for the 1D ones, reference_fixed_sp_unet_SIZE.npy for the SpecPW-UNet ones), compared
  * pixel by pixel: the share with the same class, and PASS or FAIL for every score.
  *
  * The registers come from UIO (the overlay's "kernel" node, generic-uio), the buffers

@@ -13,12 +13,37 @@
 //   read_pixels_ahead<0> ─┐  blocks 0, 2, 4, ... (HP0)
 //   read_pixels_ahead<1> ─┴─► zscore_pixels ─► the network ─► store_pixels (HP2)
 //                             blocks 1, 3, 5, ... (HP1)
+//
+// A network small enough to copy can instead run once per reader, each copy (a
+// lane) on its reader's blocks only, and store_pixels_lanes puts the lanes'
+// scores back in pixel order:
+//
+//   read_pixels_ahead<0> ─► the network, lane 0 ─┐
+//   read_pixels_ahead<1> ─► the network, lane 1 ─┼─► store_pixels_lanes
+//   ...                                          ┘
 
 // pixels = height x width, in LUTs (the index arithmetic is 16-bit, as in patch_grid.hpp).
 static inline uint32_t pixel_count(int height, int width) {
     #pragma HLS INLINE
     return mul<false, uint32_t>((uint16_t)height, (uint16_t)width);
 }
+
+// pixel_lane: the pixels of one lane, the blocks LANE, LANE + LANES, LANE + 2
+// LANES, ... of BLOCK pixels (the last block of the image maybe shorter), what
+// read_pixels_ahead<..., LANES, LANE> reads. A lane's processes take it as a
+// template argument and ask it how many pixels they get; pixel_lane<BLOCK, 1,
+// 0> is the whole image.
+template<int BLOCK, int LANES, int LANE>
+struct pixel_lane {
+    static_assert(LANE < LANES, "a lane of LANES");
+    static uint32_t count(int height, int width) {
+        #pragma HLS INLINE
+        const uint32_t pixels = pixel_count(height, width);
+        const uint32_t full = pixels / BLOCK, rest = pixels % BLOCK;    // whole blocks, and the short one
+        const uint32_t mine = full > (uint32_t)LANE ? (full - LANE - 1) / LANES + 1 : 0;
+        return mine * BLOCK + (rest != 0 && full % LANES == (uint32_t)LANE ? rest : 0);
+    }
+};
 
 // read_pixels_ahead: DDR -> stream, the words of the pixels of blocks PORT,
 // PORT + PORTS, PORT + 2 PORTS, ... (BLOCK pixels each, the last one maybe
@@ -165,6 +190,51 @@ void store_pixels(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<OUT_T
             }
             o[CLASSES] = best;
             dout.write(o);
+        }
+    }
+    drain: for (int k = 0; k < pending; k++) {
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=8
+        dout.write_response();
+    }
+    finished.write(true);
+}
+
+// store_pixels_lanes: store_pixels for a network run in LANES lanes (pixel_lane):
+// the same words, bursts and acknowledgements, but pixel p's scores come from
+// lane (p / BLOCK) % LANES, so the lanes are taken in turn, BLOCK pixels each,
+// the order their readers read the image in.
+template<int CLASSES, int LANES, int BLOCK, int BURST, int IN_FLIGHT, typename OUT_T>
+void store_pixels_lanes(hls::stream<vec_t<acc_t, CLASSES> > in[LANES], hls::burst_maxi<OUT_T> dout,
+                        int height, int width, hls::stream<bool>& finished) {
+    static_assert(BURST <= 256, "a burst is at most 256 beats");
+    const uint32_t pixels = pixel_count(height, width);
+    int pending = 0;                              // bursts not yet acknowledged
+    int in_block = 0, lane = 0;                   // pixel of the block, its lane
+    burst: for (uint32_t p0 = 0; p0 < pixels; p0 += BURST) {
+        #pragma HLS LOOP_TRIPCOUNT min=1 max=10204
+        const uint32_t n = pixels - p0 < (uint32_t)BURST ? pixels - p0 : (uint32_t)BURST;
+        if (pending == IN_FLIGHT) dout.write_response();
+        else pending++;
+        dout.write_request(p0, n);
+        put: for (uint32_t k = 0; k < n; k++) {
+            #pragma HLS PIPELINE II=1
+            #pragma HLS LOOP_TRIPCOUNT min=1 max=64
+            vec_t<acc_t, CLASSES> s;
+            for (int r = 0; r < LANES; r++) {
+                #pragma HLS UNROLL
+                if (lane == r) s = in[r].read();
+            }
+            OUT_T o;
+            int best = 0;
+            for (int c = 0; c < CLASSES; c++) {
+                #pragma HLS UNROLL
+                o[c] = s.v[c];
+                if (s.v[c] > s.v[best]) best = c;
+            }
+            o[CLASSES] = best;
+            dout.write(o);
+            if (in_block == BLOCK - 1) { in_block = 0; lane = lane == LANES - 1 ? 0 : lane + 1; }
+            else in_block++;
         }
     }
     drain: for (int k = 0; k < pending; k++) {
