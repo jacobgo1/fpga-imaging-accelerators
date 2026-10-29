@@ -2,8 +2,7 @@
 
 preprocess      raw L1a values (120 bands) -> the kernel's input (110 bands, z-scored)
 load_weights    weights/quantized/waveletcnn/waveletcnn_int8.npz -> float32 layers
-forward         a numpy model of the kernel: patches in, scores out. The reference the
-                board's answers are checked against (tools/waveletcnn_image.py prepare).
+forward         a numpy model of the kernel: patches in, scores out.
 classify_fixed  the optimized kernel (waveletcnn_opt) bit for bit: the raw uint16
                 cube in, int32 scores out. It preprocesses in integers itself
                 (preprocess_fixed), cuts the image into patches like the notebook
@@ -12,49 +11,31 @@ classify_fixed  the optimized kernel (waveletcnn_opt) bit for bit: the raw uint1
 
 The golden kernel (waveletcnn) does no preprocessing: its notebook does it, the
 same way as preprocess here. waveletcnn_opt does it in hardware, in integers, as
-preprocess_fixed here. The band selection and z-score are training's
-(hypso-onboard-segmentation: mu_sd.txt, bands 0-7 and 118-119 dropped).
+preprocess_fixed here. Both come from tools/preprocessing.py, which every model shares.
 """
 from pathlib import Path
-import re
+import sys
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import patching  # noqa: E402
+from preprocessing import (MU_SD, IN_FRAC, IN_MAX, read_preprocessing, preprocess,  # noqa: E402,F401
+                           quantize_input, prep_constants, preprocess_fixed)
+
 ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS = ROOT / 'weights/quantized/waveletcnn/waveletcnn_int8.npz'
-MU_SD = ROOT / 'mu_sd.txt'
-RAW_BANDS = 120
-DROPPED_BANDS = [0, 1, 2, 3, 4, 5, 6, 7, 118, 119]
 DWT_LEN = 8
 DWT_PAD = 6
 SUB_CH = 58
 # waveletcnn_opt's fixed-point formats (the *_FRAC constants in waveletcnn_opt.hpp):
-# its input is x * 2^IN_FRAC as int8, saturated at +-IN_MAX (z-scores -3.97 .. 3.97),
-# its 1D DWT outputs (and shifted input bands) have DWT_FRAC = IN_FRAC + 7 = 12 fraction
-# bits (exact, no rounding or clipping before projection), its activations between the
-# blocks have ACT_FRAC fraction bits (int16), and its scores are int32 with OUT_FRAC.
+# its input is preprocessing's int8 (IN_FRAC, IN_MAX), its 1D DWT outputs (and shifted
+# input bands) have DWT_FRAC = IN_FRAC + 7 = 12 fraction bits (exact, no rounding or
+# clipping before projection), its activations between the blocks have ACT_FRAC fraction
+# bits (int16), and its scores are int32 with OUT_FRAC.
 # LeakyReLU(0.01) multiplies negative values by LEAK_NUM * 2^-LEAK_FRAC = 41 / 4096.
-IN_FRAC, DWT_FRAC, ACT_FRAC, OUT_FRAC, PREP_FRAC = 5, 12, 9, 15, 22
-IN_MAX = 127
+DWT_FRAC, ACT_FRAC, OUT_FRAC = 12, 9, 15
 LEAK_NUM, LEAK_FRAC = 41, 12
-PREP_HEADER = ROOT / 'src/hls/waveletcnn_opt/waveletcnn_prep.hpp'
-
-
-def read_preprocessing(mu_sd=MU_SD):
-    """(kept band indices, per-band mean, per-band 1/std) from the training mu_sd.txt."""
-    arrays = re.findall(r'\[([^\]]*)\]', Path(mu_sd).read_text())
-    if len(arrays) != 2:
-        raise ValueError(f'{mu_sd}: expected a mu array and an sd array')
-    mean, std = [np.array([float(v) for v in a.replace(',', ' ').split()]) for a in arrays]
-    kept = np.array([b for b in range(RAW_BANDS) if b not in DROPPED_BANDS])
-    if len(mean) != len(kept) or len(std) != len(kept):
-        raise ValueError(f'{mu_sd} has {len(mean)} means and {len(std)} stds; {len(kept)} bands are kept')
-    return kept, mean.astype(np.float32), (1.0 / std).astype(np.float32)
-
-
-def preprocess(raw, kept, mean, inv_std):
-    """(x - mean) * (1/std) on the kept bands, in float32. raw: (..., 120)."""
-    return (np.asarray(raw, dtype=np.float32)[..., kept] - mean) * inv_std
 
 
 def load_weights(path=WEIGHTS):
@@ -129,36 +110,6 @@ def load_quantized(path=WEIGHTS):
     )
 
 
-def quantize_input(x):
-    """Preprocessed patches (float) -> int8 with IN_FRAC fraction bits, rounded, saturated."""
-    return np.clip(np.rint(np.asarray(x, dtype=np.float32) * np.float32(2.0 ** IN_FRAC)),
-                   -IN_MAX, IN_MAX).astype(np.int8)
-
-
-def prep_constants(mu_sd=MU_SD):
-    """The optimized kernel's z-score as integers: (A, B), 112 int64 each, for kept band k
-    (raw band 8 + k): round((dn - mean) / std * 2^IN_FRAC) = (dn * A[k] + B[k]) >> PREP_FRAC,
-    within one unit. Kept bands 110 and 111 (raw 118 and 119) get A = B = 0."""
-    kept, _, _ = read_preprocessing(mu_sd)
-    if list(kept) != list(range(8, 118)):
-        raise ValueError('waveletcnn_opt expects the kept bands to be raw bands 8-117')
-    arrays = re.findall(r'\[([^\]]*)\]', Path(mu_sd).read_text())
-    mean, std = [np.array([float(v) for v in a.replace(',', ' ').split()]) for a in arrays]
-    scale = 2.0 ** (IN_FRAC + PREP_FRAC) / std
-    a = np.zeros(112, dtype=np.int64)
-    b = np.zeros(112, dtype=np.int64)
-    a[:110] = np.rint(scale)
-    b[:110] = np.rint(-mean * scale) + (1 << (PREP_FRAC - 1))     # + half: rounds to nearest
-    return a, b
-
-
-def preprocess_fixed(raw, prep=None):
-    """Raw L1a values (..., 120, integers) -> the kernel's int8 input (..., 110)."""
-    a, b = prep if prep is not None else prep_constants()
-    dn = np.asarray(raw).astype(np.int64)[..., 8:118]
-    return np.clip((dn * a[:110] + b[:110]) >> PREP_FRAC, -IN_MAX, IN_MAX).astype(np.int8)
-
-
 def _conv3x3_int(x, w, b, bias_shift):
     """_conv3x3 in integers: sum(act * q) + bias * 2^bias_shift, exact in int64."""
     h, wd, _ = x.shape
@@ -216,7 +167,6 @@ def classify_fixed(cube, qlayers=None, prep=None):
     """Raw cube (H x W x 120 integers) -> H x W x 3 int32 scores (score * 2^OUT_FRAC), exactly
     what waveletcnn_opt writes: 32 x 32 patches in raster order, the image grown by
     repeating its last row and column."""
-    import patching
     qlayers = qlayers if qlayers is not None else load_quantized()
     prep = prep if prep is not None else prep_constants()
     scores = np.zeros(cube.shape[:2] + (3,), dtype=np.int32)
@@ -229,60 +179,3 @@ def with_class(scores):
     """H x W x 3 int32 scores -> H x W x 4, what waveletcnn_opt writes: the scores,
     then the class (their argmax, the first one on a tie)."""
     return np.concatenate([scores, scores.argmax(-1)[..., None].astype(np.int32)], axis=-1)
-
-
-def prep_header(mu_sd=MU_SD):
-    """The text of waveletcnn_prep.hpp."""
-    a, b = prep_constants(mu_sd)
-    _, mean, inv_std = read_preprocessing(mu_sd)
-
-    def rows(items):
-        items = list(items)
-        return ',\n'.join('    ' + ', '.join(items[i:i + 8]) for i in range(0, len(items), 8))
-
-    a_rows, b_rows = rows(str(v) for v in a), rows(str(v) for v in b)
-    mean_rows = rows(f'{float(v)!r}f' for v in mean)
-    inv_std_rows = rows(f'{float(v)!r}f' for v in inv_std)
-    return f"""// Generated by tools/waveletcnn_model.py from mu_sd.txt -- do not edit; run
-//     python tools/waveletcnn_model.py
-// after changing mu_sd.txt or the formats there.
-//
-// waveletcnn_opt's preprocessing in integers. Kept band k is raw band 8 + k (bands
-// 0-7 and 118-119 are dropped); 110 and 111 are raw bands 118 and 119, zeroed by A = B = 0:
-//     x * 2^IN_FRAC = round((dn - mean) / std * 2^IN_FRAC) = (dn * A[k] + B[k]) >> FRAC
-// (to within one unit), saturated to +-IN_MAX (int8, never -128).
-#ifndef WAVELETCNN_PREP_HPP
-#define WAVELETCNN_PREP_HPP
-
-#include <stdint.h>
-
-namespace waveletcnn_prep {{
-constexpr int IN_FRAC = {IN_FRAC};
-constexpr int IN_MAX = {IN_MAX};
-constexpr int FRAC = {PREP_FRAC};
-constexpr int FIRST_BAND = 8;
-
-static const int32_t A[112] = {{
-{a_rows}
-}};
-static const int32_t B[112] = {{
-{b_rows}
-}};
-
-// The float preprocessing these approximate (testbench reference): (dn - MEAN) * INV_STD.
-static const float MEAN[110] = {{
-{mean_rows}
-}};
-static const float INV_STD[110] = {{
-{inv_std_rows}
-}};
-}}  // namespace waveletcnn_prep
-
-#endif // WAVELETCNN_PREP_HPP
-"""
-
-
-if __name__ == '__main__':
-    PREP_HEADER.parent.mkdir(parents=True, exist_ok=True)
-    PREP_HEADER.write_text(prep_header(), encoding='utf-8', newline='\n')
-    print(f'wrote {PREP_HEADER.relative_to(ROOT)}')

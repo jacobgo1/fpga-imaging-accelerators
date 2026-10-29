@@ -16,8 +16,8 @@ accuracy, any later place 63 %), which tools/quantize_weights.py folds into conv
   classify_fixed the optimized kernels (justoliunet_opt, justoliunet_bn_opt) bit for
                  bit, from the raw cube: integers throughout (below)
 
-The preprocessing is justounetsimple's (keep bands 8-117, z-score with
-mu_sd.txt): justounetsimple_model.read_preprocessing / preprocess.
+The preprocessing is every model's (keep bands 8-117, z-score with mu_sd.txt):
+tools/preprocessing.py.
 
 The optimized kernels' integer formats (chosen on the 10 275 labelled aegean pixels):
   input      the z-score of each kept band, 12 bits with IN_FRAC = 8 fraction bits
@@ -31,9 +31,6 @@ The optimized kernels' integer formats (chosen on the 10 275 labelled aegean pix
 
     python tools/justoliunet_model.py          # both models on the aegean pixels: fp32, int8, fixed
     python tools/justoliunet_model.py formats  # write src/hls/justoliunet_opt/justoliunet_opt_formats.hpp
-    python tools/justoliunet_model.py reference IMAGE   # IMAGE/reference_<model>.npy for both models:
-        # what every optimized kernel of that model (ZCU104 and Zynq-7020) writes for
-        # IMAGE/cube.npy, bit for bit; the OPU's classify takes it as its reference
 """
 import sys
 from pathlib import Path
@@ -41,9 +38,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import re                                         # noqa: E402
 import extract_weights as ew                      # noqa: E402
-from justounetsimple_model import read_preprocessing, preprocess, MU_SD   # noqa: E402,F401
+import preprocessing                              # noqa: E402
+from preprocessing import read_preprocessing, preprocess, MU_SD   # noqa: E402,F401
 
 ROOT = Path(__file__).resolve().parents[1]
 MODELS = ('justoliunet', 'justoliunet_bn')
@@ -121,28 +118,14 @@ def forward_fp32(x, model):
 
 
 def prep_constants(mu_sd=MU_SD):
-    """The z-score as integers: (A, B), 112 int64 each, for kept band k (raw band 8 + k):
-    round((dn - mean) / std * 2^IN_FRAC) = (dn * A[k] + B[k]) >> PREP_FRAC, to within one
-    unit. Bands 110 and 111 (raw 118, 119) get A = B = 0: a pixel's words 1-14 are then
-    kept bands 0-111, as in justounetsimple_opt."""
-    kept, _, _ = read_preprocessing(mu_sd)
-    if list(kept) != list(range(8, 118)):
-        raise ValueError('the optimized kernels expect the kept bands to be raw bands 8-117')
-    mean, std = [np.array([float(v) for v in a.replace(',', ' ').split()])
-                 for a in re.findall(r'\[([^\]]*)\]', Path(mu_sd).read_text())]
-    scale = 2.0 ** (IN_FRAC + PREP_FRAC) / std
-    a = np.zeros(112, dtype=np.int64)
-    b = np.zeros(112, dtype=np.int64)
-    a[:110] = np.rint(scale)
-    b[:110] = np.rint(-mean * scale) + (1 << (PREP_FRAC - 1))     # + half: rounds to nearest
-    return a, b
+    """The z-score as integers in this 12-bit format: preprocessing.prep_constants."""
+    return preprocessing.prep_constants(mu_sd, IN_FRAC, PREP_FRAC)
 
 
 def preprocess_fixed(raw, prep=None):
     """Raw L1a values (..., 120 integers) -> the optimized kernels' input (..., 110)."""
-    a, b = prep if prep is not None else prep_constants()
-    dn = np.asarray(raw).astype(np.int64)[..., 8:118]
-    return np.clip((dn * a[:110] + b[:110]) >> PREP_FRAC, -IN_MAX, IN_MAX)
+    return preprocessing.preprocess_fixed(raw, prep if prep is not None else prep_constants(),
+                                          PREP_FRAC, IN_MAX, np.int64)
 
 
 def load_quantized_int(model, path=None):
@@ -178,27 +161,6 @@ def classify_fixed(raw, model, q=None, prep=None):
     s = h.reshape(len(h), -1) @ w.T + (b << (fa + fw - fb))       # channel-major flatten
     scores = s << (OUT_FRAC - fa - fw)
     return np.concatenate([scores, scores.argmax(1)[:, None]], axis=1).astype(np.int32)
-
-
-def reference(image, models=MODELS, chunk=4096):
-    """IMAGE/reference_<model>.npy, (H, W, 4) int32, for each model: classify_fixed on
-    IMAGE/cube.npy, chunk pixels at a time (the whole capture at once would need ~9 GB)."""
-    image = Path(image)
-    cube = np.load(image / 'cube.npy', mmap_mode='r')
-    h, w, bands = cube.shape
-    pixels = np.asarray(cube).reshape(h * w, bands) if bands == 120 else None
-    if pixels is None:
-        raise ValueError(f'{image}/cube.npy has {bands} bands; the kernels take the raw 120')
-    written = []
-    for model in models:
-        q = load_quantized_int(model)
-        out = np.empty((h * w, 4), dtype=np.int32)
-        for start in range(0, h * w, chunk):
-            out[start:start + chunk] = classify_fixed(pixels[start:start + chunk], model, q)
-        path = image / f'reference_{model}.npy'
-        np.save(path, out.reshape(h, w, 4))
-        written.append(path)
-    return written
 
 
 def formats_header():
@@ -240,10 +202,6 @@ def aegean_pixels():
 
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == 'reference':
-        for path in reference(sys.argv[2]):
-            print(f'wrote {path}')
-        return
     if sys.argv[1:] == ['formats']:
         FORMATS_HEADER.parent.mkdir(parents=True, exist_ok=True)
         FORMATS_HEADER.write_text(formats_header())

@@ -1,4 +1,0 @@
-# The generic ZedBoard / OPU program: it takes this kernel's register offsets
-# (kernel_regs.h) when main.py builds it. Its reference: reference_fixed_sp_unet_large.npy
-# (python3 tools/specpw_unet_model.py fixed IMAGE).
-software/opu/justounetsimple_opt/classify.c

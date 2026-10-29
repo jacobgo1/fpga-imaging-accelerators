@@ -33,13 +33,12 @@ sudo apt install device-tree-compiler gcc-arm-linux-gnueabihf
 ```
 
 **2. The test image on the board.** `classify` takes a raw cube (H x W x 120, **uint16**),
-and checks the classes against the true labels, `labels.npy`, which it finds next to the
-cube. Optionally also against the PC's answer for the kernel's network (a reference, one
-per network). They stay on the board; every design uses the same files.
+and checks the classes against the true labels, `labels.npy`, which must be next to the
+cube. They stay on the board; every design uses the same files.
 
 The `aegean_unet/` on the server has its cube saved as float32 (it is older than the
-uint16 format), which `classify` rejects. Its values are whole raw counts, and its
-`reference_fixed.npy` was computed from them as uint16, so a uint16 copy matches it:
+uint16 format), which `classify` rejects. Its values are whole raw counts, so a uint16
+copy is the same cube:
 
 ```bash
 python3 -c "
@@ -49,26 +48,14 @@ assert (c >= 0).all() and (c <= 65535).all() and (c == np.rint(c)).all(), 'not r
 np.save('aegean_unet/cube_u16.npy', c.astype(np.uint16))
 print('written aegean_unet/cube_u16.npy', c.shape)
 "
-python3 tools/justoliunet_model.py reference aegean_unet
 ssh zb05 mkdir -p /media/sd-pl/firmware
 scp aegean_unet/cube_u16.npy zb05:/media/sd-pl/firmware/cube.npy
-scp aegean_unet/labels.npy aegean_unet/reference_fixed.npy aegean_unet/reference_justoliunet.npy aegean_unet/reference_justoliunet_bn.npy zb05:/media/sd-pl/firmware/
+scp aegean_unet/labels.npy zb05:/media/sd-pl/firmware/
 ```
 
-`tools/justoliunet_model.py reference` writes the two 1D networks' references (a few
-minutes). The references, one per network:
-
-| Kernel | Its reference |
-| --- | --- |
-| `justounetsimple_opt_zynq7020` | `reference_fixed.npy` (from `tools/justounetsimple_image.py prepare`) |
-| `justoliunet_opt_zynq7020` | `reference_justoliunet.npy` (from `tools/justoliunet_model.py reference`) |
-| `justoliunet_bn_opt_zynq7020` | `reference_justoliunet_bn.npy` (the same command) |
-
 A new test image comes from a HYPSO capture with
-`python3 tools/justounetsimple_image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out NAME`,
-which writes `cube.npy` as uint16 and `reference_fixed.npy` (it says
-`... and the integer model, for justounetsimple_opt ...` when it does). Copy those two the
-same way.
+`python3 tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out NAME`
+(it writes `cube.npy` as uint16 and `labels.npy`). Copy the two the same way.
 
 ## Every new design, step by step
 
@@ -151,14 +138,6 @@ The list must contain `kernel`.
 
 ### 6. Run it on the test image
 
-With the kernel's reference from the table above (here `justoliunet_opt_zynq7020`'s):
-
-```bash
-ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_justoliunet.npy"
-```
-
-or against the labels only, without a reference:
-
 ```bash
 ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy"
 ```
@@ -170,16 +149,13 @@ fit in the board's reserved memory, with the same answers) and prints:
 598 x 1092 pixels, 665 patches, in 1 start of up to 598 rows
 cube into memory:      1.668 s
 FPGA:                 1851.3 ms, 2783.9 us per patch
-scores to the file:    0.563 s (and compared)
+scores to the file:    0.563 s (and checked against the labels)
 wall clock:            4.121 s
 accuracy against labels.npy: ...% of 653016 labelled pixels      the result: the true labels
   IoU cloud ..., land ..., sea ...                               per class, as the notebooks
-same class as reference_justoliunet.npy: ...%                    with a reference only
-PASS: 0 of 653016 pixels differ from reference_justoliunet.npy   every score bit for bit
 ```
 
-A reference of another network than the kernel's differs on (almost) every pixel: FAIL
-then says nothing about the design. `classify` exits with 1 on a FAIL.
+Without `labels.npy` next to the cube, `classify` says so and exits with 1.
 
 ### 7. Keep the results
 
@@ -206,7 +182,7 @@ After the reboot the board runs its own design again.
 The files stay on the SD card. After a reboot, load and run in one go:
 
 ```bash
-ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.npy scores.npy reference_justoliunet.npy'
+ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.npy scores.npy'
 ```
 
 ## When something goes wrong

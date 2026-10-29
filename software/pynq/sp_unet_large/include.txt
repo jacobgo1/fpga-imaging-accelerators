@@ -1,4 +1,0 @@
-# The same network as sp_unet_small, wider: its notebook finds the kernel from the
-# .bit and x..._hw.h next to it.
-software/pynq/sp_unet_small/sp_unet_small.ipynb
-mu_sd.txt    # training mean/std per band, for the preprocessing

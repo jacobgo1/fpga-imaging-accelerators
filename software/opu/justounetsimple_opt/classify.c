@@ -3,16 +3,12 @@
  * main.py builds it for the board's ARM with the kernel's register offsets
  * (kernel_regs.h, from x<kernel>_hw.h) and puts it in the OPU zip.
  *
- *   classify CUBE.npy SCORES.npy [REFERENCE.npy]
+ *   classify CUBE.npy SCORES.npy
  *
  * CUBE: the raw cube, H x W x 120 uint16 (cube.npy from an image zip). SCORES: what the
- * kernel wrote, H x W x 4 int32: the 3 scores * 2^16, then the class. If the cube's
- * folder has labels.npy (H x W integers: 0 cloud, 1 land, 2 sea, anything else
- * unlabeled), the classes' accuracy against it and each class's IoU. REFERENCE: the PC's
- * answer for this kernel's network (reference_fixed.npy for justounetsimple_opt,
- * reference_justoliunet.npy / reference_justoliunet_bn.npy / reference_spectralpointwise1d.npy
- * for the 1D ones, reference_fixed_sp_unet_SIZE.npy for the SpecPW-UNet ones), compared
- * pixel by pixel: the share with the same class, and PASS or FAIL for every score.
+ * kernel wrote, H x W x 4 int32: the 3 scores * 2^OUT_FRAC, then the class. The classes
+ * are checked against labels.npy in the cube's folder (H x W integers: 0 cloud, 1 land,
+ * 2 sea, anything else unlabeled), which must be there: their accuracy and each class's IoU.
  *
  * The registers come from UIO (the overlay's "kernel" node, generic-uio), the buffers
  * from the devicetree's reserved memory (CubeDMA's: it must be idle). That memory is
@@ -222,22 +218,16 @@ static void write_address(struct board *b, unsigned offset, int wide, uint64_t a
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3 && argc != 4) {
-        fprintf(stderr, "usage: %s CUBE.npy SCORES.npy [REFERENCE.npy]\n", argv[0]);
+    if (argc != 3) {
+        fprintf(stderr, "usage: %s CUBE.npy SCORES.npy\n", argv[0]);
         return 2;
     }
     const double start = now();
-    long shape[3], reference_shape[3];
+    long shape[3];
     FILE *in = npy_open(argv[1], "'<u2'", 3, shape);
     const long h = shape[0], w = shape[1];
     if (shape[2] != BANDS) fail("the cube must have 120 bands");
-    FILE *reference = NULL;
-    if (argc == 4) {
-        reference = npy_open(argv[3], "'<i4'", 3, reference_shape);
-        if (reference_shape[0] != h || reference_shape[1] != w || reference_shape[2] != LANES)
-            fail("the reference is not H x W x 4 for this cube");
-    }
-    /* labels.npy in the cube's folder, if there is one: the classes checked against it. */
+    /* labels.npy in the cube's folder: the classes are checked against it. */
     char labels_path[4096];
     size_t folder = 0;
     for (size_t i = 0; argv[1][i]; i++)
@@ -247,7 +237,12 @@ int main(int argc, char **argv) {
     long labels_shape[2];
     int label_bytes = 0, label_signed = 0;
     FILE *labels = npy_open_labels(labels_path, labels_shape, &label_bytes, &label_signed);
-    if (labels && (labels_shape[0] != h || labels_shape[1] != w)) fail("the labels are not H x W for this cube");
+    if (!labels) {
+        fprintf(stderr, "classify: no %s: the classes are checked against it (copy the image's labels.npy next to the cube)\n",
+                labels_path);
+        exit(1);
+    }
+    if (labels_shape[0] != h || labels_shape[1] != w) fail("the labels are not H x W for this cube");
     FILE *out = fopen(argv[2], "wb");
     if (!out) fail(argv[2]);
     npy_header(out, h, w);
@@ -263,13 +258,11 @@ int main(int argc, char **argv) {
     if (rows > h) rows = h;
     const uint64_t scores_at = ((uint64_t)rows * in_row + 4095) / 4096 * 4096;
     const int dins[] = REG_DINS;
-    int32_t *expected = reference ? malloc(rows * out_row) : NULL;
-    if (reference && !expected) fail("no memory for the reference");
-    unsigned char *truth = labels ? malloc((size_t)rows * w * label_bytes) : NULL;
-    if (labels && !truth) fail("no memory for the labels");
+    unsigned char *truth = malloc((size_t)rows * w * label_bytes);
+    if (!truth) fail("no memory for the labels");
 
     double loading = 0, fpga = 0, saving = 0;
-    long patches = 0, wrong = 0, strips = 0, same_class = 0;
+    long patches = 0, strips = 0;
     /* Against the labels: the labelled pixels (0 cloud, 1 land, 2 sea; other values are
      * unlabeled), those classified as labelled, and per class the pixels both call it
      * and either calls it (IoU), as the notebooks count them. */
@@ -294,25 +287,16 @@ int main(int argc, char **argv) {
         t = now();
         const int32_t *scores = (const int32_t *)(b.mem + scores_at);
         if (fwrite(scores, out_row, n, out) != (size_t)n) fail("cannot write the scores");
-        if (reference) {
-            if (fread(expected, out_row, n, reference) != (size_t)n) fail("the reference file is cut short");
-            for (long p = 0; p < n * w; p++) {
-                if (memcmp(scores + LANES * p, expected + LANES * p, LANES * 4) != 0) wrong++;
-                if (scores[LANES * p + 3] == expected[LANES * p + 3]) same_class++;
-            }
-        }
-        if (labels) {
-            if (fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
-            for (long p = 0; p < n * w; p++) {
-                const int64_t label = label_at(truth + (size_t)p * label_bytes, label_bytes, label_signed);
-                const int32_t cls = scores[LANES * p + 3];
-                if (label < 0 || label > 2) continue;
-                labelled++;
-                if (cls == label) correct++;
-                for (int c = 0; c < 3; c++) {
-                    if (cls == c && label == c) both[c]++;
-                    if (cls == c || label == c) either[c]++;
-                }
+        if (fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
+        for (long p = 0; p < n * w; p++) {
+            const int64_t label = label_at(truth + (size_t)p * label_bytes, label_bytes, label_signed);
+            const int32_t cls = scores[LANES * p + 3];
+            if (label < 0 || label > 2) continue;
+            labelled++;
+            if (cls == label) correct++;
+            for (int c = 0; c < 3; c++) {
+                if (cls == c && label == c) both[c]++;
+                if (cls == c || label == c) either[c]++;
             }
         }
         saving += now() - t;
@@ -325,25 +309,16 @@ int main(int argc, char **argv) {
            strips == 1 ? "" : "s", rows);
     printf("cube into memory:   %8.3f s\n", loading);
     printf("FPGA:               %8.1f ms, %.1f us per patch\n", 1e3 * fpga, 1e6 * fpga / patches);
-    printf("scores to the file: %8.3f s%s\n", saving, reference ? " (and compared)" : "");
+    printf("scores to the file: %8.3f s (and checked against the labels)\n", saving);
     printf("wall clock:         %8.3f s\n", now() - start);
-    if (labels) {
-        printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
-               labelled ? 100 * ((double)correct / labelled) : 0.0, labelled);
-        const char *names[3] = {"cloud", "land", "sea"};
-        printf("  IoU");
-        for (int c = 0; c < 3; c++) {
-            if (either[c]) printf("%s %s %.3f", c ? "," : "", names[c], (double)both[c] / either[c]);
-            else printf("%s %s -", c ? "," : "", names[c]);   /* neither has it: no IoU */
-        }
-        printf("\n");
-    } else {
-        printf("no %s: the classes are not checked against labels\n", labels_path);
+    printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
+           labelled ? 100 * ((double)correct / labelled) : 0.0, labelled);
+    const char *names[3] = {"cloud", "land", "sea"};
+    printf("  IoU");
+    for (int c = 0; c < 3; c++) {
+        if (either[c]) printf("%s %s %.3f", c ? "," : "", names[c], (double)both[c] / either[c]);
+        else printf("%s %s -", c ? "," : "", names[c]);   /* neither has it: no IoU */
     }
-    if (reference) {
-        printf("same class as %s: %.2f%%\n", argv[3], 100 * ((double)same_class / (h * w)));
-        printf("%s: %ld of %ld pixels differ from %s\n", wrong ? "FAIL" : "PASS", wrong, h * w, argv[3]);
-        return wrong ? 1 : 0;
-    }
+    printf("\n");
     return 0;
 }

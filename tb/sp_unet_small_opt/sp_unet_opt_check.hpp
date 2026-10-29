@@ -18,7 +18,7 @@
 //    difference is the rounding between the layers; it must stay small.
 // The z-scores are spread over -4 .. 4, so some inputs saturate at +-127. The
 // dropped bands (raw 0-7 and 118-119) hold 65535: they must not count.
-#include "../../src/hls/justounetsimple_opt/justounetsimple_prep.hpp"
+#include "../../src/optimized/shared/zscore_int8.hpp"
 #include "../../src/golden/specpw_unet_fixed_golden.hpp"
 #include <cmath>
 #include <cstdio>
@@ -27,13 +27,13 @@
 #include <vector>
 
 constexpr int IMG_H = 40, IMG_W = 50;      // matches the m_axi depth pragmas
-constexpr int FIRST_BAND = justounetsimple_prep::FIRST_BAND;
+constexpr int FIRST_BAND = zscore_int8::FIRST_BAND;
 constexpr float SCORE_TOLERANCE = 0.02f;   // fixed point against float, in score units
 constexpr int LANES = 4;                   // a pixel of dout: 3 scores and the class
 static_assert(PATCH_SIZE == GOLDEN_PATCH_SIZE && MODEL_BANDS == GOLDEN_BANDS && CLASSES == GOLDEN_CLASSES,
               "the optimized and golden kernels must have the same geometry");
 
-namespace prep = justounetsimple_prep;
+namespace prep = zscore_int8;
 typedef specpw_unet_quantized_params_golden<MODEL_BANDS, CLASSES, model_size> qparams_t;
 
 // One layer of the golden kernel's float-held weights, as the int8 integers they are.

@@ -1,8 +1,7 @@
 # FPGA Imaging Accelerators
 
 Neural-network accelerators for HYPSO hyperspectral images on a ZCU104, written
-in C++ with AMD Vitis HLS and built from the command line. See
-[the project description](docs/project-description.txt).
+in C++ with AMD Vitis HLS and built from the command line.
 
 **What happens at each step, from C++ to a result in the notebook on the board,
 and how to change the hardware around a kernel: [docs/framework.md](docs/framework.md).**
@@ -55,8 +54,8 @@ All `.cpp` files in `src/hls/NAME/` are the kernel, and all in `tb/NAME/` are th
 testbench. Includes are searched in `src/hls/NAME/` and `src/common/`. If the
 top function has another name, add it under `kernels` in
 [config/project.json](config/project.json). HLS directives can go in
-`config/NAME.tcl` instead of pragmas (see `config/matmul.tcl`). To run it on the
-board, add a notebook in `software/pynq/NAME/` (see docs/framework.md, section 5).
+`config/NAME.tcl` instead of pragmas (`set_directive_*` commands). To run it on the
+board, add its model to `tools/models.py` (see docs/framework.md, section 5).
 
 ## Where a run's output goes
 

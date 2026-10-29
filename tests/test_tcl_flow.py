@@ -27,7 +27,7 @@ class TclFlowTests(unittest.TestCase):
     def execute_hls(self, stage, fail_at='', skip_cosim=False, csynth_report=True, profile=False):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
-            flow.write_settings(flow.find_kernel('matmul'), run, stage, 10.0, skip_cosim, profile=profile)
+            flow.write_settings(flow.find_kernel('justounetsimple'), run, stage, 10.0, skip_cosim, profile=profile)
             tcl = tkinter.Tcl()
             tcl.eval('set calls {}; set exit_code -1; set cosim_args {}')
             for name in ('open_project', 'set_top', 'add_files', 'open_solution',
@@ -238,7 +238,7 @@ class TclFlowTests(unittest.TestCase):
     def execute_vivado(self, progress='100%'):
         with tempfile.TemporaryDirectory() as tmp:
             run = Path(tmp)
-            flow.write_settings(flow.find_kernel('matmul'), run, 'bitstream', 10.0, True)
+            flow.write_settings(flow.find_kernel('justounetsimple'), run, 'bitstream', 10.0, True)
             tcl = tkinter.Tcl()
             tcl.eval('set calls {}; set exit_code -1')
             for name in ('set_param', 'create_project', 'set_property', 'current_project', 'update_ip_catalog',

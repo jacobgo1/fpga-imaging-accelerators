@@ -1,5 +1,4 @@
 # The OPU program for this kernel (main.py packs it for a zedboard build, with the
 # kernel's register offsets in kernel_regs.h): the same cube in and scores out as
 # justounetsimple_opt, so the same program; it gives every read port the cube.
-# Its reference: python3 tools/spectralpointwise1d_model.py reference IMAGE
 software/opu/justounetsimple_opt/classify.c

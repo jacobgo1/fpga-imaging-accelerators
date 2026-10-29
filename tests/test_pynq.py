@@ -1,7 +1,7 @@
 """The PYNQ path: packaging a build for the board, the notebooks, fpga.sh.
 
-The notebooks themselves run end to end against a fake board in test_justounetsimple.py;
-here only that they are valid and what goes into the package next to them.
+The notebooks themselves run end to end against a fake board in test_notebooks.py; here
+only that they are valid and what goes into the package next to them.
 """
 import contextlib
 import hashlib
@@ -20,9 +20,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which('bash')
 HEADER = '#define XJUSTOUNETSIMPLE_CONTROL_ADDR_AP_CTRL 0x0\n'
-# justounetsimple's notebook, plus the repository file its include.txt names
+# a golden kernel's package: the shared golden notebook, which model it is, and mu_sd.txt
 PACKAGE = ['justounetsimple.bit', 'justounetsimple.hwh', 'xjustounetsimple_hw.h',
-           'justounetsimple.ipynb', 'mu_sd.txt']
+           'classify_golden.ipynb', 'kernel.json', 'mu_sd.txt']
 
 
 def load_module(name, path):
@@ -73,30 +73,19 @@ class PackageTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as zip_file:
             self.assertEqual(sorted(zip_file.namelist()), sorted(f'justounetsimple_pynq/{n}' for n in PACKAGE))
 
-    def test_zynq7020_package_takes_the_zcu104_notebook(self):
-        kernel = 'justounetsimple_opt_zynq7020'
-        run = make_build(self.dir, kernel, '#define XJUSTOUNETSIMPLE_OPT_ZYNQ7020_CONTROL_ADDR_AP_CTRL 0x0\n')
-        out, _ = self.package(run, kernel)
-        self.assertEqual(sorted(p.name for p in out.iterdir()),
-                         sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'justounetsimple_opt.ipynb']))
-        self.assertEqual((out / 'justounetsimple_opt.ipynb').read_bytes(),
-                         (ROOT / 'software/pynq/justounetsimple_opt/justounetsimple_opt.ipynb').read_bytes())
-
-    def test_justoliunet_packages_carry_the_shared_notebook_and_their_own_weights(self):
-        for kernel in ('justoliunet', 'justoliunet_bn'):
+    def test_optimized_packages_take_the_shared_notebook_and_say_their_model(self):
+        for kernel, model in (('justounetsimple_opt_zynq7020', 'justounetsimple'),
+                              ('sp_unet_small_opt_direct', 'sp_unet_small'), ('justoliunet_bn_opt', 'justoliunet_bn')):
             with self.subTest(kernel=kernel):
-                weights = ROOT / f'weights/quantized/{kernel}/{kernel}_int8.npz'
-                if not weights.exists():
-                    self.skipTest(f'no {weights.relative_to(ROOT)}: '
-                                  f'python tools/quantize_weights.py weights/fp32/{kernel}')
                 run = make_build(self.dir / kernel, kernel, f'#define X{kernel.upper()}_CONTROL_ADDR_AP_CTRL 0x0\n')
                 out, _ = self.package(run, kernel)
                 self.assertEqual(sorted(p.name for p in out.iterdir()),
-                                 sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'justoliunet.ipynb',
-                                         'mu_sd.txt', f'{kernel}_int8.npz']))
-                self.assertEqual((out / 'justoliunet.ipynb').read_bytes(),
-                                 (ROOT / 'software/pynq/justoliunet/justoliunet.ipynb').read_bytes())
-                self.assertEqual((out / f'{kernel}_int8.npz').read_bytes(), weights.read_bytes())
+                                 sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'classify.ipynb',
+                                         'kernel.json']))
+                self.assertEqual((out / 'classify.ipynb').read_bytes(),
+                                 (ROOT / 'software/pynq/shared/classify.ipynb').read_bytes())
+                info = json.loads((out / 'kernel.json').read_text())
+                self.assertEqual(info, {'kernel': kernel, 'model': model, **flow.MODELS.MODELS[model]})
 
     def test_missing_hwh_is_named(self):
         with self.assertRaisesRegex(SystemExit, 'block design description'):
@@ -118,7 +107,7 @@ class PackageTests(unittest.TestCase):
     def test_every_notebook_is_valid_and_its_code_parses(self):
         import ast
         notebooks = sorted((ROOT / 'software/pynq').glob('*/*.ipynb'))
-        self.assertTrue(notebooks)
+        self.assertEqual(len(notebooks), 2, 'the two shared notebooks')
         for path in notebooks:
             with self.subTest(notebook=path.relative_to(ROOT).as_posix()):
                 notebook = json.loads(path.read_text(encoding='utf-8'))
@@ -129,15 +118,22 @@ class PackageTests(unittest.TestCase):
                     if not cell.lstrip().startswith(('!', '%')):  # shell and magic lines are not Python
                         ast.parse(cell)
 
-    def test_matmul_notebook_lands_next_to_its_bitstream(self):
-        run = make_build(self.dir, 'matmul', '#define XMATMUL_CONTROL_ADDR_AP_CTRL 0x0\n')
-        out, archive = self.package(run, 'matmul')
+    def test_a_kernel_of_no_model_takes_its_own_notebook(self):
+        run = make_build(self.dir, 'example', '#define XEXAMPLE_CONTROL_ADDR_AP_CTRL 0x0\n')
+        own = self.dir / 'software/pynq/example'
+        own.mkdir(parents=True)
+        (own / 'example.ipynb').write_text('{}')
+        (own / 'include.txt').write_text('mu_sd.txt    # a repository file it needs\n')
+        (self.dir / 'mu_sd.txt').write_text('mu sd')
+        saved, flow.ROOT = flow.ROOT, self.dir
+        try:
+            out, archive = self.package(run, 'example')
+        finally:
+            flow.ROOT = saved
         self.assertEqual(sorted(p.name for p in out.iterdir()),
-                         ['matmul.bit', 'matmul.hwh', 'matmul.ipynb', 'xmatmul_hw.h'])
-        self.assertEqual((out / 'matmul.ipynb').read_bytes(),
-                         (ROOT / 'software/pynq/matmul/matmul.ipynb').read_bytes(), 'copied as is')
+                         ['example.bit', 'example.hwh', 'example.ipynb', 'mu_sd.txt', 'xexample_hw.h'])
         with zipfile.ZipFile(archive) as zip_file:
-            self.assertIn('matmul_pynq/matmul.ipynb', zip_file.namelist())
+            self.assertIn('example_pynq/example.ipynb', zip_file.namelist())
 
 
 # A .bit as Vivado writes it: a header of fields, then 'e', the length and the words.
@@ -365,17 +361,17 @@ class FpgaShellTests(unittest.TestCase):
         for command in ('fpga_test', 'fpga_build', 'fpga_ip', 'fpga_cosim', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
-                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_readonly',
-                                  'justounetsimple_opt_zynq7020', 'justounetsimple_opt_zynq7030'])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--c'), ['--clock-ns'])
-        self.assertEqual(self.complete('fpga_cosim', 'matmul', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
-        self.assertEqual(self.complete('fpga_cosim', 'matmul', '--d'), ['--dataflow-profile'])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--d'), [])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', ''), ['zcu104', 'zedboard', 'zynq7020', 'zynq7030'])
-        self.assertEqual(self.complete('fpga_build', 'matmul', '--board', 'zynq7030', '--'),
+                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7020',
+                                  'justounetsimple_opt_zynq7030'])
+        self.assertEqual(self.complete('fpga_build', 'justounetsimple', '--c'), ['--clock-ns'])
+        self.assertEqual(self.complete('fpga_cosim', 'justounetsimple', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_cosim', 'justounetsimple', '--d'), ['--dataflow-profile'])
+        self.assertEqual(self.complete('fpga_build', 'justounetsimple', '--d'), [])
+        self.assertEqual(self.complete('fpga_build', 'justounetsimple', '--board', ''), ['zcu104', 'zedboard', 'zynq7020', 'zynq7030'])
+        self.assertEqual(self.complete('fpga_build', 'justounetsimple', '--board', 'zynq7030', '--'),
                          ['--board', '--clock-ns'])
-        self.assertEqual(self.complete('fpga_ip', 'matmul', '--board', 'zed'), ['zedboard'])
-        self.assertEqual(self.complete('fpga_ip', 'matmul', '--'), ['--board', '--clock-ns'])
+        self.assertEqual(self.complete('fpga_ip', 'justounetsimple', '--board', 'zed'), ['zedboard'])
+        self.assertEqual(self.complete('fpga_ip', 'justounetsimple', '--'), ['--board', '--clock-ns'])
 
     def test_tab_completes_a_kernels_bitstream_runs(self):
         with tempfile.TemporaryDirectory() as tmp:

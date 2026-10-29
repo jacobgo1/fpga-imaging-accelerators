@@ -31,9 +31,6 @@ The optimized kernels' integer formats (chosen on the 10 275 labelled aegean pix
 
     python tools/spectralpointwise1d_model.py          # on the aegean pixels: fp32, int8, fixed
     python tools/spectralpointwise1d_model.py formats  # write src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp
-    python tools/spectralpointwise1d_model.py reference IMAGE   # IMAGE/reference_spectralpointwise1d.npy:
-        # what every optimized kernel (ZCU104, Zynq-7030, Zynq-7020) writes for IMAGE/cube.npy,
-        # bit for bit; the OPU's classify takes it as its reference
 """
 import sys
 from pathlib import Path
@@ -42,7 +39,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import extract_weights as ew                      # noqa: E402
-from justounetsimple_model import read_preprocessing, preprocess   # noqa: E402,F401
+from preprocessing import read_preprocessing, preprocess   # noqa: E402,F401
 from justoliunet_model import (IN_FRAC, IN_MAX, OUT_FRAC, ACT_MAX, preprocess_fixed,   # noqa: E402,F401
                                aegean_pixels, _round_shift)
 
@@ -139,24 +136,6 @@ def classify_fixed(raw, q=None, prep=None, fracs=ACT_FRACS, in_frac=IN_FRAC, in_
     return np.concatenate([scores, scores.argmax(1)[:, None]], axis=1).astype(np.int32)
 
 
-def reference(image, chunk=65536):
-    """IMAGE/reference_spectralpointwise1d.npy, (H, W, 4) int32: classify_fixed on
-    IMAGE/cube.npy, chunk pixels at a time."""
-    image = Path(image)
-    cube = np.load(image / 'cube.npy', mmap_mode='r')
-    h, w, bands = cube.shape
-    if bands != 120:
-        raise ValueError(f'{image}/cube.npy has {bands} bands; the kernels take the raw 120')
-    pixels = np.asarray(cube).reshape(h * w, bands)
-    q = load_quantized_int()
-    out = np.empty((h * w, 4), dtype=np.int32)
-    for start in range(0, h * w, chunk):
-        out[start:start + chunk] = classify_fixed(pixels[start:start + chunk], q)
-    path = image / f'reference_{MODEL}.npy'
-    np.save(path, out.reshape(h, w, 4))
-    return path
-
-
 def formats_header():
     """src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp: the activations'
     formats above, for the optimized kernels (the input's are justoliunet_opt_formats.hpp's)."""
@@ -175,9 +154,6 @@ def formats_header():
 
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == 'reference':
-        print(f'wrote {reference(sys.argv[2])}')
-        return
     if sys.argv[1:] == ['formats']:
         FORMATS_HEADER.parent.mkdir(parents=True, exist_ok=True)
         FORMATS_HEADER.write_text(formats_header())

@@ -14,7 +14,7 @@
 //  - golden: the float kernel (src/hls/waveletcnn/) on the same int8 input, as
 //    floats. The difference is the rounding between the layers; it must stay
 //    small.
-#include "../../src/hls/waveletcnn_opt/waveletcnn_prep.hpp"
+#include "../../src/optimized/shared/zscore_int8.hpp"
 #include "../../src/hls/waveletcnn/waveletcnn.cpp"
 #include <cmath>
 #include <cstdio>
@@ -22,14 +22,14 @@
 #include <random>
 
 constexpr int IMG_H = 40, IMG_W = 50;  // matches the m_axi depth pragmas
-constexpr int FIRST = waveletcnn_prep::FIRST_BAND;
+constexpr int FIRST = zscore_int8::FIRST_BAND;
 constexpr float SCORE_TOLERANCE = 0.02f;   // fixed point against float, in score units
 constexpr int LANES = 4;                   // a pixel of dout: 3 scores and the class
 static_assert(PATCH_SIZE == GOLDEN_PATCH_SIZE && MODEL_BANDS == GOLDEN_BANDS && CLASSES == GOLDEN_CLASSES,
               "the optimized and golden kernels must have the same geometry");
 
 namespace q = waveletcnn_int8;
-namespace prep = waveletcnn_prep;
+namespace prep = zscore_int8;
 
 static int64_t rshift(int64_t v, int shift) {
     return shift == 0 ? v : (v + (int64_t(1) << (shift - 1))) >> shift;

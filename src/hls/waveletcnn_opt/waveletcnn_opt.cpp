@@ -1,5 +1,5 @@
 #include "waveletcnn_opt.hpp"
-#include "waveletcnn_prep.hpp"
+#include "../../optimized/shared/zscore_int8.hpp"
 #include "../../optimized/shared/read_rows.hpp"
 #include "../../optimized/shared/pixel_buffer.hpp"
 #include "../../optimized/shared/dwt_proj.hpp"
@@ -10,7 +10,7 @@
 #include "../../../weights/quantized/waveletcnn/waveletcnn_int8.hpp"
 
 namespace weights = waveletcnn_int8;
-namespace zscore = waveletcnn_prep;
+namespace zscore = zscore_int8;
 
 constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
 constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;

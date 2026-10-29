@@ -76,7 +76,7 @@ The kernel's ports come from the `INTERFACE` pragmas on its top function:
 | `m_axi port=din0 bundle=gmem0` | `m_axi_gmem0`: the kernel reads/writes DDR itself | PS `S_AXI_HP0_FPD`, through `data0` (`gmem1` → HP1, ...) |
 | (always) | `ap_clk`, `ap_rst_n`, `interrupt` | `pl_clk0`, `rst`, `pl_ps_irq0` |
 
-A kernel with no `m_axi` ports (e.g. `matmul`) gets only the control path.
+A kernel with no `m_axi` ports gets only the control path.
 
 ### Changing it
 
@@ -148,8 +148,9 @@ preparing images), described in [tools/README.md](../tools/README.md).
 1. `src/hls/K/K.cpp` with the top function `K` and its `INTERFACE` pragmas
    (copy them from `justounetsimple_opt.cpp`), plus `tb/K/K_tb.cpp`.
 2. `fpga_test K` until it passes.
-3. `software/pynq/K/K.ipynb` (copy `justounetsimple_opt.ipynb` and change the
-   register names and buffer shapes), plus an `include.txt` if it needs repo files.
+3. A new model: its entry in `tools/models.py` (the board's notebooks then take
+   it, golden and optimized). A kernel of no model: `software/pynq/K/K.ipynb`, plus
+   an `include.txt` if it needs repo files.
 4. `fpga_build K`, upload `K_pynq.zip`, and run the notebook.
 
 The first accelerator, `justoliunet` (a per-pixel 1D network, since removed;

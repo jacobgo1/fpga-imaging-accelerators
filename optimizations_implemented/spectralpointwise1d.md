@@ -46,8 +46,7 @@ reference and the float golden network) and by `tests/test_spectralpointwise1d.p
 aegean pixels. The design: `src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp`; a
 lane's layers: `spectralpointwise1d_opt_lanes.hpp`; the four-lane chain (ZCU104, 7030):
 `spectralpointwise1d_opt_dataflow.hpp`; the 7020's two lanes: its `.cpp`. Notebooks:
-`software/pynq/spectralpointwise1d/` (golden) and `software/pynq/spectralpointwise1d_opt/`
-(ZCU104 and PYNQ-Z2); on the OPU PetaLinux (ZedBoard, 7030): the generic `classify.c`.
+the shared ones, `software/pynq/shared/classify_golden.ipynb` and `classify.ipynb`; on the OPU PetaLinux (ZedBoard, 7030): the generic `classify.c`.
 
 ## Optimizations used
 
@@ -143,3 +142,6 @@ much above T means DDR is the limit.
   of a pixel's 15 words: 7 % less, many more bursts); hard-wired convsp2/convsp3 weights
   (shift-adds in LUTs); fewer convsp1 DSPs on the Zynq-7000s by folding bands over two
   cycles if a lane's DDR share is below a word a cycle.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

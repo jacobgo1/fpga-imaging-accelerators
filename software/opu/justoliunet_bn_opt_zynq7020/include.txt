@@ -1,4 +1,4 @@
 # The OPU program for this kernel (main.py packs it for a zedboard build, with the
 # kernel's register offsets in kernel_regs.h): the same cube in and scores out as
-# justounetsimple_opt, so the same program. Its reference: python3 tools/justoliunet_model.py reference IMAGE
+# justounetsimple_opt, so the same program.
 software/opu/justounetsimple_opt/classify.c

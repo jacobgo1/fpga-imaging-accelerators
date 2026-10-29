@@ -28,18 +28,30 @@ def cli(*args):
 
 class KernelTests(unittest.TestCase):
     def test_files_are_found_by_folder_name(self):
-        kernel = flow.find_kernel('matmul')
-        self.assertEqual(kernel['top'], 'matmul')
-        self.assertEqual(kernel['sources'], [ROOT / 'src/hls/matmul/matmul.cpp'])
-        self.assertEqual(kernel['testbench'], [ROOT / 'tb/matmul/test_matmul.cpp'])
-        self.assertIn(ROOT / 'src/hls/matmul', kernel['include_dirs'])
-        self.assertEqual(kernel['directives'], ROOT / 'config/matmul.tcl')
+        kernel = flow.find_kernel('justounetsimple')
+        self.assertEqual(kernel['top'], 'justounetsimple')
+        self.assertEqual(kernel['sources'], [ROOT / 'src/hls/justounetsimple/justounetsimple.cpp'])
+        self.assertEqual(kernel['testbench'], [ROOT / 'tb/justounetsimple/justounetsimple_tb.cpp'])
+        self.assertIn(ROOT / 'src/hls/justounetsimple', kernel['include_dirs'])
+        self.assertIsNone(kernel['directives'])
+
+    def test_directives_come_from_config_kernel_tcl(self):
+        saved = flow.ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            flow.ROOT = pathlib.Path(tmp)
+            for path in ('src/hls/k/k.cpp', 'tb/k/k_tb.cpp', 'config/k.tcl'):
+                (flow.ROOT / path).parent.mkdir(parents=True, exist_ok=True)
+                (flow.ROOT / path).write_text('')
+            try:
+                self.assertEqual(flow.find_kernel('k')['directives'], flow.ROOT / 'config/k.tcl')
+            finally:
+                flow.ROOT = saved
 
     def test_config_can_rename_the_top_function(self):
         saved = dict(flow.CONFIG['kernels'])
-        flow.CONFIG['kernels']['matmul'] = {'top': 'matmul_top'}
+        flow.CONFIG['kernels']['justounetsimple'] = {'top': 'justounetsimple_top'}
         try:
-            self.assertEqual(flow.find_kernel('matmul')['top'], 'matmul_top')
+            self.assertEqual(flow.find_kernel('justounetsimple')['top'], 'justounetsimple_top')
         finally:
             flow.CONFIG['kernels'].clear()
             flow.CONFIG['kernels'].update(saved)
@@ -52,7 +64,7 @@ class KernelTests(unittest.TestCase):
     def test_kernels_command_lists_them(self):
         result = cli('kernels')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('matmul\n  top        matmul', result.stdout)
+        self.assertIn('justounetsimple\n  top        justounetsimple', result.stdout)
         self.assertIn('justounetsimple_opt\n  top        justounetsimple_opt', result.stdout)
 
     def test_a_stage_needs_a_kernel(self):
@@ -63,7 +75,7 @@ class KernelTests(unittest.TestCase):
     def test_old_stages_are_gone(self):
         for stage in ('export', 'synth', 'impl', 'doctor', 'parts'):
             with self.subTest(stage=stage):
-                self.assertNotEqual(cli(stage, '--kernel', 'matmul').returncode, 0)
+                self.assertNotEqual(cli(stage, '--kernel', 'justounetsimple').returncode, 0)
 
 
 class RunFolderTests(unittest.TestCase):
@@ -111,15 +123,15 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             run = pathlib.Path(tmp) / 'a folder with spaces'
             run.mkdir()
-            flow.write_settings(flow.find_kernel('matmul'), run, 'csynth', 5.0, False)
+            flow.write_settings(flow.find_kernel('justounetsimple'), run, 'csynth', 5.0, False)
             tcl = tkinter.Tcl()
             tcl.eval(f'source {{{(run / "settings.tcl").as_posix()}}}')
             self.assertEqual(tcl.getvar('cfg(run_dir)'), run.as_posix())
-            self.assertEqual(tcl.getvar('cfg(top)'), 'matmul')
+            self.assertEqual(tcl.getvar('cfg(top)'), 'justounetsimple')
             self.assertEqual(tcl.getvar('cfg(part)'), 'xczu7ev-ffvc1156-2-e')
             self.assertEqual(float(tcl.getvar('cfg(clock_ns)')), 5.0)
             sources = tcl.splitlist(tcl.getvar('cfg(sources)'))
-            self.assertEqual(list(sources), [(ROOT / 'src/hls/matmul/matmul.cpp').as_posix()])
+            self.assertEqual(list(sources), [(ROOT / 'src/hls/justounetsimple/justounetsimple.cpp').as_posix()])
             self.assertEqual(tcl.getvar('cfg(board)'), 'zcu104')
             self.assertEqual(tcl.getvar('cfg(board_script)'), (ROOT / 'boards/zcu104/system.tcl').as_posix())
             self.assertEqual(int(tcl.getvar('cfg(jobs)')), flow.job_count())
@@ -133,7 +145,7 @@ class SettingsTests(unittest.TestCase):
     def test_board_picks_the_part_and_the_board_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             run = pathlib.Path(tmp)
-            flow.write_settings(flow.find_kernel('matmul'), run, 'bitstream', 10.0, True, 'zynq7030')
+            flow.write_settings(flow.find_kernel('justounetsimple'), run, 'bitstream', 10.0, True, 'zynq7030')
             tcl = tkinter.Tcl()
             tcl.eval(f'source {{{(run / "settings.tcl").as_posix()}}}')
             self.assertEqual(tcl.getvar('cfg(board)'), 'zynq7030')
@@ -149,17 +161,17 @@ class EstimateTests(unittest.TestCase):
             report = flow.ROOT / 'hls/solution/syn/report'
             report.mkdir(parents=True)
             if xml:
-                shutil.copy2(xml, report / 'matmul_csynth.xml')
+                shutil.copy2(xml, report / 'k_csynth.xml')
             out = io.StringIO()
             try:
                 with contextlib.redirect_stdout(out):
-                    flow.print_estimates(flow.ROOT, 'matmul')
+                    flow.print_estimates(flow.ROOT, 'k')
             finally:
                 flow.ROOT = saved
         return out.getvalue()
 
     def test_the_numbers_are_printed(self):
-        text = self.estimates(ROOT / 'tests/data/matmul_csynth.xml')
+        text = self.estimates(ROOT / 'tests/data/csynth_report.xml')
         self.assertIn('latency   261 cycles, a new start every 262 cycles', text)
         self.assertIn('clock     4.262 ns needed, 10.00 ns target', text)
         self.assertIn('DSP 8/1728', text)

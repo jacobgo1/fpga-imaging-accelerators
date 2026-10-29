@@ -28,6 +28,7 @@ build/KERNEL/latest points at the newest one. Settings are in config/project.jso
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,10 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = json.loads((ROOT / 'config' / 'project.json').read_text(encoding='utf-8'))
+# The models' table (tools/models.py, plain Python): which notebook and settings a kernel's zip gets.
+_spec = importlib.util.spec_from_file_location('models', ROOT / 'tools' / 'models.py')
+MODELS = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(MODELS)
 STAGES = ('native', 'csim', 'csynth', 'cosim', 'ip', 'bitstream')
 
 
@@ -241,6 +246,17 @@ def package_pynq(run, name):
     shutil.copy2(bit, out / f'{name}.bit')  # PYNQ finds the .hwh by the .bit's name
     shutil.copy2(hwh, out / f'{name}.hwh')
     shutil.copy2(header, out / header.name)
+    model = MODELS.model_of(name)
+    if model:
+        # One notebook for every model, the golden kernels' or the optimized ones'; kernel.json
+        # tells it which model this is.
+        golden = name == model
+        shared = ROOT / 'software' / 'pynq' / 'shared'
+        shutil.copy2(shared / ('classify_golden.ipynb' if golden else 'classify.ipynb'), out)
+        if golden:
+            shutil.copy2(ROOT / 'mu_sd.txt', out)   # the golden notebooks preprocess on the ARM
+        (out / 'kernel.json').write_text(json.dumps({'kernel': name, 'model': model, **MODELS.MODELS[model]},
+                                                    indent=2) + '\n', encoding='utf-8')
     for file in software_files('pynq', name):
         shutil.copy2(file, out / file.name)
 
@@ -445,7 +461,7 @@ echo "kernel AP_CTRL at 0x{base:08X}: $(devmem 0x{base:08X}) (0x00000004: idle, 
         print(f'  No dtc here: load.sh compiles {name}.dtsi on the board (the OPU image has dtc).')
     for source in programs:
         if compiler:
-            print(f'  Then: {OPU_FIRMWARE}/{source.stem} CUBE.npy SCORES.npy REFERENCE.npy (see {source.name})')
+            print(f'  Then: {OPU_FIRMWARE}/{source.stem} CUBE.npy SCORES.npy, labels.npy next to the cube (see {source.name})')
         else:
             print(f'  {source.name} is not built: no ARM compiler (arm-linux-gnueabihf-gcc, or set OPU_CC).'
                   f' Install one (sudo apt install gcc-arm-linux-gnueabihf) and run: python3 main.py pynq --kernel {name}')

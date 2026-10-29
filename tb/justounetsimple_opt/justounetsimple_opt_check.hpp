@@ -5,7 +5,7 @@
 // the image. The kernel must match a plain-loop integer reference bit for bit, and
 // stay close to the float golden kernel. A fifth of the z-scores saturate, and the
 // dropped bands hold 65535, so both must be handled right.
-#include "../../src/hls/justounetsimple_opt/justounetsimple_prep.hpp"
+#include "../../src/optimized/shared/zscore_int8.hpp"
 #include "../../src/hls/justounetsimple/justounetsimple.cpp"
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@
 #include <random>
 
 namespace weights = justounetsimple_int8;   // as floats holding the int8 values
-namespace zscore = justounetsimple_prep;
+namespace zscore = zscore_int8;
 
 constexpr int IMAGE_HEIGHT = 40, IMAGE_WIDTH = 50;   // matches the m_axi depth pragmas
 constexpr int FIRST_MODEL_BAND = zscore::FIRST_BAND;

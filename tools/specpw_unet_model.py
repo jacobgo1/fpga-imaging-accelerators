@@ -21,17 +21,13 @@ C++ plain-loop version is src/golden/specpw_unet_fixed_golden.hpp, and the two a
 exactly, tests/test_specpw_unet.py):
 forward_patch_fixed  one int8 patch (z-score * 2^IN_FRAC) -> int32 scores * 2^OUT_FRAC
 classify_fixed       a raw cube -> int32 scores, with justounetsimple_opt's integer
-                     z-score (justounetsimple_model.preprocess_fixed)
+                     z-score (preprocessing.preprocess_fixed)
 kernel_reference     a raw cube -> what sp_unet_SIZE_opt writes (H x W x 4 int32)
 
     python tools/specpw_unet_model.py                    # each size on the aegean pixels
-    python tools/specpw_unet_model.py reference IMAGE    # IMAGE/reference_sp_unet_SIZE.npy
-    python tools/specpw_unet_model.py fixed IMAGE        # IMAGE/reference_fixed_sp_unet_SIZE.npy
 
-reference writes, for an image folder made by tools/justounetsimple_image.py prepare, what
-each golden kernel will answer for its cube.npy (float32 H x W x 3): the notebook compares
-the board with it. fixed writes what each optimized kernel writes, bit for bit: the scores
-* 2^OUT_FRAC, then the class (int32 H x W x 4); its cube must be raw counts (uint16).
+classify and kernel_reference are what each golden and each optimized kernel answers
+(tools/models.py: the tests check the notebooks with them).
 
 The skip connection is cat([upsampled, skip]): on the aegean pixels that order gives
 94-96 % and the other 27-40 %. The aegean pixels are every 8th of the capture, so the
@@ -47,6 +43,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import extract_weights  # noqa: E402
 import justounetsimple_model  # noqa: E402
+import preprocessing  # noqa: E402
 import patching  # noqa: E402
 
 SIZES = ('small', 'medium', 'large')
@@ -64,7 +61,7 @@ LAYERS = ('convsp1', 'convsp2', 'convsp3', 'double1.block.0', 'double1.block.3',
 # activation is 9.1 (large's double1), so 3.5 times that still fits. Each conv sums
 # act * q exactly, its bias shifted up to the sum's fraction bits, and rounds half up
 # (adds half, shifts right) to the next layer's.
-IN_FRAC, ACT_FRAC, OUT_FRAC = justounetsimple_model.IN_FRAC, 10, 16
+IN_FRAC, ACT_FRAC, OUT_FRAC = preprocessing.IN_FRAC, 10, 16
 ACT_MAX = 32767
 
 
@@ -186,10 +183,10 @@ def classify(cube, layers):
     """Raw cube (H x W x 120) -> H x W x 3 float32 scores, what the golden kernel writes: the
     float preprocessing, then 32 x 32 patches in raster order, the image grown by repeating
     its last row and column."""
-    kept, mean, inv_std = justounetsimple_model.read_preprocessing()
+    kept, mean, inv_std = preprocessing.read_preprocessing()
     scores = np.zeros(cube.shape[:2] + (3,), dtype=np.float32)
     for patch, tile in patching.iter_patches(cube, PATCH, pad_mode='edge'):
-        x = justounetsimple_model.preprocess(patch, kept, mean, inv_std)
+        x = preprocessing.preprocess(patch, kept, mean, inv_std)
         patching.place(scores, forward_patch(x, layers), tile, PATCH)
     return scores
 
@@ -241,10 +238,10 @@ def forward_patch_fixed(xq, qlayers, stats=None, act_max=ACT_MAX):
 def classify_fixed(cube, qlayers, prep=None):
     """Raw cube (H x W x 120 integers) -> H x W x 3 int32 scores (score * 2^OUT_FRAC): the
     integer z-score, then 32 x 32 patches as in classify."""
-    prep = prep if prep is not None else justounetsimple_model.prep_constants()
+    prep = prep if prep is not None else preprocessing.prep_constants()
     scores = np.zeros(cube.shape[:2] + (3,), dtype=np.int32)
     for patch, tile in patching.iter_patches(cube, PATCH, pad_mode='edge'):
-        xq = justounetsimple_model.preprocess_fixed(patch, prep)
+        xq = preprocessing.preprocess_fixed(patch, prep)
         patching.place(scores, forward_patch_fixed(xq, qlayers), tile, PATCH)
     return scores
 
@@ -255,8 +252,8 @@ def aegean_image():
     """(preprocessed (72, 136, 110), labels (72, 136)): the labelled aegean capture,
     cut to a multiple of 4."""
     raw, labels = aegean_raw()
-    kept, mean, inv_std = justounetsimple_model.read_preprocessing()
-    return justounetsimple_model.preprocess(raw, kept, mean, inv_std), labels
+    kept, mean, inv_std = preprocessing.read_preprocessing()
+    return preprocessing.preprocess(raw, kept, mean, inv_std), labels
 
 
 def aegean_raw():
@@ -267,45 +264,13 @@ def aegean_raw():
     return raw[:72, :136], labels[:72, :136]
 
 
-def reference(image, sizes=SIZES):
-    """IMAGE/reference_sp_unet_SIZE.npy for each size: classify on IMAGE/cube.npy."""
-    image = Path(image)
-    cube = np.load(image / 'cube.npy', mmap_mode='r')
-    written = []
-    for size in sizes:
-        path = image / f'reference_{name(size)}.npy'
-        np.save(path, classify(cube, dequantize(load_quantized(size))))
-        written.append(path)
-    return written
-
-
 def kernel_reference(cube, qlayers, prep=None):
     """What sp_unet_SIZE_opt writes for a raw cube: H x W x 4 int32, the scores * 2^OUT_FRAC,
     then the class (their argmax, the first one on a tie)."""
     return justounetsimple_model.with_class(classify_fixed(cube, qlayers, prep))
 
 
-def fixed_reference(image, sizes=SIZES):
-    """IMAGE/reference_fixed_sp_unet_SIZE.npy for each size: kernel_reference on IMAGE/cube.npy."""
-    image = Path(image)
-    cube = np.load(image / 'cube.npy', mmap_mode='r')
-    if cube.dtype != np.uint16:
-        raise SystemExit(f'{image / "cube.npy"} is {cube.dtype}, not raw counts (uint16): '
-                         'make it again with tools/justounetsimple_image.py prepare')
-    prep = justounetsimple_model.prep_constants()
-    written = []
-    for size in sizes:
-        path = image / f'reference_fixed_{name(size)}.npy'
-        np.save(path, kernel_reference(cube, load_quantized(size), prep))
-        written.append(path)
-    return written
-
-
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] in ('reference', 'fixed'):
-        for path in (reference if sys.argv[1] == 'reference' else fixed_reference)(sys.argv[2]):
-            print(f'wrote {path}')
-        return
     if len(sys.argv) > 1:
         raise SystemExit(__doc__)
     x, labels = aegean_image()
@@ -317,7 +282,7 @@ def main():
             qlayers = load_quantized(size)
             golden = forward_patch(x, dequantize(qlayers)).argmax(-1)
             stats = {}
-            fixed = forward_patch_fixed(justounetsimple_model.preprocess_fixed(raw), qlayers, stats).argmax(-1)
+            fixed = forward_patch_fixed(preprocessing.preprocess_fixed(raw), qlayers, stats).argmax(-1)
             line += (f', int8 weights {100 * (golden == labels).mean():.2f} %, fixed point '
                      f'{100 * (fixed == labels).mean():.2f} % ({100 * (fixed == golden).mean():.2f} % '
                      f'the same class as int8; largest sum 2^{np.log2(stats["max_sum"]):.1f}, '

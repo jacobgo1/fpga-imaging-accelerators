@@ -21,7 +21,7 @@
 # on, so they work like the HP ports (the notebook flushes and invalidates its
 # buffers either way). justounetsimple_opt reads its input through four ports at
 # once (gmem0-3, HP0-3) and writes through a fifth (gmem4, HPC0). A kernel with
-# only s_axilite (matmul) gets the control path alone.
+# only s_axilite gets the control path alone.
 #
 # To change the design, edit this file. To look at what it produced, open
 # build/KERNEL/latest/vivado/system.xpr in Vivado and open the block design.

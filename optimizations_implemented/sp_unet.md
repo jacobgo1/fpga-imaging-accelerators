@@ -47,8 +47,8 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
 | `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
 | `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665 ms** on the ZedBoard (≈ 78 100 cycles a patch; predicted ~694) |
-| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); bit-exact in C++; not to be built |
-| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); bit-exact in C++; not to be built |
+| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
+| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -59,9 +59,9 @@ pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes
 
 The design: `src/hls/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain, shared by
 the sizes: `sp_unet_opt_dataflow.hpp`; each size's table of layer widths (PI x PO, DSP or
-LUTs): its `.cpp`. One notebook, `software/pynq/sp_unet_small_opt/` (the other two take it
-through `include.txt`), checked against `reference_fixed_sp_unet_SIZE.npy`
-(`python3 tools/specpw_unet_model.py fixed IMAGE`).
+LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
+(`software/pynq/shared/classify.ipynb`), and on the ZedBoard `classify`, both checked
+against the image's labels.
 
 ## Golden kernels: what they do
 
@@ -387,7 +387,7 @@ made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 
 
 On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) the build packs
 `K_opu.zip` with the generic `classify` program (`software/opu/justounetsimple_opt/classify.c`):
-`classify cube.npy scores.npy reference_fixed_sp_unet_SIZE.npy`.
+`classify cube.npy scores.npy`, against the image's labels.
 
 ## Integer formats (the bit-exact model)
 
@@ -505,3 +505,9 @@ the aegean pixels (small / medium / large).
   medium's BRAM18 rose to 407. Back to a memory per (row, lane); the 1 024-deep skip FIFOs stay.
 - 2026-10-28: decided: the 7020 runs small only; medium and large stay on the ZCU104 (their 7020 kernels
   do not fit: ~59 k / ~69 k LUTs of 53.2 k; see "Medium and large do not fit the 7020").
+- 2026-10-29: `sp_unet_medium_opt_direct_zynq7020` and `sp_unet_large_opt_direct_zynq7020` removed (they do
+  not fit; in git before this date). The z-score constants come from `src/optimized/shared/zscore_int8.hpp`
+  (`python tools/preprocessing.py`), the same values as justounetsimple_prep.hpp before.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

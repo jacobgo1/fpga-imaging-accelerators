@@ -44,7 +44,8 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
                      DSP, packed for the board's DSP width, or 1)
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
-software/pynq/K/     the notebook for kernel K
+software/pynq/shared/  the board notebooks every model shares: classify_golden.ipynb (golden
+                     kernels), classify.ipynb (optimized); main.py packs one with kernel.json
 software/opu/K/      the C program for kernel K on the OPU system's PetaLinux (no PYNQ)
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
@@ -55,7 +56,7 @@ optimizations_implemented/  one .md per model: its optimizations, stages, latenc
 
 Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
 per-pixel networks, from src/golden/'s 1D modules; numpy model
-tools/justoliunet_model.py; one notebook for both, software/pynq/justoliunet/),
+tools/justoliunet_model.py),
 `justoliunet_opt` and `justoliunet_bn_opt` (fast, ZCU104: the raw cube in, a pixel
 every 18 cycles, integer fixed point, the DSPs on conv2 and conv3) and their ZedBoard
 versions `justoliunet_opt_zynq7020` / `justoliunet_bn_opt_zynq7020` (`--board zedboard`:
@@ -64,39 +65,34 @@ program from software/opu/) and Zynq-7030 versions `justoliunet_opt_zynq7030` /
 `justoliunet_bn_opt_zynq7030` (`--board zynq7030`: the same, wider, a pixel every 74
 cycles); the design is in
 src/hls/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
-tools/justoliunet_model.py, one notebook for both in software/pynq/justoliunet_opt/;
+tools/justoliunet_model.py;
 the performance model, the predictions for the 7020/7030 and the ideas still to try,
 such as hard-wired weights, are in docs/justoliunet_opt_design.md),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
 ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips (the 7030 one is the 7020's, wider: 12 bands a cycle, four
 read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020` / `zynq7030`; same
-answers, they share the testbench's checks; the 7020 one also the notebook),
-`justounetsimple_opt_readonly` (justounetsimple_opt's DDR readers with the compute
-replaced by a checksum: times the reads alone; its own notebook),
+answers, they share the testbench's checks),
 `sp_unet_small`, `sp_unet_medium`, `sp_unet_large` (golden baselines of SpecPW-UNet, the
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
-from src/golden/'s spectral stem, conv block, up block and concat modules; one notebook
-for all three, software/pynq/sp_unet_small/; numpy model and the bit-exact integer model
+from src/golden/'s spectral stem, conv block, up block and concat modules; numpy model and the bit-exact integer model
 classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
 src/golden/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt`, `sp_unet_medium_opt`,
 `sp_unet_large_opt` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; the 3x3
 convs as integer Winograd F(2x2, 3x3) and the UpBlocks from the low-res maps, the maps in
 2x2-block order, the skip in UltraRAM; T = 4 096 / 12 288 / 16 384 cycles a patch, 1 474 / 1 368 / 1 440 DSPs; the
 design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain in sp_unet_opt_dataflow.hpp,
-each size's table of PI x PO per layer in its .cpp; one testbench and one notebook,
-software/pynq/sp_unet_small_opt/), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
+each size's table of PI x PO per layer in its .cpp; one testbench), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
 `_large_opt_direct` (the same kernels without Winograd, simpler: direct 3x3 convs
 (conv3x3_grouped, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
 modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patch,
 1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in src/hls/sp_unet_small_opt_direct/
-sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks and notebook),
-`sp_unet_small_opt_direct_zynq7020`, `_medium_`, `_large_` (the direct kernels for the 7020; only
-small fits and is built, medium and large do not fit the 7020 (see sp_unet.md);
-`--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
+sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks),
+`sp_unet_small_opt_direct_zynq7020` (the direct kernel for the 7020; medium and large do not
+fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_lines), a tap or a window column a step, their ReLU inside, one 64-bit read
-port, 2-deep FIFOs between the processes; T = 76 176 / 228 528 / 420 864 cycles a patch; small
-measured 665 ms on the ZedBoard; the chain in
+port, 2-deep FIFOs between the processes; T = 76 176 cycles a patch, measured 665 ms on the
+ZedBoard; the chain in
 src/hls/sp_unet_small_opt_direct_zynq7020/), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
@@ -104,8 +100,17 @@ and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
 `spectralpointwise1d_opt_zynq7020` (`--board zynq7030` / `zedboard`): DDR-bound, so the whole
 network is copied once per read port (a lane: 4, 4 and 2), convsp1 fused with the z-score word
 by word; a pixel every 3.75 / 7.5 / 15 cycles, the same answers bit for bit; the design in
-src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check and one
-notebook for all), `matmul` (minimal example, used by the framework tests).
+src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check for all),
+`waveletcnn` (golden baseline of WaveletCNN: a 1D db4 DWT along the bands,
+a 1x1 projection, a 3x3 conv block and a 1x1 head) and `waveletcnn_opt`, `_zynq7030`,
+`_zynq7020` (the raw cube in, bit for bit classify_fixed in tools/waveletcnn_model.py; see
+optimizations_implemented/waveletcnn.md).
+
+The z-score every model starts with (keep raw bands 8-117, mu_sd.txt) is in one place,
+tools/preprocessing.py. tools/models.py lists every model (main.py packs its entry with the
+board notebook as kernel.json, so one notebook serves all). The board is checked against the
+image's labels only, in the notebooks and in the ZedBoard's classify; tools/image.py makes the
+image folder (labels required).
 
 ## How a model is built (follow justounetsimple_opt)
 
@@ -120,7 +125,8 @@ notebook for all), `matmul` (minimal example, used by the framework tests).
    - size each stage so none waits for another.
 4. Testbench: bit-exact against a plain-loop integer reference, and close to the
    float golden model. Mutation-test it: inject bugs, check it fails.
-5. The notebook: one start for the whole image; print wall-clock and FPGA time.
+5. Add the model to tools/models.py: the shared notebooks then run it (one start for the
+   whole image; wall-clock and FPGA time), and tests/test_notebooks.py checks them.
 
 ## Before saying something works
 
@@ -172,8 +178,8 @@ those are the user's, on the lab server, every time.
   each kernel's top function shows it per process. Index arithmetic is always
   LUTs. Check the csynth report's Bind Op Report against it.
 - Generated files must stay in sync:
-  - `src/hls/justounetsimple_opt/justounetsimple_prep.hpp` comes from
-    `python tools/justounetsimple_model.py`, and a test checks it;
+  - `src/optimized/shared/zscore_int8.hpp` (the 2D kernels' integer z-score) comes from
+    `python tools/preprocessing.py`, and a test checks it;
   - `weights/quantized/` comes from `quantize_weights.py` and is not in git.
 
 ## Working with the user

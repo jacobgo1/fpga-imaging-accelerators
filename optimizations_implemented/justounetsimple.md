@@ -26,7 +26,6 @@ the ZCU104** (the 1D model is compute-bound).
 | `justounetsimple_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | 24 ms measured at "200 MHz" before the 2026-10-14 fixes; newer runs not recorded here yet |
 | `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider) |
 | `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns | built in C++; HLS estimates only |
-| `justounetsimple_opt_readonly` | ZCU104 | 5 ns | test kernel: the readers alone (memory speed) |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/justounetsimple_model.py`); same class as the float model on 99.96 % of the aegean pixels.
@@ -116,7 +115,15 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
   read-only kernel (`patch_buffer` hides nothing and loses nothing; deeper `cube_words` changes nothing):
   6 707 cycles at 250 MHz is DDR giving the four ports ~9.2 GB/s together. conv1's 4 129 would need
   ~14.9 GB/s. So it is memory-bound: compare in microseconds, not cycles (26.8 us a patch); a faster
-  clock adds cycles, not speed. To confirm: `justounetsimple_opt_readonly` at 250 MHz, ~6 700 cycles a patch.
+  clock adds cycles, not speed. To confirm: the read-only kernel at 250 MHz, ~6 700 cycles a patch
+  (removed 2026-10-29; it is in git before then).
   Repeated runs give 6 700-7 000 cycles a patch, different each time: what a memory-bound kernel does
   (DDR is shared with the ARM, refresh, page conflicts that depend on where the buffer lies); a
   logic-bound one gives the same count every run (sp_unet_small_opt_direct: 11 503 twice, at two clocks).
+- 2026-10-29: the read-only test kernel `justounetsimple_opt_readonly` removed (an experiment, not part of
+  the flow). The integer z-score constants are now `src/optimized/shared/zscore_int8.hpp`, shared with
+  waveletcnn_opt and sp_unet_*_opt, written by `python tools/preprocessing.py` (was
+  justounetsimple_prep.hpp); the same values, the kernels unchanged.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

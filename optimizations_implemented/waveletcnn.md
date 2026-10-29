@@ -105,3 +105,9 @@ Each stage runs at II = 1:
   optimized kernels (`waveletcnn_opt`, `waveletcnn_opt_zynq7030`, `waveletcnn_opt_zynq7020`)
   with strip ping-pong `pixel_buffer`, fused streaming `dwt_proj`, `conv3x3_narrow`/`conv3x3_serial`
   and `leaky_head`.
+- 2026-10-29: the z-score constants come from `src/optimized/shared/zscore_int8.hpp`, shared with the
+  other 2D kernels (`python tools/preprocessing.py`; was waveletcnn_prep.hpp, the same values);
+  `tools/waveletcnn_image.py` is gone: `tools/image.py prepare` makes the image folder.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

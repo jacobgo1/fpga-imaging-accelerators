@@ -72,8 +72,8 @@ ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
 finds the kernel and its ports from the files next to it.
 
 The modules that differ between the boards are in `src/optimized/zcu104/`,
-`zynq7020/` and `zynq7030/`, the rest in `src/optimized/shared/`. `matmul` and
-the golden `justounetsimple` are small enough that they should fit any of the
+`zynq7020/` and `zynq7030/`, the rest in `src/optimized/shared/`. The golden
+`justounetsimple` is small enough that they should fit any of the
 chips as they are (not yet built for the Zynq-7000s).
 
 ## The Zynq-7000 processor configuration

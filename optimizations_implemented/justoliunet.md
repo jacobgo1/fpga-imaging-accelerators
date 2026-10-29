@@ -138,3 +138,6 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
   design: 81, 0.53 s).
 - Open ideas (not implemented): faster clock; ZCU104 rebalance to 16 cycles; hard-wired
   weights (ZCU104); BRAM multipliers (Zynq-7000); fast FIR; see `docs/justoliunet_opt_design.md`.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

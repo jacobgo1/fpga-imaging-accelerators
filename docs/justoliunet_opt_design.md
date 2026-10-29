@@ -285,8 +285,7 @@ $T = 81$ on the 7030 at 100 MHz a frame takes ~0.9 ms, against a frame period of
 
 1. Build and measure the current kernels (section 2's checklist; for the ZedBoard:
    `fpga_build justoliunet_opt_zynq7020 --board zedboard`, 216 DSPs expected, then on the
-   board `classify cube.npy scores.npy reference_justoliunet.npy`, the reference from
-   `python3 tools/justoliunet_model.py reference IMAGE`).
+   board `classify cube.npy scores.npy`, against the image's labels).
 2. Prototype A on the ZCU104: conv3, conv4 and dense hard-wired (weights as compile-time
    constants, not loaded into registers), DSPs on conv2 and conv1. Its csynth report
    gives the real LUT cost per hard-wired weight, which every estimate in A depends on.

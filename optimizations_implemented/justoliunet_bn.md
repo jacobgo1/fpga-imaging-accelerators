@@ -30,3 +30,6 @@ value).
 - 2026-10-16: `justoliunet_bn_opt` (ZCU104); input widened to 12 bits for this model.
 - 2026-10-19: `justoliunet_bn_opt_zynq7020` (ZedBoard); read-ahead 113 → 108 cycles/pixel.
 - 2026-10-19: `justoliunet_bn_opt_zynq7030` (Zynq-7030): 74 cycles/pixel.
+- 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
+  (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
+  classify, check the classes against the image's labels only (labels.npy is required); no PC answers.

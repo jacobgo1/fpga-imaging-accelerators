@@ -1,4 +1,4 @@
-"""SpecPW-UNet: the golden modules, the golden kernels, the integer model and the notebook.
+"""SpecPW-UNet: the golden modules, the golden kernels and the integer model.
 
 The numpy model (tools/specpw_unet_model.py) is the trained network in float, checked
 here against the labelled aegean pixels. Against it, compiled with plain g++:
@@ -10,10 +10,7 @@ here against the labelled aegean pixels. Against it, compiled with plain g++:
    bit against classify_fixed's arithmetic, so it can be an optimized kernel's reference.
 Then the optimized kernels sp_unet_SIZE_opt (Winograd, block order, integer fixed point),
 compiled with plain g++, bit for bit against classify_fixed on a real raw crop that is not
-whole patches; and the `fixed` command, which writes what they must answer.
-The board notebooks' code cells run against a fake `pynq` whose kernel computes the
-patches with the numpy model: that checks the register traffic, the patch cutting and
-stitching, the preprocessing and the comparison -- not PYNQ or the board.
+whole patches. The board notebooks, shared by every model, are tests/test_notebooks.py's.
 """
 import contextlib
 import gc
@@ -41,19 +38,10 @@ CXX = shutil.which('g++') or shutil.which('clang++')
 PATCH = 32
 # two classes in the first patch, all three in the second
 CORNERS = ((0, 0), (40, 104))
-NOTEBOOK = ROOT / 'software/pynq/sp_unet_small/sp_unet_small.ipynb'
 AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
-OPT_NOTEBOOK = ROOT / 'software/pynq/sp_unet_small_opt/sp_unet_small_opt.ipynb'
 OPT_DESIGN = ROOT / 'src/hls/sp_unet_small_opt/sp_unet_opt.hpp'
 DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
-CYCLES_PER_PATCH = 4096   # what the fake kernel's counter says
 
-
-def opt_header(name):
-    """An optimized kernel's register map, x<name>_hw.h, as Vitis writes it."""
-    regs = [('AP_CTRL', AP_CTRL)] + [(f'DIN{i}_DATA', a) for i, a in enumerate(DINS)] + \
-        [('DOUT_DATA', OPT_DOUT), ('HEIGHT_DATA', HEIGHT), ('WIDTH_DATA', WIDTH), ('CYCLES_DATA', CYCLES)]
-    return ''.join(f'#define X{name.upper()}_CONTROL_ADDR_{r} 0x{a:02x}\n' for r, a in regs)
 
 FLOAT_DRIVER = """
 #include "specpw_unet_golden.hpp"
@@ -208,7 +196,7 @@ class SpecPWUNetTests(unittest.TestCase):
                 fp32 = self.model.forward(self.x, self.weights[size]).argmax(-1)
                 golden = self.model.forward_patch(self.x, self.model.dequantize(qlayers)).argmax(-1)
                 stats = {}
-                xq = self.model.justounetsimple_model.preprocess_fixed(self.raw)
+                xq = self.model.preprocessing.preprocess_fixed(self.raw)
                 fixed = self.model.forward_patch_fixed(xq, qlayers, stats).argmax(-1)
                 self.assertGreater((golden == fp32).mean(), 0.995)
                 self.assertGreater((fixed == golden).mean(), 0.995)
@@ -262,7 +250,7 @@ class SpecPWUNetTests(unittest.TestCase):
         ceiling, and again with a ceiling of 2.0 (2047), so the saturation is exercised
         (no aegean activation reaches int16's)."""
         m = self.model
-        real = m.justounetsimple_model.preprocess_fixed(self.patches(self.raw)).astype(np.int32)
+        real = m.preprocessing.preprocess_fixed(self.patches(self.raw)).astype(np.int32)
         noise = np.random.default_rng(5).integers(-127, 128, (1, PATCH, PATCH, 110)).astype(np.int32)
         inputs = np.concatenate([real, noise])
         saturated = False
@@ -298,7 +286,8 @@ class SpecPWUNetTests(unittest.TestCase):
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
             for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES
-                               for kind in ('', '_direct', '_direct_zynq7020')]:
+                               for kind in ('', '_direct', '_direct_zynq7020')
+                               if kind != '_direct_zynq7020' or size == 'small']:   # the 7020 fits small only
                 with self.subTest(kernel=name):
                     source_dir = ROOT / 'src/hls' / name
                     ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports
@@ -310,24 +299,6 @@ class SpecPWUNetTests(unittest.TestCase):
                     np.testing.assert_array_equal(got, want)
                     self.assertEqual(len(np.unique(got[..., 3])), 3, 'all three classes occur')
 
-    def test_fixed_writes_what_each_optimized_kernel_answers(self):
-        m = self.model
-        cube = np.clip(np.rint(self.raw[:40, :40]), 0, 65535).astype(np.uint16)
-        with tempfile.TemporaryDirectory() as tmp:
-            image = Path(tmp)
-            np.save(image / 'cube.npy', cube)
-            written = m.fixed_reference(image, sizes=('small', 'large'))
-            self.assertEqual([p.name for p in written],
-                             ['reference_fixed_sp_unet_small.npy', 'reference_fixed_sp_unet_large.npy'])
-            for size in ('small', 'large'):
-                got = np.load(image / f'reference_fixed_sp_unet_{size}.npy')
-                self.assertEqual(got.dtype, np.int32)
-                np.testing.assert_array_equal(got[..., :3], m.classify_fixed(cube, self.quantized(size)))
-                np.testing.assert_array_equal(got[..., 3], got[..., :3].argmax(-1))
-            np.save(image / 'cube.npy', cube.astype(np.float32))
-            with self.assertRaisesRegex(SystemExit, 'raw counts'):
-                m.fixed_reference(image, sizes=('small',))
-
     def test_classify_fixed_cuts_the_image_like_the_notebook(self):
         """classify_fixed on a raw cube that is not whole patches: each patch's answer,
         the edge ones grown by repeating the last row and column."""
@@ -336,361 +307,12 @@ class SpecPWUNetTests(unittest.TestCase):
         cube = np.clip(np.rint(self.raw[:40, :50]), 0, 65535).astype(np.uint16)
         scores = m.classify_fixed(cube, qlayers)
         grown = np.pad(cube, ((0, 24), (0, 14), (0, 0)), mode='edge')
-        prep = m.justounetsimple_model.prep_constants()
+        prep = m.preprocessing.prep_constants()
         for i in (0, 32):
             for j in (0, 32):
-                want = m.forward_patch_fixed(m.justounetsimple_model.preprocess_fixed(
+                want = m.forward_patch_fixed(m.preprocessing.preprocess_fixed(
                     grown[i:i + PATCH, j:j + PATCH], prep), qlayers)
                 np.testing.assert_array_equal(scores[i:i + PATCH, j:j + PATCH], want[:40 - i, :50 - j])
-
-
-class FakeBuffer(np.ndarray if np is not None else object):
-    """pynq.allocate's buffer: an array with a physical address."""
-
-    def flush(self): pass
-    def invalidate(self): pass
-
-
-class FakeKernel:
-    """The HLS block's AXI-Lite registers; on start it computes n patches with the numpy
-    model. Allocations larger than max_bytes fail, as when PYNQ's CMA is short."""
-
-    def __init__(self, model, layers, broken=False, max_bytes=None):
-        self.model, self.layers, self.broken, self.max_bytes = model, layers, broken, max_bytes
-        self.words, self.buffers, self.done, self.runs = {}, {}, False, []
-        self.next_address = 0x7000_0000
-
-    def allocate(self, shape, dtype):
-        if self.max_bytes is not None and np.prod(shape) * np.dtype(dtype).itemsize > self.max_bytes:
-            raise RuntimeError('Failed to allocate Memory!')
-        buffer = np.zeros(shape, dtype=dtype).view(FakeBuffer)
-        buffer.physical_address = self.next_address
-        self.buffers[self.next_address] = buffer
-        self.next_address += 0x1_0000_0000   # the second buffer lands above 4 GiB: the high word matters
-        return buffer
-
-    def address(self, offset):
-        return self.words.get(offset, 0) | (self.words.get(offset + 4, 0) << 32)
-
-    def read(self, offset):
-        if offset == AP_CTRL:
-            done, self.done = self.done, False
-            return (0x2 if done else 0) | 0x4
-        return self.words.get(offset, 0)
-
-    def write(self, offset, value):
-        if offset == AP_CTRL and value & 1:
-            n = self.words[N_REG]
-            patches = np.asarray(self.buffers[self.address(DIN)]).reshape(-1, PATCH, PATCH, 110)
-            scores = np.asarray(self.buffers[self.address(DOUT)]).reshape(-1, PATCH, PATCH, 3)
-            for p in range(n):
-                scores[p] = self.model.forward_patch(patches[p], self.layers)
-            if self.broken:
-                scores[n - 1, 5, 5, 0] += 0.5
-            self.runs.append(n)
-            self.done = True
-        else:
-            self.words[offset] = value
-
-
-@unittest.skipUnless(np is not None, 'needs numpy')
-class SpecPWUNetNotebookTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        sys.path.insert(0, str(ROOT / 'tools'))
-        cls.model = load_module('specpw_unet_model', ROOT / 'tools/specpw_unet_model.py')
-        if not cls.model.quantized_path('small').exists():
-            raise unittest.SkipTest('no quantized weights: python tools/quantize_weights.py weights/fp32/sp_unet_small')
-        cls.layers = cls.model.dequantize(cls.model.load_quantized('small'))
-
-    @classmethod
-    def tearDownClass(cls):
-        sys.path.remove(str(ROOT / 'tools'))
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self.tmp.name)
-
-    def tearDown(self):
-        gc.collect()        # a notebook's namespace (a cycle) may still map cube.npy; Windows locks it
-        self.tmp.cleanup()
-
-    def prepare(self, h, w, reference=True):
-        """A board folder: the register map, mu_sd.txt and an image zip of h x w pixels. The
-        raw values preprocess to N(0, 1); the dropped bands hold 1e6, so a wrong band
-        selection blows the scores up."""
-        kept, mean, inv_std = self.model.justounetsimple_model.read_preprocessing()
-        z = np.random.default_rng(0).normal(0, 1, (h, w, 110)).astype(np.float32)
-        cube = np.full((h, w, 120), 1.0e6, dtype=np.float32)
-        cube[:, :, kept] = z / inv_std + mean
-        image = self.dir / 'board' / 'aegean_unet'
-        image.mkdir(parents=True)
-        np.save(image / 'cube.npy', cube)
-        np.save(image / 'labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
-        (image / 'meta.json').write_text(json.dumps({'rgb_bands': [56, 67, 86]}))
-        if reference:
-            self.model.reference(image, sizes=('small',))
-        board = image.parent
-        with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:
-            for f in image.iterdir():
-                z.write(f, f'aegean_unet/{f.name}')
-        shutil.rmtree(image)
-        (board / 'xsp_unet_small_hw.h').write_text(
-            f'#define XSP_UNET_SMALL_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}\n'
-            f'#define XSP_UNET_SMALL_CONTROL_ADDR_DIN_DATA  0x{DIN:02x}\n'
-            f'#define XSP_UNET_SMALL_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}\n'
-            f'#define XSP_UNET_SMALL_CONTROL_ADDR_N_DATA    0x{N_REG:02x}\n')
-        shutil.copy2(ROOT / 'mu_sd.txt', board)
-        return board
-
-    def run_notebook(self, board, **fake):
-        """Every code cell of the notebook, in order, with fake pynq and matplotlib."""
-        kernel = FakeKernel(self.model, self.layers, **fake)
-        pynq = types.ModuleType('pynq')
-        pynq.Overlay = lambda path: types.SimpleNamespace(kernel=kernel)
-        pynq.allocate = kernel.allocate
-        pyplot = types.ModuleType('matplotlib.pyplot')
-        class Anything:   # a figure or axes: every call does nothing
-            def __getattr__(self, name):
-                return lambda *a, **k: None
-        pyplot.subplots = lambda n=1, m=1, **kw: (Anything(), [Anything() for _ in range(n * m)])
-        pyplot.show = lambda *a, **k: None
-        matplotlib = types.ModuleType('matplotlib')
-        matplotlib.pyplot = pyplot
-        fakes = {'pynq': pynq, 'matplotlib': matplotlib, 'matplotlib.pyplot': pyplot}
-        saved = {name: sys.modules.get(name) for name in fakes}
-        sys.modules.update(fakes)
-        cwd = Path.cwd()
-        namespace = {}
-        try:
-            os.chdir(board)
-            for cell in json.loads(NOTEBOOK.read_text(encoding='utf-8'))['cells']:
-                if cell['cell_type'] == 'code':
-                    exec(''.join(cell['source']), namespace)
-        finally:
-            os.chdir(cwd)
-            for name, module in saved.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-        return namespace, kernel
-
-    def test_notebook_classifies_the_image_like_the_reference(self):
-        board = self.prepare(50, 70)                 # not a multiple of 32: 2 x 3 patches
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, kernel = self.run_notebook(board)
-        self.assertEqual(ns['NAME'], 'sp_unet_small')
-        self.assertEqual(kernel.runs, [1, 6], 'the self-test patch, then all 6 in one start')
-        self.assertEqual(ns['scores'].shape, (50, 70, 3))
-        self.assertTrue(ns['close'].all())
-        self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        self.assertIn('PASS', printed.getvalue())
-        self.assertIn('wall clock', printed.getvalue())
-        self.assertTrue((board / 'aegean_unet_sp_unet_small_fpga_scores.npy').is_file())
-
-    def test_notebook_goes_row_by_row_when_cma_is_short(self):
-        board = self.prepare(50, 70)
-        one_row = 3 * PATCH * PATCH * 110 * 4
-        with contextlib.redirect_stdout(io.StringIO()):
-            ns, kernel = self.run_notebook(board, max_bytes=one_row)
-        self.assertEqual(kernel.runs, [1, 3, 3])
-        self.assertTrue(ns['close'].all())
-
-    def test_notebook_shows_a_wrong_kernel(self):
-        with contextlib.redirect_stdout(io.StringIO()):
-            ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
-        self.assertFalse(ns['close'].all())
-
-    def test_notebook_without_a_reference_checks_the_labels_only(self):
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, _ = self.run_notebook(self.prepare(40, 40, reference=False))
-        self.assertIsNone(ns['reference'])
-        self.assertIsNone(ns['close'])
-        self.assertIn('no reference_sp_unet_small.npy', printed.getvalue())
-        self.assertIn('accuracy against the labels', printed.getvalue())
-
-
-class FakeImageKernel(FakeKernel):
-    """An optimized kernel: a whole raw cube (height x width x 120 uint16) per start, at any
-    address inside a buffer (strips start part-way into the scores), computed with the
-    bit-exact numpy model."""
-
-    def __init__(self, model, qlayers, broken=False, max_bytes=None):
-        super().__init__(model, None, broken, max_bytes)
-        self.qlayers, self.cache = qlayers, {}
-
-    def view(self, address, shape, dtype):
-        """shape x dtype at a physical address, inside one buffer."""
-        for start, buffer in self.buffers.items():
-            if start <= address and address + np.prod(shape) * np.dtype(dtype).itemsize <= start + buffer.nbytes:
-                raw = np.asarray(buffer).reshape(-1).view(np.uint8)
-                return raw[address - start:].view(dtype)[:np.prod(shape)].reshape(shape)
-        raise AssertionError(f'0x{address:x}: no buffer holds {shape} {np.dtype(dtype)} there')
-
-    def write(self, offset, value):
-        if offset == AP_CTRL and value & 1:
-            assert len({self.address(d) for d in DINS}) == 1, 'all input ports read the same cube'
-            h, w = self.words[HEIGHT], self.words[WIDTH]
-            cube = self.view(self.address(DINS[0]), (h, w, 120), np.uint16)
-            key = cube.tobytes()
-            if key not in self.cache:
-                self.cache[key] = self.model.kernel_reference(cube, self.qlayers)
-            out = self.cache[key].copy()
-            if self.broken:
-                out[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
-            self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = out
-            self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
-            self.runs.append((h, w))
-            self.done = True
-        else:
-            self.words[offset] = value
-
-
-@unittest.skipUnless(np is not None, 'needs numpy')
-class SpecPWUNetOptNotebookTests(unittest.TestCase):
-    """The optimized kernels' notebook (one for the three sizes) on a fake board."""
-
-    @classmethod
-    def setUpClass(cls):
-        sys.path.insert(0, str(ROOT / 'tools'))
-        cls.model = load_module('specpw_unet_model', ROOT / 'tools/specpw_unet_model.py')
-        if not cls.model.quantized_path('medium').exists():
-            raise unittest.SkipTest('no quantized weights: python tools/quantize_weights.py weights/fp32/sp_unet_medium')
-        cls.qlayers = cls.model.load_quantized('medium')
-
-    @classmethod
-    def tearDownClass(cls):
-        sys.path.remove(str(ROOT / 'tools'))
-
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self.tmp.name)
-
-    def tearDown(self):
-        gc.collect()        # a notebook's namespace (a cycle) may still map cube.npy; Windows locks it
-        self.tmp.cleanup()
-
-    def prepare(self, h, w, references=True, name='sp_unet_medium_opt'):
-        """A board folder: the register map and an image zip of h x w raw counts, whose
-        preprocessing gives N(0, 1); the dropped bands hold 65535."""
-        kept, mean, inv_std = self.model.justounetsimple_model.read_preprocessing()
-        z = np.random.default_rng(0).normal(0, 1, (h, w, 110)).astype(np.float32)
-        raw = np.full((h, w, 120), 65535.0, dtype=np.float32)
-        raw[:, :, kept] = z / inv_std + mean
-        image = self.dir / 'board' / 'aegean_unet'
-        image.mkdir(parents=True)
-        np.save(image / 'cube.npy', np.clip(np.rint(raw), 0, 65535).astype(np.uint16))
-        np.save(image / 'labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
-        (image / 'meta.json').write_text(json.dumps({'rgb_bands': [56, 67, 86]}))
-        if references:
-            self.model.reference(image, sizes=('medium',))
-            self.model.fixed_reference(image, sizes=('medium',))
-        board = image.parent
-        with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:
-            for f in image.iterdir():
-                z.write(f, f'aegean_unet/{f.name}')
-        shutil.rmtree(image)
-        (board / f'x{name}_hw.h').write_text(opt_header(name))
-        return board
-
-    def run_notebook(self, board, **fake):
-        """Every code cell of the notebook, in order, with fake pynq and matplotlib."""
-        kernel = FakeImageKernel(self.model, self.qlayers, **fake)
-        pynq = types.ModuleType('pynq')
-        pynq.Overlay = lambda path: types.SimpleNamespace(kernel=kernel)
-        pynq.allocate = kernel.allocate
-        pynq.Clocks = types.SimpleNamespace(fclk0_mhz=200.0)
-        pyplot = types.ModuleType('matplotlib.pyplot')
-        class Anything:   # a figure or axes: every call does nothing
-            def __getattr__(self, name):
-                return lambda *a, **k: None
-        pyplot.subplots = lambda n=1, m=1, **kw: (Anything(), [Anything() for _ in range(n * m)])
-        pyplot.show = lambda *a, **k: None
-        matplotlib = types.ModuleType('matplotlib')
-        matplotlib.pyplot = pyplot
-        fakes = {'pynq': pynq, 'matplotlib': matplotlib, 'matplotlib.pyplot': pyplot}
-        saved = {name: sys.modules.get(name) for name in fakes}
-        sys.modules.update(fakes)
-        cwd = Path.cwd()
-        namespace = {}
-        try:
-            os.chdir(board)
-            for cell in json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells']:
-                if cell['cell_type'] == 'code':
-                    exec(''.join(cell['source']), namespace)
-        finally:
-            os.chdir(cwd)
-            for name, module in saved.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-        return namespace, kernel
-
-    def test_notebook_uses_the_kernel_formats(self):
-        """The notebook and the numpy model hard-code what sp_unet_opt.hpp defines."""
-        header = OPT_DESIGN.read_text(encoding='utf-8')
-
-        def define(name):
-            return int(re.search(rf'constexpr int {name} = (\d+);', header).group(1))
-
-        setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
-        ns = {}
-        exec(re.search(r'^BANDS, OUT_FRAC, LANES = .*$', setup, re.M).group(0), ns)
-        self.assertEqual(ns['BANDS'], define('CUBE_BANDS'))
-        self.assertEqual(ns['OUT_FRAC'], define('SCORE_FRAC_BITS'))
-        self.assertEqual(ns['LANES'], 4, 'score_word_t: 3 scores and the class')
-        self.assertIn('hls::vector<int32_t, 4> score_word_t', header)
-        for model_name, kernel_name in (('IN_FRAC', 'ZSCORE_FRAC_BITS'), ('ACT_FRAC', 'ACTIVATION_FRAC_BITS'),
-                                        ('OUT_FRAC', 'SCORE_FRAC_BITS')):
-            self.assertEqual(getattr(self.model, model_name), define(kernel_name), kernel_name)
-
-    def test_notebook_classifies_the_whole_image_in_one_start(self):
-        board = self.prepare(70, 50)                 # 3 x 2 patches, not a multiple of 32
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, kernel = self.run_notebook(board)
-        self.assertEqual(ns['NAME'], 'sp_unet_medium_opt')
-        self.assertEqual(ns['MODEL'], 'sp_unet_medium', 'the references of its network')
-        self.assertEqual(ns['DINS'], list(DINS))
-        # the self-test patch, the whole image, then 5 timed runs of the whole image
-        self.assertEqual(kernel.runs, [(32, 32)] + [(70, 50)] * 6)
-        self.assertIsNone(ns['strips'])
-        self.assertEqual(ns['scores'].shape, (70, 50, 3))
-        self.assertTrue(ns['close'].all())
-        self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        # against the float model (float z-score): the int8 input moves a few scores, hardly a class
-        self.assertGreater((ns['classes'] == ns['reference'].argmax(-1)).mean(), 0.97)
-        self.assertIn('PASS', printed.getvalue())
-        self.assertIn('same class as the PC float model', printed.getvalue())
-        self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 6 / 200e6)
-        self.assertTrue((board / 'aegean_unet_sp_unet_medium_opt_fpga_scores.npy').is_file())
-
-    def test_notebook_uses_strips_when_the_cube_does_not_fit(self):
-        # 150 x 40 x 120 x 2 bytes = 1.44 MB does not fit, a 128-row strip (1.23 MB) does.
-        board = self.prepare(150, 40)
-        with contextlib.redirect_stdout(io.StringIO()):
-            ns, kernel = self.run_notebook(board, max_bytes=1_300_000)
-        self.assertIsNone(ns['cube_in'])
-        self.assertEqual(kernel.runs[1:3], [(128, 40), (22, 40)], 'two strips, the second the rest')
-        self.assertTrue(ns['close'].all())
-
-    def test_notebook_shows_a_wrong_kernel(self):
-        with contextlib.redirect_stdout(io.StringIO()):
-            ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
-        self.assertFalse(ns['close'].all())
-
-    def test_notebook_without_a_reference_checks_the_labels_only(self):
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, _ = self.run_notebook(self.prepare(40, 40, references=False))
-        self.assertIsNone(ns['reference_fixed'])
-        self.assertIsNone(ns['close'])
-        self.assertIn('no reference_fixed_sp_unet_medium.npy', printed.getvalue())
-        self.assertIn('accuracy against the labels', printed.getvalue())
 
 
 if __name__ == '__main__':

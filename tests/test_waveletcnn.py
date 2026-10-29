@@ -1,8 +1,5 @@
-"""waveletcnn: the numpy model against the C++ kernel, and the board notebook end to end.
-
-The notebook's own code cells run against a fake `pynq` whose kernel computes each patch
-with the numpy model, on an image folder made by tools/waveletcnn_image.py prepare.
-That checks the register traffic, the patching and the comparison -- not PYNQ or the board.
+"""waveletcnn: the numpy models against the C++ kernels and the OPU program. The board
+notebook, shared by every model, is tests/test_notebooks.py's.
 """
 import contextlib
 import gc
@@ -26,35 +23,8 @@ except ImportError:
     np = None
 
 ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK = ROOT / 'software/pynq/waveletcnn/waveletcnn.ipynb'
-OPT_NOTEBOOK = ROOT / 'software/pynq/waveletcnn_opt/waveletcnn_opt.ipynb'
 CXX = shutil.which('g++') or shutil.which('clang++')
 CC = shutil.which('gcc') or shutil.which('clang')
-AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
-HEADER = f"""\
-#define XWAVELETCNN_CONTROL_ADDR_AP_CTRL   0x{AP_CTRL:02x}
-#define XWAVELETCNN_CONTROL_ADDR_GIE       0x04
-#define XWAVELETCNN_CONTROL_ADDR_DIN_DATA  0x{DIN:02x}
-#define XWAVELETCNN_CONTROL_BITS_DIN_DATA  64
-#define XWAVELETCNN_CONTROL_ADDR_DOUT_DATA 0x{DOUT:02x}
-#define XWAVELETCNN_CONTROL_BITS_DOUT_DATA 64
-"""
-DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
-CYCLES_PER_PATCH = 4321   # what the fake kernel's counter says
-DIN0 = DINS[0]
-OPT_HEADER = f"""\
-#define XWAVELETCNN_OPT_CONTROL_ADDR_AP_CTRL     0x{AP_CTRL:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_DIN0_DATA   0x{DINS[0]:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_DIN1_DATA   0x{DINS[1]:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_DIN2_DATA   0x{DINS[2]:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_DIN3_DATA   0x{DINS[3]:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_DOUT_DATA   0x{OPT_DOUT:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_HEIGHT_DATA 0x{HEIGHT:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_WIDTH_DATA  0x{WIDTH:02x}
-#define XWAVELETCNN_OPT_CONTROL_ADDR_CYCLES_DATA 0x{CYCLES:02x}
-#define XWAVELETCNN_OPT_CONTROL_BITS_CYCLES_DATA 32
-#define XWAVELETCNN_OPT_CONTROL_ADDR_CYCLES_CTRL 0x{CYCLES + 4:02x}
-"""
 OPT_SOURCE = ROOT / 'src/hls/waveletcnn_opt'
 
 
@@ -65,90 +35,6 @@ def load_module(name, path):
     return module
 
 
-class FakeBuffer(np.ndarray if np is not None else object):
-    """pynq.allocate's buffer: an array with a physical address."""
-
-    def flush(self): pass
-    def invalidate(self): pass
-
-
-class FakeKernel:
-    """The HLS block's AXI-Lite registers; on start it computes the patch with the numpy model."""
-
-    def __init__(self, model, layers, broken=False):
-        self.model, self.layers, self.broken = model, layers, broken
-        self.words, self.buffers, self.done, self.starts = {}, {}, False, 0
-        self.next_address = 0x7000_0000
-
-    def allocate(self, shape, dtype):
-        buffer = np.zeros(shape, dtype=dtype).view(FakeBuffer)
-        buffer.physical_address = self.next_address
-        self.buffers[self.next_address] = buffer
-        self.next_address += 0x1_0000_0000   # the second buffer lands above 4 GiB: the high word matters
-        return buffer
-
-    def address(self, offset):
-        return self.words.get(offset, 0) | (self.words.get(offset + 4, 0) << 32)
-
-    def read(self, offset):
-        if offset == AP_CTRL:
-            done, self.done = self.done, False
-            return (0x2 if done else 0) | 0x4
-        return self.words.get(offset, 0)
-
-    def write(self, offset, value):
-        if offset == AP_CTRL and value & 1:
-            self.starts += 1
-            scores = self.model.forward_patch(np.array(self.buffers[self.address(DIN)]), self.layers)
-            if self.broken:
-                scores[5, 5, 0] += 0.5
-            self.buffers[self.address(DOUT)][:] = scores
-            self.done = True
-        else:
-            self.words[offset] = value
-
-
-class FakeImageKernel(FakeKernel):
-    """The optimized kernel: a whole raw cube (height x width x 120 uint16) per start, at any
-    address inside a buffer (strips start part-way into the scores), computed with the
-    bit-exact numpy model (classify_fixed). Allocations larger than max_bytes fail, as when
-    PYNQ's CMA is short."""
-
-    def __init__(self, model, layers, broken=False, max_bytes=None):
-        super().__init__(model, layers, broken)
-        self.qlayers, self.prep = model.load_quantized(), model.prep_constants()
-        self.max_bytes, self.runs = max_bytes, []
-
-    def allocate(self, shape, dtype):
-        if self.max_bytes is not None and np.prod(shape) * np.dtype(dtype).itemsize > self.max_bytes:
-            raise RuntimeError('Failed to allocate Memory!')
-        return super().allocate(shape, dtype)
-
-    def view(self, address, shape, dtype):
-        """shape x dtype at a physical address, inside one buffer."""
-        for start, buffer in self.buffers.items():
-            if start <= address and address + np.prod(shape) * np.dtype(dtype).itemsize <= start + buffer.nbytes:
-                raw = np.asarray(buffer).reshape(-1).view(np.uint8)
-                return raw[address - start:].view(dtype)[:np.prod(shape)].reshape(shape)
-        raise AssertionError(f'0x{address:x}: no buffer holds {shape} {np.dtype(dtype)} there')
-
-    def write(self, offset, value):
-        if offset == AP_CTRL and value & 1:
-            self.starts += 1
-            assert len({self.address(d) for d in DINS}) == 1, 'all input ports read the same cube'
-            h, w = self.words[HEIGHT], self.words[WIDTH]
-            cube = self.view(self.address(DIN0), (h, w, 120), np.uint16)
-            scores = self.model.classify_fixed(cube, self.qlayers, self.prep)
-            if self.broken:
-                scores[min(5, h - 1), min(5, w - 1), 0] += 1 << 15
-            self.view(self.address(OPT_DOUT), (h, w, 4), np.int32)[:] = self.model.with_class(scores)
-            self.words[CYCLES] = CYCLES_PER_PATCH * (-(-h // 32) * -(-w // 32))
-            self.runs.append((h, w))
-            self.done = True
-        else:
-            self.words[offset] = value
-
-
 @unittest.skipIf(np is None, 'needs numpy')
 class WaveletCNNTests(unittest.TestCase):
     @classmethod
@@ -156,7 +42,6 @@ class WaveletCNNTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('waveletcnn_model', ROOT / 'tools/waveletcnn_model.py')
         cls.patching = load_module('patching', ROOT / 'tools/patching.py')
-        cls.tool = load_module('waveletcnn_image', ROOT / 'tools/waveletcnn_image.py')
         cls.layers = cls.model.load_weights()
 
     @classmethod
@@ -180,64 +65,6 @@ class WaveletCNNTests(unittest.TestCase):
         raw = np.full((h, w, 120), 65535.0 if counts else 1.0e6, dtype=np.float32)
         raw[:, :, kept] = z / inv_std + mean
         return np.clip(np.rint(raw), 0, 65535) if counts else raw
-
-    def prepare(self, h, w, header=('xwaveletcnn_hw.h', HEADER), counts=False, references=True):
-        np.save(self.dir / 'source.npy', self.raw_cube(h, w, counts=counts))
-        np.save(self.dir / 'source_labels.npy', (np.arange(h * w).reshape(h, w) % 4).astype(np.uint8))
-        board = self.dir / 'board'
-        board.mkdir()
-        saved, sys.argv = sys.argv, ['waveletcnn_image.py', 'prepare', str(self.dir / 'source.npy'),
-                                     '--labels', str(self.dir / 'source_labels.npy'),
-                                     '--out', str(board / 'aegean_waveletcnn')]
-        try:
-            self.assertEqual(self.tool.main(), 0)
-        finally:
-            sys.argv = saved
-        with zipfile.ZipFile(board / 'aegean_waveletcnn.zip', 'w') as z:
-            for f in (board / 'aegean_waveletcnn').iterdir():
-                if references or not f.name.startswith('reference_'):   # without: the labels only
-                    z.write(f, f'aegean_waveletcnn/{f.name}')
-        shutil.rmtree(board / 'aegean_waveletcnn')
-        (board / header[0]).write_text(header[1])
-        shutil.copy2(ROOT / 'mu_sd.txt', board)
-        return board
-
-    def run_notebook(self, board, broken=False, notebook=NOTEBOOK, kernel_class=FakeKernel):
-        """Every code cell of the notebook, in order, with fake pynq and matplotlib."""
-        kernel = kernel_class(self.model, self.layers, broken)
-        overlay = types.SimpleNamespace(kernel=kernel)
-        pynq = types.ModuleType('pynq')
-        pynq.Overlay = lambda path: overlay
-        pynq.allocate = kernel.allocate
-        pynq.Clocks = types.SimpleNamespace(fclk0_mhz=200.0)
-        pyplot = types.ModuleType('matplotlib.pyplot')
-        class Anything:   # a figure or axes: every call does nothing
-            def __getattr__(self, name):
-                return lambda *a, **k: None
-        pyplot.subplots = lambda n=1, m=1, **kw: (Anything(), Anything() if n * m == 1 else
-                                                  [Anything() for _ in range(n * m)])
-        pyplot.show = pyplot.tight_layout = lambda *a, **k: None
-        matplotlib = types.ModuleType('matplotlib')
-        matplotlib.pyplot = pyplot
-        fakes = {'pynq': pynq, 'matplotlib': matplotlib, 'matplotlib.pyplot': pyplot}
-        saved = {name: sys.modules.get(name) for name in fakes}
-        sys.modules.update(fakes)
-        cwd = Path.cwd()
-        namespace = {}
-        try:
-            os.chdir(board)
-            cells = json.loads(Path(notebook).read_text(encoding='utf-8'))['cells']
-            for cell in cells:
-                if cell['cell_type'] == 'code':
-                    exec(''.join(cell['source']), namespace)
-        finally:
-            os.chdir(cwd)
-            for name, module in saved.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-        return namespace, kernel
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_numpy_model_matches_the_cpp_kernel(self):
@@ -264,30 +91,6 @@ int main(int, char** argv) {
         want = self.model.forward_patch(x, self.layers)
         np.testing.assert_allclose(cpp, want, rtol=1e-3, atol=1e-3)
         self.assertGreater(float(want.max() - want.min()), 1.0, 'the reference should not be constant')
-
-    def test_notebook_classifies_the_image_like_the_reference(self):
-        board = self.prepare(50, 70)                 # not a multiple of 32: 2 x 3 patches
-        ns, kernel = self.run_notebook(board)
-        self.assertEqual(kernel.starts, 1 + 6, 'the self-test patch, then 6 patches')
-        self.assertEqual(kernel.address(DIN), ns['patch_in'].physical_address)
-        self.assertEqual(kernel.address(DOUT), ns['patch_out'].physical_address)
-        self.assertEqual(ns['scores'].shape, (50, 70, 3))
-        self.assertTrue(ns['close'].all())
-        self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        self.assertTrue((board / 'aegean_waveletcnn_fpga_scores.npy').is_file())
-
-    def test_notebook_shows_a_wrong_kernel(self):
-        ns, _ = self.run_notebook(self.prepare(40, 40), broken=True)
-        self.assertFalse(ns['close'].all())
-
-    def test_notebook_without_a_reference_checks_the_labels_only(self):
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, _ = self.run_notebook(self.prepare(40, 40, references=False))
-        self.assertIsNone(ns['reference'])
-        self.assertIsNone(ns['close'])
-        self.assertIn('no reference_scores.npy', printed.getvalue())
-        self.assertIn('accuracy against the labels', printed.getvalue())
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_fixed_point_model_matches_the_optimized_cpp_kernel(self):
@@ -342,7 +145,8 @@ int main(int, char** argv) {{
     def test_opu_classify_runs_the_kernel_and_checks_it(self):
         """software/opu/.../classify.c, the board's program for the ZedBoard, against a fake
         board that runs the 7020 kernel in software: the cube in, the scores out, bit-exact,
-        in one start and in strips (a reserved memory too small for the cube)."""
+        in one start and in strips (a reserved memory too small for the cube), checked
+        against the labels."""
         name = 'waveletcnn_opt_zynq7020'
         prefix = '#define XWAVELETCNN_OPT_ZYNQ7020_CONTROL_'
         header = ''.join(f'{prefix}{key} {value}\n' for key, value in (
@@ -405,19 +209,34 @@ uint32_t reg_read(struct board *, unsigned offset) {
         cube = self.raw_cube(h, w, seed=5, counts=True).astype(np.uint16)
         want = self.model.with_class(self.model.classify_fixed(cube))
         np.save(self.dir / 'cube.npy', cube)
-        np.save(self.dir / 'reference.npy', want)
+        # labels.npy next to the cube, which classify needs: the accuracy and each class's IoU
+        # over the labelled pixels (3: unlabeled), as the notebooks compute them.
+        rng = np.random.default_rng(6)
+        classes = want[..., 3]
+        labels = np.where(rng.random((h, w)) < 0.8, classes, rng.integers(0, 4, (h, w)))
+        known = labels < 3
+        accuracy = f'accuracy against {self.dir / "labels.npy"}: {100 * (classes[known] == labels[known]).mean():.2f}% ' \
+                   f'of {known.sum()} labelled pixels'
+        iou = ', '.join(f'{name} {((classes == c) & (labels == c))[known].sum() / ((classes == c) | (labels == c))[known].sum():.3f}'
+                        for c, name in enumerate(('cloud', 'land', 'sea')))
+        self.assertLess(known.sum(), h * w, 'some unlabeled pixels, to be skipped')
+        np.save(self.dir / 'labels.npy', labels)
+
+        def classify(cube_file, memory=64 << 20):
+            return subprocess.run([str(exe), str(self.dir / cube_file), str(self.dir / 'scores.npy')],
+                                  capture_output=True, text=True, env={**os.environ, 'FAKE_MEMORY': str(memory)})
+
         # All of it at once; then 32 rows at a time: room for 64 rows of the cube, but only for
         # 60 with their scores (a strip size that forgets the scores overruns the memory).
         for memory, starts in ((64 << 20, 1), (4096 + 64 * w * 120 * 2, 3)):
             with self.subTest(memory=memory):
-                result = subprocess.run([str(exe), str(self.dir / 'cube.npy'), str(self.dir / 'scores.npy'),
-                                         str(self.dir / 'reference.npy')], capture_output=True, text=True,
-                                        env={**os.environ, 'FAKE_MEMORY': str(memory)})
+                result = classify('cube.npy', memory)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn(f'PASS: 0 of {h * w} pixels differ', result.stdout)
                 self.assertIn(f'in {starts} start', result.stdout)
                 self.assertEqual(result.stderr.count('fake board: a start'), starts)
                 np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
+                self.assertIn(accuracy, result.stdout)
+                self.assertIn(f'IoU {iou}', result.stdout)
 
     def test_with_class_picks_the_first_highest_score(self):
         scores = np.array([[[5, 7, 7], [9, 1, 9], [-3, -2, -4]]], dtype=np.int32)
@@ -439,137 +258,17 @@ uint32_t reg_read(struct board *, unsigned offset) {
         ints = self.model.preprocess_fixed(cube.astype(np.uint16))
         self.assertLessEqual(int(np.abs(ints.astype(int) - floats).max()), 1)
 
-    def test_prep_header_is_up_to_date(self):
-        """waveletcnn_prep.hpp is generated from mu_sd.txt: regenerate it when that changes."""
-        self.assertEqual(self.model.PREP_HEADER.read_text(encoding='utf-8'), self.model.prep_header(),
-                         'run: python tools/waveletcnn_model.py')
-
-    def test_opt_notebook_uses_the_kernel_formats(self):
-        """The notebook and the numpy model hard-code what waveletcnn_opt.hpp defines."""
+    def test_model_uses_the_kernel_formats(self):
+        """The numpy model and tools/models.py hard-code what waveletcnn_opt.hpp defines."""
         header = (OPT_SOURCE / 'waveletcnn_opt.hpp').read_text(encoding='utf-8')
 
         def define(name):
             return int(re.search(rf'constexpr int {name} = (\d+);', header).group(1))
 
-        setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
-        ns = {}
-        exec(re.search(r'^BANDS, OUT_FRAC, LANES = .*$', setup, re.M).group(0), ns)
-        self.assertEqual(ns['BANDS'], define('CUBE_BANDS'))
-        self.assertEqual(ns['OUT_FRAC'], define('SCORE_FRAC_BITS'))
-        self.assertEqual(ns['LANES'], 4, 'score_word_t: 3 scores and the class')
+        models = load_module('models', ROOT / 'tools/models.py')
+        self.assertEqual(models.MODELS['waveletcnn']['out_frac'], define('SCORE_FRAC_BITS'))
+        self.assertEqual(define('CUBE_BANDS'), 120)
         self.assertIn('hls::vector<int32_t, 4> score_word_t', header)
         for model_name, kernel_name in (('IN_FRAC', 'ZSCORE_FRAC_BITS'), ('ACT_FRAC', 'ACTIVATION_FRAC_BITS'),
                                         ('OUT_FRAC', 'SCORE_FRAC_BITS')):
             self.assertEqual(getattr(self.model, model_name), define(kernel_name), kernel_name)
-
-    def run_opt(self, h, w, broken=False, max_bytes=None):
-        board = self.prepare(h, w, ('xwaveletcnn_opt_hw.h', OPT_HEADER), counts=True)
-        self.assertEqual(np.load(board.parent / 'source.npy').dtype, np.float32)
-        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken, max_bytes)
-        return board, self.run_notebook(board, broken, OPT_NOTEBOOK, kernel)
-
-    def test_opt_notebook_finds_the_shared_image_in_the_folder_above(self):
-        # On the board: one aegean_waveletcnn.zip above every design's folder, unpacked once.
-        board = self.prepare(40, 40, ('xwaveletcnn_opt_hw.h', OPT_HEADER), counts=True)
-        shutil.move(str(board / 'aegean_waveletcnn.zip'), str(board.parent / 'aegean_waveletcnn.zip'))
-        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken, None)
-        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
-        self.assertTrue(ns['close'].all())
-        self.assertTrue((board.parent / 'aegean_waveletcnn/cube.npy').is_file(), 'unpacked next to its zip')
-        self.assertFalse((board / 'aegean_waveletcnn').exists(), 'no copy in the design\'s folder')
-        self.assertTrue((board / 'aegean_waveletcnn_fpga_scores.npy').is_file(), 'results next to the notebook')
-
-    def test_opt_notebook_classifies_the_whole_image_in_one_start(self):
-        board, (ns, kernel) = self.run_opt(70, 50)    # 3 x 2 patches, not a multiple of 32
-        self.assertEqual(np.load(board / 'aegean_waveletcnn/cube.npy').dtype, np.uint16, 'saved as raw counts')
-        self.assertEqual(ns['scores'].shape, (70, 50, 3))
-        self.assertTrue(ns['close'].all())
-        self.assertLess(float(np.abs(ns['scores']).max()), 1000, 'dropped bands reached the kernel')
-        np.testing.assert_array_equal(ns['classes'], ns['raw_scores'][..., :3].argmax(-1))
-        self.assertTrue((board / 'aegean_waveletcnn/reference_fixed.npy').is_file())
-        self.assertIsNone(ns['strips'])
-        self.assertEqual(ns['NAME'], 'waveletcnn_opt')
-        self.assertEqual(ns['DINS'], list(DINS), 'the input ports, from the register map')
-        # the self-test patch, the whole image, then 5 timed runs of the whole image
-        self.assertEqual(kernel.runs, [(32, 32)] + [(70, 50)] * 6)
-        for din in DINS:
-            self.assertEqual(kernel.address(din), ns['cube_in'].physical_address)
-        self.assertEqual(kernel.address(OPT_DOUT), ns['scores_out'].physical_address)
-        self.assertGreater(ns['wall'], 0)
-        self.assertGreater(ns['fpga'], 0)
-        self.assertEqual(ns['CYCLES'], CYCLES, 'the counter, from the register map')
-        self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 6 / 200e6, msg='its count, at the clock')
-        self.assertAlmostEqual(ns['own_best'], CYCLES_PER_PATCH * 6 / 200e6)
-
-    def test_opt_notebook_works_without_the_cycle_counter(self):
-        """The Zynq-7000 kernels share the notebook and have no cycles register."""
-        header = ''.join(line + '\n' for line in OPT_HEADER.splitlines() if '_CYCLES_' not in line)
-        board = self.prepare(40, 40, ('xwaveletcnn_opt_hw.h', header), counts=True)
-        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
-        ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
-        self.assertIsNone(ns['CYCLES'])
-        self.assertIsNone(ns['own'])
-        self.assertTrue(ns['close'].all())
-
-    def test_opt_notebook_uses_strips_when_the_cube_does_not_fit(self):
-        # 150 x 40 x 120 x 2 bytes = 1.44 MB does not fit, a 128-row strip (1.23 MB) does.
-        board, (ns, kernel) = self.run_opt(150, 40, max_bytes=1_300_000)
-        self.assertIsNone(ns['cube_in'])
-        self.assertEqual(len(ns['strips']), 2)
-        self.assertEqual(ns['scores'].shape, (150, 40, 3))
-        self.assertTrue(ns['close'].all())
-        self.assertEqual(kernel.runs[1:3], [(128, 40), (22, 40)], 'two strips, the second the rest')
-        # 4 x 2 patches and 1 x 2: the kernel's own counts, added up over the strips
-        self.assertAlmostEqual(ns['own'], CYCLES_PER_PATCH * 10 / 200e6)
-
-    def test_opt_notebook_shows_a_wrong_kernel(self):
-        _, (ns, _) = self.run_opt(40, 40, broken=True)
-        self.assertFalse(ns['close'].all())
-
-    def test_opt_notebook_without_a_reference_checks_the_labels_only(self):
-        board = self.prepare(40, 40, ('xwaveletcnn_opt_hw.h', OPT_HEADER), counts=True, references=False)
-        kernel = lambda model, layers, broken: FakeImageKernel(model, layers, broken)
-        printed = io.StringIO()
-        with contextlib.redirect_stdout(printed):
-            ns, _ = self.run_notebook(board, False, OPT_NOTEBOOK, kernel)
-        self.assertIsNone(ns['reference_fixed'])
-        self.assertIsNone(ns['close'])
-        self.assertIn('no reference_fixed.npy', printed.getvalue())
-        self.assertIn('accuracy against the labels', printed.getvalue())
-
-    def test_fixed_adds_the_kernel_reference_to_an_old_folder_or_zip(self):
-        cube = self.raw_cube(40, 35, counts=True).astype(np.uint16)
-        want = self.model.with_class(self.model.classify_fixed(cube))
-        old = self.dir / 'old'
-        old.mkdir()
-        np.save(old / 'cube.npy', cube)
-        with zipfile.ZipFile(self.dir / 'old.zip', 'w') as z:
-            z.write(old / 'cube.npy', 'old/cube.npy')
-
-        def fixed(image):
-            saved, sys.argv = sys.argv, ['waveletcnn_image.py', 'fixed', str(image)]
-            try:
-                self.assertEqual(self.tool.main(), 0)
-            finally:
-                sys.argv = saved
-
-        fixed(old)
-        np.testing.assert_array_equal(np.load(old / 'reference_fixed.npy'), want)
-        fixed(self.dir / 'old.zip')
-        with zipfile.ZipFile(self.dir / 'old.zip') as z:
-            self.assertEqual(sorted(z.namelist()), ['old/cube.npy', 'old/reference_fixed.npy'])
-            np.testing.assert_array_equal(np.load(io.BytesIO(z.read('old/reference_fixed.npy'))), want)
-        with self.assertRaises(SystemExit):
-            fixed(self.dir / 'old.zip')          # already there: not added twice
-
-    def test_notebook_padding_matches_the_reference_tiling(self):
-        cube = self.raw_cube(37, 45)
-        _, tiles = self.patching.cut(cube, pad_mode='edge')
-        padded = self.patching.padded(cube, pad_mode='edge')
-        self.assertEqual(padded.shape[:2], (64, 64))
-        self.assertEqual(tiles, [(0, 0), (0, 32), (32, 0), (32, 32)])
-        np.testing.assert_array_equal(padded[40, 50], cube[36, 44], 'edge pixels repeated')
-
-
-if __name__ == '__main__':
-    unittest.main()

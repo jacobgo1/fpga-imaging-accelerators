@@ -1,5 +1,5 @@
 #include "justounetsimple_opt_zynq7020.hpp"
-#include "../justounetsimple_opt/justounetsimple_prep.hpp"
+#include "../../optimized/shared/zscore_int8.hpp"
 #include "../../optimized/shared/read_rows.hpp"
 #include "../../optimized/zynq7020/patch_buffer.hpp"
 #include "../../optimized/zynq7020/conv3x3_wide.hpp"
@@ -11,7 +11,7 @@
 #include "../../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
 
 namespace weights = justounetsimple_int8;
-namespace zscore = justounetsimple_prep;
+namespace zscore = zscore_int8;
 
 constexpr int HALF_PATCH = PATCH_SIZE / 2;
 constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;

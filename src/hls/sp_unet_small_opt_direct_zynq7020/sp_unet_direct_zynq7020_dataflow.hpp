@@ -1,7 +1,7 @@
 #pragma once
 
-// The Zynq-7020 chain, shared by sp_unet_small_opt_direct_zynq7020, _medium_ and
-// _large_. The kernel's .cpp first includes sp_unet_opt_zynq7020.hpp, its model's
+// The Zynq-7020 chain of sp_unet_small_opt_direct_zynq7020 (medium and large do not fit
+// the 7020, see optimizations_implemented/sp_unet.md). The kernel's .cpp first includes sp_unet_opt_zynq7020.hpp, its model's
 // weights as namespace weights and its size table as namespace sizes.
 
 #include "../sp_unet_small_opt/sp_unet_opt_common.hpp"

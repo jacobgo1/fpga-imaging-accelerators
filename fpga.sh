@@ -41,9 +41,10 @@ EOF
 
 _fpga_fail() { echo "fpga: $*" >&2; return 1; }
 
-# The kernels: one folder each in src/hls/.
+# The kernels: one folder each in src/hls/, in byte order (a glob sorts by the locale,
+# which puts sp_unet after spectralpointwise1d on some machines).
 fpga_kernels() {
-    local dir
+    local dir LC_ALL=C
     for dir in "$FPGA_ROOT"/src/hls/*/; do
         [ -d "$dir" ] && basename "$dir"
     done

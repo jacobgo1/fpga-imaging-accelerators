@@ -4,10 +4,10 @@
 // its header, its model's weights as namespace weights and its size table as
 // namespace sizes.
 
-#include "../justounetsimple_opt/justounetsimple_prep.hpp"
+#include "../../optimized/shared/zscore_int8.hpp"
 #include "../../optimized/shared/fixed_point.hpp"
 
-namespace zscore = justounetsimple_prep;   // justounetsimple_opt's preprocessing
+namespace zscore = zscore_int8;   // the 2D kernels' preprocessing
 
 // The channel counts, from the weights (int8: a byte each).
 constexpr int STEM1 = sizeof(weights::convsp1_bias), STEM2 = sizeof(weights::convsp2_bias);
