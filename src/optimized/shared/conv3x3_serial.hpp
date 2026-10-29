@@ -1,149 +1,136 @@
 #pragma once
 
-#include "conv3x3_stream.hpp"
+#include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// conv3x3_serial: a 3x3 conv layer for a chip with few DSPs: PI input channels
-// x one output channel per cycle, PI x 9 multipliers whatever the layer's size,
-// OUT x IN / PI cycles per pixel. The same input and output as conv3x3_narrow
-// (all channels of a pixel at once, raster order), so the two are
-// interchangeable; this one is IN / PI times slower and smaller.
-//
-// The engine is conv3x3_stream's (read that first) with the steps over both
-// channels: the window holds every input channel, and each step multiplies PI
-// of them by one output channel's 9 weights each, adding to a running sum.
-// The weights: [output][input group][PI][3][3], one memory per (PI, tap),
-// addressed by (output, input group).
-template<int H, int W, int IN_CH, int OUT_CH, int PI, bool DSP>
-void conv3x3_serial_patch(hls::stream<vec_t<act_t, IN_CH> >& in,
-                          const wgt_t wl[OUT_CH][IN_CH / PI][PI][3][3], const acc_t bl[OUT_CH],
-                          hls::stream<vec_t<acc_t, OUT_CH> >& out) {
-    static_assert(IN_CH % PI == 0, "PI must divide IN_CH");
-    constexpr int GROUPS = IN_CH / PI;
-    constexpr int STEPS = OUT_CH * GROUPS;
-    constexpr int VECTORS = H * W, LAG = W + 1;
+// A 3x3 conv for a chip with few DSPs: IN_PER_CYCLE input channels times one output
+// channel a cycle, IN_PER_CYCLE x 9 multipliers whatever the layer's size. The same
+// streams as conv3x3_narrow, IN_CHANNELS / IN_PER_CYCLE times slower and smaller.
+template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, bool DSP>
+void conv3x3_serial_patch(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
+                          const wgt_t weight[OUT_CHANNELS][IN_CHANNELS / IN_PER_CYCLE][IN_PER_CYCLE][3][3],
+                          const acc_t bias[OUT_CHANNELS],
+                          hls::stream<vec_t<acc_t, OUT_CHANNELS> >& out) {
+    constexpr int GROUPS = IN_CHANNELS / IN_PER_CYCLE;
+    constexpr int STEPS = OUT_CHANNELS * GROUPS;
+    constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
 
-    act_t lb[2][W][IN_CH];      // the two previous input lines
-    #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=3
-    act_t win[3][3][IN_CH];     // the 3x3 window, in registers
-    #pragma HLS ARRAY_PARTITION variable=win type=complete dim=0
-    acc_t pix[OUT_CH];          // the finished sums of one pixel
-    #pragma HLS ARRAY_PARTITION variable=pix type=complete
+    act_t lines[2][MAP_WIDTH][IN_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=3
+    act_t window[3][3][IN_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=window type=complete dim=0
+    acc_t sums[OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=sums type=complete
 
-    int s = 0;                  // column of the next input vector
-    int y = 0, x = 0;           // position of the window's centre
-    int oc = 0, ig = 0;         // this step's output channel and input group
-    int g = 0;                  // input steps so far, the last W + 1 without input
-    acc_t run = 0;              // the sum of oc so far
+    int in_col = 0;
+    int y = 0, x = 0;               // the window's centre
+    int o = 0, group = 0;           // this step's output channel and input group
+    int inputs = 0;                 // input steps so far, the last W + 1 without input
+    acc_t running = 0;
 
-    conv: for (int t = 0; t < (VECTORS + LAG) * STEPS; t++) {
+    conv: for (int t = 0; t < (PIXELS + LAG) * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS DEPENDENCE variable=lb type=inter false
-        const bool first_step = oc == 0 && ig == 0;
-        const bool last_in = ig == GROUPS - 1;
-        const bool last_step = oc == OUT_CH - 1 && last_in;
+        #pragma HLS DEPENDENCE variable=lines type=inter false
+        const bool first_step = o == 0 && group == 0;
+        const bool last_group = group == GROUPS - 1;
+        const bool last_step = o == OUT_CHANNELS - 1 && last_group;
 
         if (first_step) {
-            // A new window column: input rows r-2, r-1, r at column s.
-            const bool have = g < VECTORS;
-            vec_t<act_t, IN_CH> v;
-            if (have) v = in.read();
-            for (int p = 0; p < IN_CH; p++) {
+            const bool have = inputs < PIXELS;
+            vec_t<act_t, IN_CHANNELS> pixel;
+            if (have) pixel = in.read();
+            for (int ch = 0; ch < IN_CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                const act_t up2 = lb[0][s][p], up1 = lb[1][s][p];
-                const act_t now = have ? v.v[p] : (act_t)0;
-                lb[0][s][p] = up1;
-                lb[1][s][p] = now;
-                for (int ki = 0; ki < 3; ki++) {
+                const act_t two_up = lines[0][in_col][ch], one_up = lines[1][in_col][ch];
+                const act_t now = have ? pixel.v[ch] : (act_t)0;
+                lines[0][in_col][ch] = one_up;
+                lines[1][in_col][ch] = now;
+                for (int ky = 0; ky < 3; ky++) {
                     #pragma HLS UNROLL
-                    win[ki][0][p] = win[ki][1][p];
-                    win[ki][1][p] = win[ki][2][p];
+                    window[ky][0][ch] = window[ky][1][ch];
+                    window[ky][1][ch] = window[ky][2][ch];
                 }
-                win[0][2][p] = up2;
-                win[1][2][p] = up1;
-                win[2][2][p] = now;
+                window[0][2][ch] = two_up;
+                window[1][2][ch] = one_up;
+                window[2][2][ch] = now;
             }
-            s = (s == W - 1) ? 0 : s + 1;
+            in_col = (in_col == MAP_WIDTH - 1) ? 0 : in_col + 1;
         }
 
-        if (g >= LAG) {
-            // Taps outside the image hold other rows' values: they count as zero.
-            const bool row_ok[3] = {y > 0, true, y < H - 1};
-            const bool col_ok[3] = {x > 0, true, x < W - 1};
+        if (inputs >= LAG) {
+            const bool row_inside[3] = {y > 0, true, y < MAP_HEIGHT - 1};
+            const bool col_inside[3] = {x > 0, true, x < MAP_WIDTH - 1};
             acc_t sum = 0;
-            for (int p = 0; p < PI; p++) {
+            for (int i = 0; i < IN_PER_CYCLE; i++) {
                 #pragma HLS UNROLL
-                for (int ki = 0; ki < 3; ki++) {
+                for (int ky = 0; ky < 3; ky++) {
                     #pragma HLS UNROLL
-                    for (int kj = 0; kj < 3; kj++) {
+                    for (int kx = 0; kx < 3; kx++) {
                         #pragma HLS UNROLL
-                        const act_t a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][ig * PI + p] : (act_t)0;
-                        sum += mul<DSP, acc_t>(a, wl[oc][ig][p][ki][kj]);
+                        const act_t a = (row_inside[ky] && col_inside[kx])
+                                      ? window[ky][kx][group * IN_PER_CYCLE + i] : (act_t)0;
+                        sum += mul<DSP, acc_t>(a, weight[o][group][i][ky][kx]);
                     }
                 }
             }
-            const acc_t total = (ig == 0 ? bl[oc] : run) + sum;
-            run = total;
-            if (last_in) pix[oc] = total;
+            const acc_t total = (group == 0 ? bias[o] : running) + sum;
+            running = total;
+            if (last_group) sums[o] = total;
             if (last_step) {
-                vec_t<acc_t, OUT_CH> o;
-                for (int c = 0; c < OUT_CH; c++) {
+                vec_t<acc_t, OUT_CHANNELS> pixel_sums;
+                for (int c = 0; c < OUT_CHANNELS; c++) {
                     #pragma HLS UNROLL
-                    o.v[c] = pix[c];
+                    pixel_sums.v[c] = sums[c];
                 }
-                out.write(o);
+                out.write(pixel_sums);
             }
         }
 
-        if (!last_in) {
-            ig++;
+        if (!last_group) {
+            group++;
         } else {
-            ig = 0;
+            group = 0;
             if (!last_step) {
-                oc++;
+                o++;
             } else {
-                oc = 0;
-                if (g >= LAG) {
-                    if (x < W - 1) x++;
-                    else if (y < H - 1) { x = 0; y++; }
+                o = 0;
+                if (inputs >= LAG) {
+                    if (x < MAP_WIDTH - 1) x++;
+                    else if (y < MAP_HEIGHT - 1) { x = 0; y++; }
                     else { x = 0; y = 0; }
                 }
-                g++;
+                inputs++;
             }
         }
     }
 }
 
-// The layer: the image is cut into PH x PW patches (patch_grid.hpp); the layer
-// is H x W of each. WEIGHT and BIAS: the layer's quantized int8 arrays,
-// template arguments so that they stay a constant ROM inside this process.
-// BIAS_SHIFT: the sums' fraction bits minus the bias's. DSP: the PI x 9
-// multipliers in DSPs, or in LUTs.
-template<int PH, int PW, int H, int W, int IN, int OUT, int PI, int BIAS_SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][3][3], const wgt_t (&BIAS)[OUT], bool DSP>
-void conv3x3_serial(hls::stream<vec_t<act_t, IN> >& in, hls::stream<vec_t<acc_t, OUT> >& out,
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
+         int IN_PER_CYCLE, int BIAS_SHIFT,
+         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const wgt_t (&BIAS)[OUT_CHANNELS], bool DSP>
+void conv3x3_serial(hls::stream<vec_t<act_t, IN_CHANNELS> >& in, hls::stream<vec_t<acc_t, OUT_CHANNELS> >& out,
                     int height, int width) {
-    wgt_t wl[OUT][IN / PI][PI][3][3];
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=4
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=5
-    acc_t bl[OUT];
+    wgt_t weight[OUT_CHANNELS][IN_CHANNELS / IN_PER_CYCLE][IN_PER_CYCLE][3][3];
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=4
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=5
+    acc_t bias[OUT_CHANNELS];
 
-    load_w: for (int oc = 0; oc < OUT; oc++)
-        for (int ic = 0; ic < IN; ic++)
-            for (int ki = 0; ki < 3; ki++)
-                for (int kj = 0; kj < 3; kj++) {
+    load_w: for (int o = 0; o < OUT_CHANNELS; o++)
+        for (int in_ch = 0; in_ch < IN_CHANNELS; in_ch++)
+            for (int ky = 0; ky < 3; ky++)
+                for (int kx = 0; kx < 3; kx++) {
                     #pragma HLS PIPELINE II=1
-                    wl[oc][ic / PI][ic % PI][ki][kj] = WEIGHT[oc][ic][ki][kj];
+                    weight[o][in_ch / IN_PER_CYCLE][in_ch % IN_PER_CYCLE][ky][kx] = WEIGHT[o][in_ch][ky][kx];
                 }
-    load_b: for (int oc = 0; oc < OUT; oc++) {
+    load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
-        bl[oc] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
     }
-    const int n = patch_count<PH, PW>(height, width);
-    patches: for (int k = 0; k < n; k++) {
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+    patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_serial_patch<H, W, IN, OUT, PI, DSP>(in, wl, bl, out);
+        conv3x3_serial_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, DSP>(in, weight, bias, out);
     }
 }

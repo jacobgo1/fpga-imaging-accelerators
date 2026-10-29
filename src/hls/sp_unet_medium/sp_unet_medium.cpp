@@ -1,34 +1,22 @@
 #include "sp_unet_medium.hpp"
-#include <type_traits>
 
-// The quantized weights, read with the header's int8_t meaning float: the
-// header declares its arrays inside this namespace, so its unqualified int8_t
-// finds this alias first. The ROM then holds the same integers as exact floats,
-// and the hardware multiplies float by float, with no int-to-float converter
-// (as in justounetsimple.cpp: Vitis 2025.2 leaves that converter's module out
-// of the exported IP).
 namespace sp_unet_medium_int8 { using int8_t = float; }
 #include "../../../weights/quantized/sp_unet_medium/sp_unet_medium_int8.hpp"
 
-namespace q = sp_unet_medium_int8;
-static_assert(std::is_same<std::remove_const<std::remove_all_extents<
-                  decltype(q::convsp1_weight)>::type>::type, float>::value,
-              "the weights must be read as float; did the header's element type change?");
+namespace weights = sp_unet_medium_int8;
 
-// A tensor's 2^-frac, as a compile-time constant.
-template<int FRAC> struct scale_of { static constexpr float value = pow2_neg(FRAC); };
+template<int FRAC> struct scale_of { static constexpr float value = frac_to_scale(FRAC); };
 
-// One layer's arguments: weight, its scale, bias, its scale.
-#define LAYER(name) q::name##_weight, scale_of<q::name##_weight_frac>::value, \
-                    q::name##_bias,   scale_of<q::name##_bias_frac>::value
+// A layer's weight, its scale, bias, its scale.
+#define LAYER(name) weights::name##_weight, scale_of<weights::name##_weight_frac>::value, \
+                    weights::name##_bias,   scale_of<weights::name##_bias_frac>::value
 
-constexpr int PATCH_IN = SPU_H * SPU_W * SPU_IN_CH, PATCH_OUT = SPU_H * SPU_W * SPU_OUT_CH;
+constexpr int PATCH_IN = GOLDEN_PATCH_SIZE * GOLDEN_PATCH_SIZE * GOLDEN_BANDS;
+constexpr int PATCH_OUT = GOLDEN_PATCH_SIZE * GOLDEN_PATCH_SIZE * GOLDEN_CLASSES;
 
 void sp_unet_medium(const data_t *din, data_t *dout, int n)
 {
-    // The patches in and the scores out go through one AXI master; the PS sets
-    // their DDR addresses and n in the s_axilite registers before pulsing start.
-    // depth is only for co-simulation: the testbench's 2 patches.
+    // depth is for co-simulation only: the testbench's 2 patches.
     #pragma HLS INTERFACE mode=m_axi port=din  bundle=gmem offset=slave depth=225280
     #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem offset=slave depth=6144
     #pragma HLS INTERFACE mode=s_axilite port=din    bundle=control
@@ -39,8 +27,9 @@ void sp_unet_medium(const data_t *din, data_t *dout, int n)
     patches: for (int p = 0; p < n; p++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=1024
         // The stem reads the patch from DDR itself, each value once.
-        static data_t scores[SPU_H][SPU_W][SPU_OUT_CH];
-        specpw_unet_quant_golden<data_t, float, SPU_H, SPU_W, SPU_IN_CH, SPU_OUT_CH, spu_size>(
+        static data_t scores[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_CLASSES];
+        specpw_unet_quant_golden<data_t, float, GOLDEN_PATCH_SIZE, GOLDEN_PATCH_SIZE, GOLDEN_BANDS, GOLDEN_CLASSES,
+                                 model_size>(
             din, (long)p * PATCH_IN,
             LAYER(convsp1), LAYER(convsp2), LAYER(convsp3),
             LAYER(double1_block_0), LAYER(double1_block_3),
@@ -52,10 +41,10 @@ void sp_unet_medium(const data_t *din, data_t *dout, int n)
             LAYER(final),
             scores);
 
-        write: for (int i = 0; i < SPU_H; i++)
-            for (int j = 0; j < SPU_W; j++)
-                for (int c = 0; c < SPU_OUT_CH; c++)
-                    dout[(long)p * PATCH_OUT + (i * SPU_W + j) * SPU_OUT_CH + c] = scores[i][j][c];
+        write: for (int row = 0; row < GOLDEN_PATCH_SIZE; row++)
+            for (int col = 0; col < GOLDEN_PATCH_SIZE; col++)
+                for (int c = 0; c < GOLDEN_CLASSES; c++)
+                    dout[(long)p * PATCH_OUT + (row * GOLDEN_PATCH_SIZE + col) * GOLDEN_CLASSES + c] = scores[row][col][c];
     }
 }
 

@@ -1,10 +1,8 @@
 #pragma once
 
-// The optimized SpecPW-UNet's DATAFLOW chain, shared by sp_unet_small_opt,
-// sp_unet_medium_opt and sp_unet_large_opt (the same network in three widths).
-// Before including it, a kernel's .cpp includes its model's int8 weights as
-// namespace q, and its table of sizes as namespace cfg (each layer's PI x PO,
-// and where its multipliers go). sp_unet_opt.hpp has the design.
+// The Winograd chain, shared by sp_unet_small_opt, _medium_opt and _large_opt.
+// The kernel's .cpp first includes its model's weights as namespace weights and
+// its size table as namespace sizes.
 
 #include "sp_unet_opt_common.hpp"
 #include "../../optimized/shared/read_rows.hpp"
@@ -18,108 +16,135 @@
 #include "../../optimized/shared/store_scores.hpp"
 #include "../../optimized/shared/count_cycles.hpp"
 
-// A Winograd layer's template arguments from its table entry and fractions.
-#define SPU_WINO(L, F, layer) cfg::L::PI, cfg::L::PO, F::BIAS_SHIFT, F::SHIFT, \
-                              q::layer##_weight, q::layer##_bias, cfg::L::DSP
+constexpr int HALF_PATCH = PATCH_SIZE / 2, QUARTER_PATCH = PATCH_SIZE / 4;
 
-static void sp_unet_opt_dataflow(hls::burst_maxi<spu_raw_t> din0, hls::burst_maxi<spu_raw_t> din1,
-                                 hls::burst_maxi<spu_raw_t> din2, hls::burst_maxi<spu_raw_t> din3,
-                                 hls::burst_maxi<spu_out_t> dout, int height, int width, uint32_t& cycles)
+// A Winograd layer's template arguments from its size and fractions.
+#define WINO_LAYER(size, fracs, layer) sizes::size::IN_PER_CYCLE, sizes::size::OUT_PER_CYCLE, \
+    fracs::BIAS_SHIFT, fracs::SHIFT, weights::layer##_weight, weights::layer##_bias, sizes::size::DSP
+
+static void sp_unet_opt_dataflow(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
+                                 hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+                                 hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles)
 {
-#pragma HLS DATAFLOW
-    hls::stream<spu_raw_t> s_raw[PORTS];
-    hls::stream<vec_t<act8_t, cfg::P1> > s_bands("s_bands");
-    hls::stream<vec_t<act_t, S1> > s_sp1("s_sp1");
-    hls::stream<vec_t<act_t, S2> > s_sp2("s_sp2");
-    hls::stream<vec_t<act_t, 4 * S3> > s_stem("s_stem");          // blocks from here on, unless noted
-    hls::stream<vec_t<act_t, 4 * C1> > s_d1a("s_d1a"), s_d1b("s_d1b"), s_skip("s_skip"), s_pool1("s_pool1");
-    hls::stream<vec_t<act_t, 4 * C2> > s_d2a("s_d2a"), s_d2b("s_d2b"), s_up1("s_up1");
-    hls::stream<vec_t<act_t, C2> > s_pool2("s_pool2");              // pixels
-    hls::stream<vec_t<act_t, 4 * C3> > s_d3a("s_d3a"), s_d3b("s_d3b"), s_up2("s_up2");
-    hls::stream<vec_t<act_t, C3> > s_dec3("s_dec3");                // pixels
-    hls::stream<vec_t<act_t, 4 * (C3 + C1)> > s_cat("s_cat");
-    hls::stream<vec_t<act_t, 4 * C4> > s_d4a("s_d4a"), s_d4b("s_d4b");
-    hls::stream<vec_t<act_t, C4> > s_dec4("s_dec4");                // pixels
-    hls::stream<vec_t<acc_t, CLASSES> > s_scores("s_scores");
-    hls::stream<bool> s_finished("s_finished");
-// Let the readers run ahead of pixel_buffer, which takes a word from all four at once.
-#pragma HLS STREAM variable = s_raw depth = 64
-#pragma HLS STREAM variable = s_bands depth = 64
-// The skip connection: double1's blocks wait here until up2's come back: up to
-// 248 blocks (15.5 block rows of 16) later. Too shallow and the encoder stops while the
-// decoder waits for it: a deadlock. 512 blocks fit the UltraRAM's depth anyway.
-#pragma HLS STREAM variable = s_skip depth = 512
-#pragma HLS BIND_STORAGE variable = s_skip type = fifo impl = uram
-// The pooled blocks come in bursts, all of them while the odd block rows go
-// by; blocks_to_rows takes a block row at once, then gives pixels for twice as
-// long. Room for a block row each, so that the layer before never waits.
-#pragma HLS STREAM variable = s_pool1 depth = 8
-#pragma HLS STREAM variable = s_d3b depth = 8
-#pragma HLS STREAM variable = s_d4b depth = 16
-#pragma HLS BIND_STORAGE variable = s_pool1 type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d3b type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d4b type = fifo impl = srl
-// Pixel rows, so that each wino_up_conv3x3 and the final layer keep going.
-#pragma HLS STREAM variable = s_dec3 depth = 32
-#pragma HLS STREAM variable = s_dec4 depth = 64
-// A patch row of scores, so the final layer keeps going while store starts a burst.
-#pragma HLS STREAM variable = s_scores depth = 32
-// The other block streams are a block or two wide (up to 4 096 bits), from
-// one layer to the next at the same rate: 2 deep, in LUTs, not block RAM.
-#pragma HLS BIND_STORAGE variable = s_stem type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d1a type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d1b type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d2a type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d2b type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_up1 type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d3a type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_up2 type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_cat type = fifo impl = srl
-#pragma HLS BIND_STORAGE variable = s_d4a type = fifo impl = srl
+    #pragma HLS DATAFLOW
+    // Block order (4 pixels a word) unless noted.
+    hls::stream<cube_word_t> cube_words[READ_PORTS];
+    hls::stream<vec_t<act8_t, sizes::CONVSP1_BANDS_PER_CYCLE>> zscores("zscores");
+    hls::stream<vec_t<act_t, STEM1>> convsp1_out("convsp1_out");
+    hls::stream<vec_t<act_t, STEM2>> convsp2_out("convsp2_out");
+    hls::stream<vec_t<act_t, 4 * STEM3>> stem_out("stem_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE1>> double1_conv1_out("double1_conv1_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE1>> double1_conv2_out("double1_conv2_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE1>> skip("skip"), pool1_out("pool1_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE2>> double2_conv1_out("double2_conv1_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE2>> double2_conv2_out("double2_conv2_out");
+    hls::stream<vec_t<act_t, DOUBLE2>> pool2_out("pool2_out");                       // pixels
+    hls::stream<vec_t<act_t, 4 * DOUBLE2>> up1_conv_out("up1_conv_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE3>> double3_conv1_out("double3_conv1_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE3>> double3_conv2_out("double3_conv2_out");
+    hls::stream<vec_t<act_t, DOUBLE3>> double3_out("double3_out");                   // pixels
+    hls::stream<vec_t<act_t, 4 * DOUBLE3>> up2_conv_out("up2_conv_out");
+    hls::stream<vec_t<act_t, 4 * (DOUBLE3 + DOUBLE1)>> joined("joined");
+    hls::stream<vec_t<act_t, 4 * DOUBLE4>> double4_conv1_out("double4_conv1_out");
+    hls::stream<vec_t<act_t, 4 * DOUBLE4>> double4_conv2_out("double4_conv2_out");
+    hls::stream<vec_t<act_t, DOUBLE4>> double4_out("double4_out");                   // pixels
+    hls::stream<vec_t<acc_t, CLASSES>> scores("scores");
+    hls::stream<bool> all_written("all_written");
 
-    // Every process walks the same grid of H x W patches, one after another.
-    read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
-    // The z-score, then each pixel's P1-band chunks, in 2x2-block order.
-    pixel_buffer<H, W, WORDS, FIRST, PORT_BANDS, cfg::P1, PORTS, CHUNKS, prep::FRAC, prep::IN_MAX,
-                 prep::A, prep::B, cfg::ZSCORE_DSP, spu_raw_t, true>(s_raw, s_bands, height, width);
+    #pragma HLS STREAM variable=cube_words depth=64
+    #pragma HLS STREAM variable=zscores    depth=64
+    // The skip waits up to 248 blocks for up2; too shallow and it deadlocks.
+    #pragma HLS STREAM variable=skip depth=512
+    #pragma HLS BIND_STORAGE variable=skip type=fifo impl=uram
+    // A block row each, so the layer before never waits for the bursts.
+    #pragma HLS STREAM variable=pool1_out         depth=8
+    #pragma HLS STREAM variable=double3_conv2_out depth=8
+    #pragma HLS STREAM variable=double4_conv2_out depth=16
+    #pragma HLS STREAM variable=double3_out       depth=32
+    #pragma HLS STREAM variable=double4_out       depth=64
+    #pragma HLS STREAM variable=scores            depth=32
+    // The wide block streams in LUTs, not block RAM.
+    #pragma HLS BIND_STORAGE variable=pool1_out         type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double3_conv2_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double4_conv2_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=stem_out          type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double1_conv1_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double1_conv2_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double2_conv1_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double2_conv2_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=up1_conv_out      type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double3_conv1_out type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=up2_conv_out      type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=joined            type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=double4_conv1_out type=fifo impl=srl
 
-    // The spectral stem, 1x1 convs per pixel: convsp1 110 -> S1 on P1 bands a
-    // cycle, S1 / 2 x P1 DSPs; convsp2 and convsp3 PO outputs a cycle, in LUTs.
-    pointwise_wide<H, W, H * W, IN_CH, S1, cfg::P1, F_SP1::BIAS_SHIFT, F_SP1::SHIFT,
-                   q::convsp1_weight, q::convsp1_bias>(s_bands, s_sp1, height, width);
-    pointwise<H, W, H * W, S1, S2, cfg::SP2_PO, 1, true, F_SP2::BIAS_SHIFT, F_SP2::SHIFT,
-              q::convsp2_weight, q::convsp2_bias, false>(s_sp1, s_sp2, height, width);
-    pointwise<H, W, H * W, S2, S3, cfg::SP3_PO, 4, true, F_SP3::BIAS_SHIFT, F_SP3::SHIFT,
-              q::convsp3_weight, q::convsp3_bias, false>(s_sp2, s_stem, height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
+    pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD,
+                 sizes::CONVSP1_BANDS_PER_CYCLE, READ_PORTS, CONVSP1_CHUNKS, zscore::FRAC, zscore::IN_MAX,
+                 zscore::A, zscore::B, sizes::ZSCORE_ON_DSPS, cube_word_t, true>(cube_words, zscores, height, width);
 
-    // The encoder: double1 at 32 x 32, the skip; double2 at 16 x 16.
-    wino_conv3x3<H, W, H, W, S3, C1, SPU_WINO(D1A, F_D1A, double1_block_0)>(s_stem, s_d1a, height, width);
-    wino_conv3x3<H, W, H, W, C1, C1, SPU_WINO(D1B, F_D1B, double1_block_3)>(s_d1a, s_d1b, height, width);
-    pool_skip_blocks<H, W, H, W, C1>(s_d1b, s_skip, s_pool1, height, width);
-    wino_conv3x3<H, W, H / 2, W / 2, C1, C2, SPU_WINO(D2A, F_D2A, double2_block_0)>(s_pool1, s_d2a, height, width);
-    wino_conv3x3<H, W, H / 2, W / 2, C2, C2, SPU_WINO(D2B, F_D2B, double2_block_3)>(s_d2a, s_d2b, height, width);
-    pool_blocks<H, W, H / 2, W / 2, C2>(s_d2b, s_pool2, height, width);          // -> 8 x 8
+    // The spectral stem, 1x1 convs; convsp1 two multiplies per DSP.
+    pointwise_wide<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE, MODEL_BANDS, STEM1,
+                   sizes::CONVSP1_BANDS_PER_CYCLE, CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT,
+                   weights::convsp1_weight, weights::convsp1_bias>(zscores, convsp1_out, height, width);
+    pointwise<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, 1, true,
+              CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
+              false>(convsp1_out, convsp2_out, height, width);
+    pointwise<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, 4, true,
+              CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
+              false>(convsp2_out, stem_out, height, width);
 
-    // The decoder: up1 8 x 8 -> 16 x 16, double3, up2 -> 32 x 32.
-    wino_up_conv3x3<H, W, H / 4, W / 4, C2, C2, SPU_WINO(UP1, F_UP1, up1_1)>(s_pool2, s_up1, height, width);
-    wino_conv3x3<H, W, H / 2, W / 2, C2, C3, SPU_WINO(D3A, F_D3A, double3_block_0)>(s_up1, s_d3a, height, width);
-    wino_conv3x3<H, W, H / 2, W / 2, C3, C3, SPU_WINO(D3B, F_D3B, double3_block_3)>(s_d3a, s_d3b, height, width);
-    blocks_to_rows<H, W, H / 2, W / 2, C3, act_t>(s_d3b, s_dec3, height, width);
-    wino_up_conv3x3<H, W, H / 2, W / 2, C3, C3, SPU_WINO(UP2, F_UP2, up2_1)>(s_dec3, s_up2, height, width);
+    // The encoder: double1 at 32 x 32, whose output is also the skip; double2 at 16 x 16.
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, STEM3, DOUBLE1,
+                 WINO_LAYER(DOUBLE1_CONV1, DOUBLE1_CONV1_FRACS, double1_block_0)>(
+        stem_out, double1_conv1_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1, DOUBLE1,
+                 WINO_LAYER(DOUBLE1_CONV2, DOUBLE1_CONV2_FRACS, double1_block_3)>(
+        double1_conv1_out, double1_conv2_out, height, width);
+    pool_skip_blocks<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1>(
+        double1_conv2_out, skip, pool1_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE1, DOUBLE2,
+                 WINO_LAYER(DOUBLE2_CONV1, DOUBLE2_CONV1_FRACS, double2_block_0)>(
+        pool1_out, double2_conv1_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
+                 WINO_LAYER(DOUBLE2_CONV2, DOUBLE2_CONV2_FRACS, double2_block_3)>(
+        double2_conv1_out, double2_conv2_out, height, width);
+    pool_blocks<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2>(double2_conv2_out, pool2_out, height, width);
 
-    // The skip connection, then double4 and the final 1x1 conv: the scores.
-    concat_blocks<H, W, H, W, C3, C1>(s_up2, s_skip, s_cat, height, width);
-    wino_conv3x3<H, W, H, W, C3 + C1, C4, SPU_WINO(D4A, F_D4A, double4_block_0)>(s_cat, s_d4a, height, width);
-    wino_conv3x3<H, W, H, W, C4, C4, SPU_WINO(D4B, F_D4B, double4_block_3)>(s_d4a, s_d4b, height, width);
-    blocks_to_rows<H, W, H, W, C4, act_t>(s_d4b, s_dec4, height, width);
-    pointwise<H, W, H * W, C4, CLASSES, cfg::FIN_PO, 1, false, F_FIN::BIAS_SHIFT, F_FIN::SHIFT,
-              q::final_weight, q::final_bias, false>(s_dec4, s_scores, height, width);
-    store_scores<H, W, F_FIN::SHIFT>(s_scores, dout, height, width, s_finished);
-    // Last: C simulation runs the processes in this order (count_cycles.hpp).
-    count_cycles(s_finished, cycles);
+    // The decoder: up1 from 8 x 8 to 16 x 16, double3, up2 to 32 x 32.
+    wino_up_conv3x3<PATCH_SIZE, PATCH_SIZE, QUARTER_PATCH, QUARTER_PATCH, DOUBLE2, DOUBLE2,
+                    WINO_LAYER(UP1_CONV, UP1_FRACS, up1_1)>(pool2_out, up1_conv_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE3,
+                 WINO_LAYER(DOUBLE3_CONV1, DOUBLE3_CONV1_FRACS, double3_block_0)>(
+        up1_conv_out, double3_conv1_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
+                 WINO_LAYER(DOUBLE3_CONV2, DOUBLE3_CONV2_FRACS, double3_block_3)>(
+        double3_conv1_out, double3_conv2_out, height, width);
+    blocks_to_rows<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, act_t>(
+        double3_conv2_out, double3_out, height, width);
+    wino_up_conv3x3<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
+                    WINO_LAYER(UP2_CONV, UP2_FRACS, up2_1)>(double3_out, up2_conv_out, height, width);
+
+    // The skip joins, then double4 and the final 1x1 conv: the scores.
+    concat_blocks<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3, DOUBLE1>(
+        up2_conv_out, skip, joined, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3 + DOUBLE1, DOUBLE4,
+                 WINO_LAYER(DOUBLE4_CONV1, DOUBLE4_CONV1_FRACS, double4_block_0)>(
+        joined, double4_conv1_out, height, width);
+    wino_conv3x3<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
+                 WINO_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
+        double4_conv1_out, double4_conv2_out, height, width);
+    blocks_to_rows<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, act_t>(
+        double4_conv2_out, double4_out, height, width);
+    pointwise<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, 1, false,
+              FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(
+        double4_out, scores, height, width);
+    store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);
+
+    count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
 }
 
-#undef SPU_WINO
+#undef WINO_LAYER

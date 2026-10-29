@@ -3,28 +3,17 @@
 
 #include "../../golden/specpw_unet_quant_golden.hpp"
 
-// The quantized SpecPW-UNet, large (stem 32-16-16, 32 / 64 / 32 / 16 channels), on n 32 x 32 patches per start
-// (src/golden/specpw_unet_quant_golden.hpp): a golden baseline, plain loops in
-// float. The int8 weights and their shifts come from
-// weights/quantized/sp_unet_large/ and are compiled into the kernel as constant
-// arrays (on-chip ROM), so the interface is only the patches in and the scores
-// out. Changing the weights means rebuilding the bitstream.
-//
-// The host cuts the capture into 32 x 32 patches (the last row and column
-// repeated to fill the edge ones, tools/patching.py) and preprocesses them as in
-// training: the 110 kept bands (raw 8-117), z-scored with mu_sd.txt.
-//
-// din:  [n][32][32][110] float, patch by patch, HWC.
-// dout: [n][32][32][3] float, the scores (0 cloud, 1 land, 2 sea; highest = class).
+// Golden SpecPW-UNet, large (stem 32-16-16, blocks 32 / 64 / 32 / 16): n z-scored 32 x 32 patches a start, 3 scores
+// per pixel out. Plain float loops, with the int8 weights compiled in.
 
 using data_t = float;
-using spu_size = specpw_unet_large;
+using model_size = specpw_unet_large;
 
-#define SPU_H      32
-#define SPU_W      32
-#define SPU_IN_CH  110
-#define SPU_OUT_CH 3
+constexpr int GOLDEN_PATCH_SIZE = 32;
+constexpr int GOLDEN_BANDS = 110;
+constexpr int GOLDEN_CLASSES = 3;
 
+// din: [n][32][32][110] float. dout: [n][32][32][3] float (0 cloud, 1 land, 2 sea).
 void sp_unet_large(const data_t *din, data_t *dout, int n);
 
-#endif // SP_UNET_LARGE_HLS_HPP
+#endif

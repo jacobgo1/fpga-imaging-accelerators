@@ -3,49 +3,46 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// blocks_to_rows: a map in 2x2-block order (wino_conv3x3.hpp) back to raster
-// order, one pixel a vector: each block row is two pixel rows. The top one
-// goes out as the blocks come in, two pixels each; the bottom one is kept
-// and goes out after it. One pixel a cycle.
-//
-// The image is cut into PH x PW patches (patch_grid.hpp); H x W is the map's
-// size in a patch (pixels), H/2 x W/2 its blocks. T: the values' type.
-template<int PH, int PW, int H, int W, int CH, typename T>
-void blocks_to_rows(hls::stream<vec_t<T, 4 * CH> >& in, hls::stream<vec_t<T, CH> >& out,
+// A map in 2x2-block order (wino_conv3x3.hpp) back to raster order, one pixel a
+// cycle. A block row is two pixel rows: the top one goes out as the blocks come
+// in, the bottom one is kept and goes out after it.
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int CHANNELS, typename T>
+void blocks_to_rows(hls::stream<vec_t<T, 4 * CHANNELS> >& in, hls::stream<vec_t<T, CHANNELS> >& out,
                     int height, int width) {
-    constexpr int GW = W / 2, ROW = 4 * GW;          // steps a block row: its 2 x W pixels
-    constexpr int TRIPS = (H / 2) * ROW, MAX_TRIPS = 665 * TRIPS;
-    (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
-    T top_r[CH];                                     // the block's top right pixel
-    #pragma HLS ARRAY_PARTITION variable=top_r type=complete
-    T bottom_l[GW][CH], bottom_r[GW][CH];            // the block row's bottom pixels
-    #pragma HLS ARRAY_PARTITION variable=bottom_l type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=bottom_r type=complete dim=2
-    const int n = patch_count<PH, PW>(height, width) * TRIPS;
-    int s = 0;                                       // the step of the block row
-    steps: for (int k = 0; k < n; k++) {
+    constexpr int BLOCKS_WIDE = MAP_WIDTH / 2, STEPS_PER_BLOCK_ROW = 4 * BLOCKS_WIDE;
+    constexpr int STEPS = (MAP_HEIGHT / 2) * STEPS_PER_BLOCK_ROW, MAX_STEPS = 665 * STEPS;
+    (void)MAX_STEPS;   // only the pragma uses it
+    T top_right[CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=top_right type=complete
+    T bottom_left[BLOCKS_WIDE][CHANNELS], bottom_right[BLOCKS_WIDE][CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=bottom_left type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=bottom_right type=complete dim=2
+    const int steps = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * STEPS;
+    int step = 0;
+    steps: for (int k = 0; k < steps; k++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
-        #pragma HLS DEPENDENCE variable=bottom_l type=inter false
-        #pragma HLS DEPENDENCE variable=bottom_r type=inter false
-        vec_t<T, CH> o;
-        if (s < 2 * GW && s % 2 == 0) {
-            const vec_t<T, 4 * CH> v = in.read();
-            for (int c = 0; c < CH; c++) {
+        #pragma HLS LOOP_TRIPCOUNT min=STEPS max=MAX_STEPS
+        #pragma HLS DEPENDENCE variable=bottom_left type=inter false
+        #pragma HLS DEPENDENCE variable=bottom_right type=inter false
+        vec_t<T, CHANNELS> pixel;
+        if (step < 2 * BLOCKS_WIDE && step % 2 == 0) {
+            const vec_t<T, 4 * CHANNELS> block = in.read();
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                o.v[c] = v.v[c];
-                top_r[c] = v.v[CH + c];
-                bottom_l[s / 2][c] = v.v[2 * CH + c];
-                bottom_r[s / 2][c] = v.v[3 * CH + c];
+                pixel.v[ch] = block.v[ch];
+                top_right[ch] = block.v[CHANNELS + ch];
+                bottom_left[step / 2][ch] = block.v[2 * CHANNELS + ch];
+                bottom_right[step / 2][ch] = block.v[3 * CHANNELS + ch];
             }
         } else {
-            const int x = s < 2 * GW ? 0 : (s - 2 * GW) / 2;
-            for (int c = 0; c < CH; c++) {
+            const int x = step < 2 * BLOCKS_WIDE ? 0 : (step - 2 * BLOCKS_WIDE) / 2;
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                o.v[c] = s < 2 * GW ? top_r[c] : s % 2 == 0 ? bottom_l[x][c] : bottom_r[x][c];
+                pixel.v[ch] = step < 2 * BLOCKS_WIDE ? top_right[ch]
+                            : step % 2 == 0 ? bottom_left[x][ch] : bottom_right[x][ch];
             }
         }
-        out.write(o);
-        s = s < ROW - 1 ? s + 1 : 0;
+        out.write(pixel);
+        step = step < STEPS_PER_BLOCK_ROW - 1 ? step + 1 : 0;
     }
 }

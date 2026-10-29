@@ -5,123 +5,119 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// Shared logic of patch_buffer (used by zcu104/patch_buffer.hpp in UltraRAM
-// and zynq7020/patch_buffer.hpp in block RAM):
+// The z-score and the ping-pong buffer between the readers and the first layer;
+// zcu104/ keeps it in UltraRAM, zynq7020/ in block RAM.
 //
-// In: from reader r, rows r, r + PORTS, ... of each patch, WORDS words of
-// LANES raw uint16 bands per pixel. Words FIRST .. WORDS - 1 are kept, the
-// ones before them dropped. Kept band k becomes
-//     round((dn - mean) / std * 2^F) = (dn * ZA[k] + ZB[k]) >> FRAC,
-// saturated at +-IN_MAX (127: never -128, which conv3x3_wide's packing needs).
-// DSP: its PORTS x LANES z-score multipliers in DSPs, or in LUTs.
-// Out: P kept bands of a pixel per cycle, in conv3x3_wide's order: chunk by
-// chunk, each in raster order. The last chunk's bands past the kept ones are
-// zero.
-//
-// Round k fills patch k into one buffer while it sends patch k - 1 from the
-// other; then the buffers swap. n patches take n + 1 rounds of
-// max(FILL, EMIT) cycles: the words of one patch per port, or the chunks
-// times the pixels.
-template<int FRAC, int IN_MAX, bool DSP>
-act8_t z_score(uint16_t dn, int32_t a, int32_t b) {
+// Reader r sends rows r, r + READ_PORTS, ... of each patch, WORDS_PER_PIXEL words
+// a pixel. Words before FIRST_KEPT_WORD are dropped; kept band k becomes
+// (raw * ZSCORE_SCALE[k] + ZSCORE_OFFSET[k]) >> ZSCORE_SHIFT, saturated at
+// +-ZSCORE_MAX. Out go BANDS_PER_CYCLE bands of a pixel a cycle, chunk by chunk,
+// each chunk in raster order; bands past the last kept one are zero.
+// While one patch fills one buffer, the previous one is sent from the other.
+template<int ZSCORE_SHIFT, int ZSCORE_MAX, bool DSP>
+act8_t z_score(uint16_t raw, int32_t scale, int32_t offset) {
     #pragma HLS INLINE
-    const int64_t s = (mul<DSP, int64_t>(dn, a) + b) >> FRAC;
-    return (act8_t)(s > IN_MAX ? IN_MAX : s < -IN_MAX ? -IN_MAX : s);
+    const int64_t z = (mul<DSP, int64_t>(raw, scale) + offset) >> ZSCORE_SHIFT;
+    return (act8_t)(z > ZSCORE_MAX ? ZSCORE_MAX : z < -ZSCORE_MAX ? -ZSCORE_MAX : z);
 }
 
-template<int PH, int PW, int WORDS, int FIRST, int LANES, int P, int PORTS, int FRAC, int IN_MAX,
-         const int32_t (&ZA)[(WORDS - FIRST) * LANES], const int32_t (&ZB)[(WORDS - FIRST) * LANES],
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int WORDS_PER_PIXEL, int FIRST_KEPT_WORD, int BANDS_PER_WORD,
+         int BANDS_PER_CYCLE, int READ_PORTS, int ZSCORE_SHIFT, int ZSCORE_MAX,
+         const int32_t (&ZSCORE_SCALE)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
+         const int32_t (&ZSCORE_OFFSET)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
          bool DSP, typename WORD_T>
 void patch_buffer_run(
-    vec_t<act8_t, LANES> bank[PORTS][P / LANES][2 * (((WORDS - FIRST) + (P / LANES) - 1) / (P / LANES)) * (PH / PORTS) * PW],
-    hls::stream<WORD_T> raw[PORTS], hls::stream<vec_t<act8_t, P> >& out,
+    vec_t<act8_t, BANDS_PER_WORD> bank[READ_PORTS][BANDS_PER_CYCLE / BANDS_PER_WORD]
+        [2 * (((WORDS_PER_PIXEL - FIRST_KEPT_WORD) + (BANDS_PER_CYCLE / BANDS_PER_WORD) - 1)
+              / (BANDS_PER_CYCLE / BANDS_PER_WORD)) * (PATCH_HEIGHT / READ_PORTS) * PATCH_WIDTH],
+    hls::stream<WORD_T> raw[READ_PORTS], hls::stream<vec_t<act8_t, BANDS_PER_CYCLE> >& out,
     int height, int width) {
     #pragma HLS INLINE
-    constexpr int KEPT = WORDS - FIRST;                         // kept words per pixel
-    constexpr int PER_CHUNK = P / LANES;                        // words per chunk
-    constexpr int CHUNKS = (KEPT + PER_CHUNK - 1) / PER_CHUNK;
-    constexpr int ROWS = PH / PORTS;                            // rows per port per patch
-    constexpr int FILL = ROWS * PW * WORDS;                     // words per port per patch
-    constexpr int EMIT = CHUNKS * PH * PW;                      // vectors per patch out
-    constexpr int ROUND = FILL > EMIT ? FILL : EMIT;
-    constexpr int BANK_HALF = CHUNKS * ROWS * PW;
-    typedef vec_t<act8_t, LANES> word_t;
+    constexpr int KEPT_WORDS = WORDS_PER_PIXEL - FIRST_KEPT_WORD;
+    constexpr int WORDS_PER_CHUNK = BANDS_PER_CYCLE / BANDS_PER_WORD;
+    constexpr int CHUNKS = (KEPT_WORDS + WORDS_PER_CHUNK - 1) / WORDS_PER_CHUNK;
+    constexpr int ROWS_PER_PORT = PATCH_HEIGHT / READ_PORTS;
+    constexpr int FILL_STEPS = ROWS_PER_PORT * PATCH_WIDTH * WORDS_PER_PIXEL;
+    constexpr int EMIT_STEPS = CHUNKS * PATCH_HEIGHT * PATCH_WIDTH;
+    constexpr int ROUND_STEPS = FILL_STEPS > EMIT_STEPS ? FILL_STEPS : EMIT_STEPS;
+    constexpr int BUFFER_SIZE = CHUNKS * ROWS_PER_PORT * PATCH_WIDTH;
+    typedef vec_t<act8_t, BANDS_PER_WORD> word_t;
 
-    // The z-score constants of the kept words, one small ROM per lane.
-    int32_t za[KEPT][LANES], zb[KEPT][LANES];
-    #pragma HLS ARRAY_PARTITION variable=za type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=zb type=complete dim=2
-    load_z: for (int k = 0; k < KEPT * LANES; k++) {
+    int32_t scale[KEPT_WORDS][BANDS_PER_WORD], offset[KEPT_WORDS][BANDS_PER_WORD];
+    #pragma HLS ARRAY_PARTITION variable=scale type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=offset type=complete dim=2
+    load_z: for (int k = 0; k < KEPT_WORDS * BANDS_PER_WORD; k++) {
         #pragma HLS PIPELINE II=1
-        za[k / LANES][k % LANES] = ZA[k];
-        zb[k / LANES][k % LANES] = ZB[k];
+        scale[k / BANDS_PER_WORD][k % BANDS_PER_WORD] = ZSCORE_SCALE[k];
+        offset[k / BANDS_PER_WORD][k % BANDS_PER_WORD] = ZSCORE_OFFSET[k];
     }
 
-    const int n = patch_count<PH, PW>(height, width);
-    int wb = 0;                                 // the buffer being filled
-    round: for (int k = 0; k <= n; k++) {
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+    int filling_second = 0;
+    round: for (int patch = 0; patch <= patches; patch++) {
         #pragma HLS LOOP_TRIPCOUNT min=2 max=666
-        const bool fill = k < n, emit = k > 0;
-        int fr = 0, fx = 0, fw = 0;             // fill: row of the port, pixel, word
-        int ec = 0, ey = 0, ex = 0;             // emit: chunk, row, pixel
-        step: for (int t = 0; t < ROUND; t++) {
+        const bool fill = patch < patches, emit = patch > 0;
+        int fill_row = 0, fill_col = 0, fill_word = 0;
+        int emit_chunk = 0, emit_row = 0, emit_col = 0;
+        step: for (int t = 0; t < ROUND_STEPS; t++) {
             #pragma HLS PIPELINE II=1
             // Writes go to one half of each bank, reads to the other.
             #pragma HLS DEPENDENCE variable=bank type=inter false
             #pragma HLS DEPENDENCE variable=bank type=intra false
-            const bool take = fill && t < FILL;
-            WORD_T w[PORTS];
-            for (int r = 0; r < PORTS; r++) {
+            const bool take = fill && t < FILL_STEPS;
+            WORD_T words[READ_PORTS];
+            for (int port = 0; port < READ_PORTS; port++) {
                 #pragma HLS UNROLL
-                if (take) w[r] = raw[r].read();
+                if (take) words[port] = raw[port].read();
             }
-            // The words before FIRST are dropped; kept word kw goes to chunk
-            // kw / PER_CHUNK, into the bank of its place in the chunk.
-            const int kw = fw >= FIRST ? fw - FIRST : 0;
-            const bool store = take && fw >= FIRST;
-            const int waddr = (wb ? BANK_HALF : 0) + ((kw / PER_CHUNK) * ROWS + fr) * PW + fx;
-            for (int r = 0; r < PORTS; r++) {
+            const int kept_word = fill_word >= FIRST_KEPT_WORD ? fill_word - FIRST_KEPT_WORD : 0;
+            const bool store = take && fill_word >= FIRST_KEPT_WORD;
+            const int write_address = (filling_second ? BUFFER_SIZE : 0)
+                                    + ((kept_word / WORDS_PER_CHUNK) * ROWS_PER_PORT + fill_row) * PATCH_WIDTH + fill_col;
+            for (int port = 0; port < READ_PORTS; port++) {
                 #pragma HLS UNROLL
-                word_t z;
-                for (int p = 0; p < LANES; p++) {
+                word_t zscores;
+                for (int b = 0; b < BANDS_PER_WORD; b++) {
                     #pragma HLS UNROLL
-                    z.v[p] = z_score<FRAC, IN_MAX, DSP>(w[r][p], za[kw][p], zb[kw][p]);
+                    zscores.v[b] = z_score<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
+                        words[port][b], scale[kept_word][b], offset[kept_word][b]);
                 }
-                for (int q = 0; q < PER_CHUNK; q++) {
+                // Each bank is written at one fixed place: a bank chosen at run
+                // time would be duplicated per choice (II = 5).
+                for (int w = 0; w < WORDS_PER_CHUNK; w++) {
                     #pragma HLS UNROLL
-                    if (store && kw % PER_CHUNK == q) bank[r][q][waddr] = z;
+                    if (store && kept_word % WORDS_PER_CHUNK == w) bank[port][w][write_address] = zscores;
                 }
             }
             if (take) {
-                if (fw < WORDS - 1) fw++;
-                else { fw = 0; if (fx < PW - 1) fx++; else { fx = 0; fr++; } }
+                if (fill_word < WORDS_PER_PIXEL - 1) fill_word++;
+                else { fill_word = 0; if (fill_col < PATCH_WIDTH - 1) fill_col++; else { fill_col = 0; fill_row++; } }
             }
 
-            if (emit && t < EMIT) {
-                // All banks are read; the row's port picks its PER_CHUNK. The
-                // last chunk's words past the kept ones are never written: send
-                // zeros, not whatever the memory holds.
-                const int raddr = (wb ? 0 : BANK_HALF) + (ec * ROWS + ey / PORTS) * PW + ex;
-                vec_t<act8_t, P> v;
-                for (int q = 0; q < PER_CHUNK; q++) {
+            if (emit && t < EMIT_STEPS) {
+                const int read_address = (filling_second ? 0 : BUFFER_SIZE)
+                                       + (emit_chunk * ROWS_PER_PORT + emit_row / READ_PORTS) * PATCH_WIDTH + emit_col;
+                vec_t<act8_t, BANDS_PER_CYCLE> chunk;
+                for (int w = 0; w < WORDS_PER_CHUNK; w++) {
                     #pragma HLS UNROLL
-                    word_t rd[PORTS];
-                    for (int r = 0; r < PORTS; r++) {
+                    word_t from_port[READ_PORTS];
+                    for (int port = 0; port < READ_PORTS; port++) {
                         #pragma HLS UNROLL
-                        rd[r] = bank[r][q][raddr];
+                        from_port[port] = bank[port][w][read_address];
                     }
-                    const word_t pick = rd[ey % PORTS];
-                    const bool kept = ec * PER_CHUNK + q < KEPT;
-                    for (int p = 0; p < LANES; p++) {
+                    const word_t picked = from_port[emit_row % READ_PORTS];
+                    // The words past the kept ones were never written.
+                    const bool kept = emit_chunk * WORDS_PER_CHUNK + w < KEPT_WORDS;
+                    for (int b = 0; b < BANDS_PER_WORD; b++) {
                         #pragma HLS UNROLL
-                        v.v[q * LANES + p] = kept ? pick.v[p] : (act8_t)0;
+                        chunk.v[w * BANDS_PER_WORD + b] = kept ? picked.v[b] : (act8_t)0;
                     }
                 }
-                out.write(v);
-                if (ex < PW - 1) ex++;
-                else { ex = 0; if (ey < PH - 1) ey++; else { ey = 0; ec++; } }
+                out.write(chunk);
+                if (emit_col < PATCH_WIDTH - 1) emit_col++;
+                else { emit_col = 0; if (emit_row < PATCH_HEIGHT - 1) emit_row++; else { emit_row = 0; emit_chunk++; } }
             }
         }
-        wb = 1 - wb;
+        filling_second = 1 - filling_second;
     }
 }

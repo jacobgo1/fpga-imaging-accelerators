@@ -53,13 +53,13 @@ void SimRegisters::run() {
   // The kernel's ports, in order; a header with fewer than the kernel has
   // repeats them, so the test can check that every port is given the cube.
   // Plain (not const) pointers: hls::burst_maxi ports take them.
-  std::vector<jopt_raw_t *> din;
+  std::vector<cube_word_t *> din;
   for (size_t i = 0; i < 4; i++) {
     const Register &reg = map_.din[i % map_.din.size()];
-    din.push_back(const_cast<jopt_raw_t *>(static_cast<const jopt_raw_t *>(pointer(value(reg), pixels * IN_PIXEL))));
+    din.push_back(const_cast<cube_word_t *>(static_cast<const cube_word_t *>(pointer(value(reg), pixels * IN_PIXEL))));
   }
-  auto *dout = const_cast<jopt_out_t *>(
-      static_cast<const jopt_out_t *>(pointer(value(map_.dout), pixels * OUT_PIXEL)));
+  auto *dout = const_cast<score_word_t *>(
+      static_cast<const score_word_t *>(pointer(value(map_.dout), pixels * OUT_PIXEL)));
 #if defined(JOPT_SIM_ZYNQ7030)
   justounetsimple_opt_zynq7030(din[0], din[1], din[2], din[3], dout, height, width);
 #elif defined(JOPT_SIM_ZYNQ7020)

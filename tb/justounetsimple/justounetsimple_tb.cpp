@@ -1,11 +1,6 @@
-// justounetsimple_tb.cpp  --  testbench for the quantized kernel.
-//
-// The reference is the existing float justounet2d_golden, fed the same weights
-// dequantized (q * 2^-frac) and with BatchNorm set to the identity (the real
-// BatchNorm is already folded into the weights). It is a separate
-// implementation from the kernel's own model, so agreement means the
-// int8 + shift arithmetic and the BN-free blocks are right. Results differ
-// only by float rounding, so the comparison has a small tolerance.
+// Testbench of the golden kernel. The reference is justounet2d_golden, a separate
+// implementation, given the same weights as floats and BatchNorm as the identity
+// (the real BatchNorm is already folded into the weights).
 #include "justounetsimple.hpp"
 #include "../../src/golden/justounet2d_golden.hpp"
 #include "../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
@@ -13,84 +8,80 @@
 #include <cstdio>
 #include <random>
 
-namespace q = justounetsimple_int8;
+namespace weights = justounetsimple_int8;
 
-constexpr int H = JUNETS_H, W = JUNETS_W, IC = JUNETS_IN_CH;
-constexpr int B = JUNETS_BASE_CH, OC = JUNETS_OUT_CH, K = JUNETS_K;
+constexpr int SIZE = GOLDEN_PATCH_SIZE, BANDS = GOLDEN_BANDS, BASE = GOLDEN_BASE_CHANNELS;
+constexpr int CLASSES = GOLDEN_CLASSES, K = GOLDEN_KERNEL_SIZE;
 
-static float din[H][W][IC];
-static float dout[H][W][OC];
-static float expected[H][W][OC];
+static float patch[SIZE][SIZE][BANDS];
+static float scores[SIZE][SIZE][CLASSES];
+static float expected[SIZE][SIZE][CLASSES];
 
-static float w1[B][IC][K][K], b1[B];
-static float w2[2*B][B][K][K], b2[2*B];
-static float w3[B][2*B][K][K], b3[B];
-static float w4[OC][B][K][K], b4[OC];
+static float conv1_weight[BASE][BANDS][K][K], conv1_bias[BASE];
+static float conv2_weight[2 * BASE][BASE][K][K], conv2_bias[2 * BASE];
+static float conv3_weight[BASE][2 * BASE][K][K], conv3_bias[BASE];
+static float conv4_weight[CLASSES][BASE][K][K], conv4_bias[CLASSES];
 
-// Identity BatchNorm for the reference: (x - 0) / sqrt(1 + 0) * 1 + 0.
-static float bn_one[2*B], bn_zero[2*B];
+static float ones[2 * BASE], zeros[2 * BASE];   // identity BatchNorm
 
-static void dequantize(const int8_t *q_values, float *out, int count, float scale)
+static void dequantize(const int8_t *values, float *out, int count, int frac_bits)
 {
     for (int i = 0; i < count; i++)
-        out[i] = (float)q_values[i] * scale;
+        out[i] = std::ldexp((float)values[i], -frac_bits);
 }
 
 int main()
 {
-    dequantize(&q::conv1_weight[0][0][0][0], &w1[0][0][0][0], B*IC*K*K, std::ldexp(1.0f, -q::conv1_weight_frac));
-    dequantize(q::conv1_bias, b1, B, std::ldexp(1.0f, -q::conv1_bias_frac));
-    dequantize(&q::conv2_weight[0][0][0][0], &w2[0][0][0][0], 2*B*B*K*K, std::ldexp(1.0f, -q::conv2_weight_frac));
-    dequantize(q::conv2_bias, b2, 2*B, std::ldexp(1.0f, -q::conv2_bias_frac));
-    dequantize(&q::conv3_weight[0][0][0][0], &w3[0][0][0][0], B*2*B*K*K, std::ldexp(1.0f, -q::conv3_weight_frac));
-    dequantize(q::conv3_bias, b3, B, std::ldexp(1.0f, -q::conv3_bias_frac));
-    dequantize(&q::conv4_weight[0][0][0][0], &w4[0][0][0][0], OC*B*K*K, std::ldexp(1.0f, -q::conv4_weight_frac));
-    dequantize(q::conv4_bias, b4, OC, std::ldexp(1.0f, -q::conv4_bias_frac));
+    dequantize(&weights::conv1_weight[0][0][0][0], &conv1_weight[0][0][0][0], BASE * BANDS * K * K, weights::conv1_weight_frac);
+    dequantize(&weights::conv2_weight[0][0][0][0], &conv2_weight[0][0][0][0], 2 * BASE * BASE * K * K, weights::conv2_weight_frac);
+    dequantize(&weights::conv3_weight[0][0][0][0], &conv3_weight[0][0][0][0], BASE * 2 * BASE * K * K, weights::conv3_weight_frac);
+    dequantize(&weights::conv4_weight[0][0][0][0], &conv4_weight[0][0][0][0], CLASSES * BASE * K * K, weights::conv4_weight_frac);
+    dequantize(weights::conv1_bias, conv1_bias, BASE, weights::conv1_bias_frac);
+    dequantize(weights::conv2_bias, conv2_bias, 2 * BASE, weights::conv2_bias_frac);
+    dequantize(weights::conv3_bias, conv3_bias, BASE, weights::conv3_bias_frac);
+    dequantize(weights::conv4_bias, conv4_bias, CLASSES, weights::conv4_bias_frac);
+    for (int i = 0; i < 2 * BASE; i++) { ones[i] = 1.0f; zeros[i] = 0.0f; }
 
-    for (int i = 0; i < 2*B; i++) { bn_one[i] = 1.0f; bn_zero[i] = 0.0f; }
+    std::mt19937 rng(1);
+    std::uniform_real_distribution<float> random_zscore(-3.0f, 3.0f);
+    float *pixels = &patch[0][0][0];
+    for (int i = 0; i < SIZE * SIZE * BANDS; i++)
+        pixels[i] = random_zscore(rng);
 
-    std::mt19937 rng(1);  // fixed seed: repeatable
-    std::uniform_real_distribution<float> dist(-3.0f, 3.0f);  // roughly z-scored bands
-    float *in_flat = &din[0][0][0];
-    for (int i = 0; i < H * W * IC; i++)
-        in_flat[i] = dist(rng);
-
-    justounet2d_golden<float, H, W, IC, B, OC, K>(
-        din,
-        w1, b1, bn_one, bn_zero, bn_zero, bn_one,
-        w2, b2, bn_one, bn_zero, bn_zero, bn_one,
-        w3, b3, bn_one, bn_zero, bn_zero, bn_one,
-        w4, b4, bn_one, bn_zero, bn_zero, bn_one,
+    justounet2d_golden<float, SIZE, SIZE, BANDS, BASE, CLASSES, K>(
+        patch,
+        conv1_weight, conv1_bias, ones, zeros, zeros, ones,
+        conv2_weight, conv2_bias, ones, zeros, zeros, ones,
+        conv3_weight, conv3_bias, ones, zeros, zeros, ones,
+        conv4_weight, conv4_bias, ones, zeros, zeros, ones,
         0.0f,
         expected);
 
-    justounetsimple(din, dout);
+    justounetsimple(patch, scores);
 
-    const float *actual_flat = &dout[0][0][0];
-    const float *expected_flat = &expected[0][0][0];
-    int errors = 0;
-    float lo = expected_flat[0], hi = expected_flat[0];
-    constexpr int out_count = H * W * OC;
-    for (int i = 0; i < out_count; i++) {
-        float e = expected_flat[i], a = actual_flat[i];
-        if (e < lo) lo = e;
-        if (e > hi) hi = e;
-        if (std::fabs(a - e) > 1e-3f * (1.0f + std::fabs(e))) {
-            if (errors < 5)
-                printf("mismatch at [%d]: got %g, expected %g\n", i, (double)a, (double)e);
-            errors++;
+    const float *got = &scores[0][0][0];
+    const float *want = &expected[0][0][0];
+    constexpr int count = SIZE * SIZE * CLASSES;
+    int mismatches = 0;
+    float lowest = want[0], highest = want[0];
+    for (int i = 0; i < count; i++) {
+        lowest = std::fmin(lowest, want[i]);
+        highest = std::fmax(highest, want[i]);
+        if (std::fabs(got[i] - want[i]) > 1e-3f * (1.0f + std::fabs(want[i]))) {
+            if (mismatches < 5)
+                printf("mismatch at [%d]: got %g, expected %g\n", i, (double)got[i], (double)want[i]);
+            mismatches++;
         }
     }
     // A reference that is all one value would pass for the wrong reasons.
-    if (!(hi - lo > 1e-3f)) {
-        printf("FAIL  (reference output is constant: %g)\n", (double)lo);
+    if (!(highest - lowest > 1e-3f)) {
+        printf("FAIL  (reference output is constant: %g)\n", (double)lowest);
         return 1;
     }
 
-    if (errors == 0)
-        printf("PASS  (%d outputs checked, reference range %g .. %g)\n",
-               out_count, (double)lo, (double)hi);
+    if (mismatches == 0)
+        printf("PASS  (%d outputs checked, reference range %g .. %g)\n", count, (double)lowest, (double)highest);
     else
-        printf("FAIL  (%d mismatches)\n", errors);
-    return errors == 0 ? 0 : 1;
+        printf("FAIL  (%d mismatches)\n", mismatches);
+    return mismatches == 0 ? 0 : 1;
 }

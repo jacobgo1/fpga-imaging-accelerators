@@ -2,149 +2,147 @@
 
 #include <cstdint>
 #include <cstring>
-#include "specpw_unet_golden.hpp"   // the sizes: specpw_unet_small, _medium, _large
+#include "specpw_unet_golden.hpp"   // the sizes
 #include "maxpool_golden.hpp"
-#include "nearest_neighbor_golden.hpp"
+#include "upsample_golden.hpp"
 #include "concat_golden.hpp"
 
-// The quantized SpecPW-UNet in integers, written as plain loops: the arithmetic
-// an optimized kernel must match bit for bit (its testbench's exact reference),
-// and the same as classify_fixed in tools/specpw_unet_model.py. Not for HLS.
-//
-// Formats, fraction bits passed in (the numpy model's IN_FRAC, ACT_FRAC, OUT_FRAC):
-//  - din: the z-score * 2^in_frac, int8 values (held in int32);
-//  - each conv sums act * q exactly in int64, plus its bias shifted up to the
-//    sum's fraction bits (act frac + weight frac); then ReLU, round half up to
-//    act_frac (add half, shift right) and saturate at act_max: int16 activations;
-//  - maxpool, nearest upsampling and the skip's concat move integers as they are;
-//  - the final 1x1 conv rounds to out_frac, no ReLU: int32 scores.
-// Integer sums do not depend on the order they are added in, so any kernel
-// that keeps every product and rounds at the same places gets the same answer.
+// The quantized SpecPW-UNet in integers, as plain loops: what an optimized
+// kernel must match bit for bit, and the same as classify_fixed in
+// tools/specpw_unet_model.py. Not for HLS.
+//  - din: the z-scores with in_frac fraction bits, int8 values;
+//  - each conv sums exactly in int64, its bias shifted up to the sum's fraction
+//    bits; then it rounds half up to act_frac, ReLU, saturates at act_max;
+//  - the final 1x1 conv rounds to out_frac, no ReLU: the int32 scores.
 
-// One conv's int8 weights and biases with their fracs (value = q * 2^-frac).
-template<int OUT_CH, int IN_CH, int K>
-struct qconv_golden {
-    int8_t w[OUT_CH][IN_CH][K][K];
-    int w_frac;
-    int8_t b[OUT_CH];
-    int b_frac;
+// One conv's int8 weights and bias, value = q * 2^-frac.
+template<int OUT_CHANNELS, int IN_CHANNELS, int KERNEL>
+struct quantized_conv_golden {
+    int8_t weight[OUT_CHANNELS][IN_CHANNELS][KERNEL][KERNEL];
+    int weight_frac;
+    int8_t bias[OUT_CHANNELS];
+    int bias_frac;
 };
 
-template<int OUT_CH, int IN_CH, int K, typename QW, typename QB>
-void load_qconv_golden(qconv_golden<OUT_CH, IN_CH, K> &layer, const QW &w, int w_frac, const QB &b, int b_frac) {
-    static_assert(sizeof(QW) == sizeof(layer.w) && sizeof(QB) == sizeof(layer.b), "the weights differ in shape");
-    std::memcpy(layer.w, &w, sizeof(layer.w));
-    std::memcpy(layer.b, &b, sizeof(layer.b));
-    layer.w_frac = w_frac;
-    layer.b_frac = b_frac;
+template<int OUT_CHANNELS, int IN_CHANNELS, int KERNEL, typename Weight, typename Bias>
+void load_quantized_conv_golden(quantized_conv_golden<OUT_CHANNELS, IN_CHANNELS, KERNEL> &conv,
+                                const Weight &weight, int weight_frac, const Bias &bias, int bias_frac) {
+    std::memcpy(conv.weight, &weight, sizeof(conv.weight));
+    std::memcpy(conv.bias, &bias, sizeof(conv.bias));
+    conv.weight_frac = weight_frac;
+    conv.bias_frac = bias_frac;
 }
 
-template<int IN_CH, int N_CLS, typename Size>
-struct specpw_unet_qparams_golden {
-    qconv_golden<Size::S1, IN_CH, 1> sp1;
-    qconv_golden<Size::S2, Size::S1, 1> sp2;
-    qconv_golden<Size::S3, Size::S2, 1> sp3;
-    qconv_golden<Size::C1, Size::S3, 3> d1a;
-    qconv_golden<Size::C1, Size::C1, 3> d1b;
-    qconv_golden<Size::C2, Size::C1, 3> d2a;
-    qconv_golden<Size::C2, Size::C2, 3> d2b;
-    qconv_golden<Size::C2, Size::C2, 3> up1;
-    qconv_golden<Size::C3, Size::C2, 3> d3a;
-    qconv_golden<Size::C3, Size::C3, 3> d3b;
-    qconv_golden<Size::C3, Size::C3, 3> up2;
-    qconv_golden<Size::C4, Size::C3 + Size::C1, 3> d4a;
-    qconv_golden<Size::C4, Size::C4, 3> d4b;
-    qconv_golden<N_CLS, Size::C4, 1> fin;
+template<int BANDS, int CLASSES, typename Size>
+struct specpw_unet_quantized_params_golden {
+    quantized_conv_golden<Size::STEM1, BANDS, 1> convsp1;
+    quantized_conv_golden<Size::STEM2, Size::STEM1, 1> convsp2;
+    quantized_conv_golden<Size::STEM3, Size::STEM2, 1> convsp3;
+    quantized_conv_golden<Size::DOUBLE1, Size::STEM3, 3> double1_conv1;
+    quantized_conv_golden<Size::DOUBLE1, Size::DOUBLE1, 3> double1_conv2;
+    quantized_conv_golden<Size::DOUBLE2, Size::DOUBLE1, 3> double2_conv1;
+    quantized_conv_golden<Size::DOUBLE2, Size::DOUBLE2, 3> double2_conv2;
+    quantized_conv_golden<Size::DOUBLE2, Size::DOUBLE2, 3> up1;
+    quantized_conv_golden<Size::DOUBLE3, Size::DOUBLE2, 3> double3_conv1;
+    quantized_conv_golden<Size::DOUBLE3, Size::DOUBLE3, 3> double3_conv2;
+    quantized_conv_golden<Size::DOUBLE3, Size::DOUBLE3, 3> up2;
+    quantized_conv_golden<Size::DOUBLE4, Size::DOUBLE3 + Size::DOUBLE1, 3> double4_conv1;
+    quantized_conv_golden<Size::DOUBLE4, Size::DOUBLE4, 3> double4_conv2;
+    quantized_conv_golden<CLASSES, Size::DOUBLE4, 1> final_conv;
 };
 
-// Fills a specpw_unet_qparams_golden from a weights header's namespace
-// (weights/quantized/sp_unet_SIZE/sp_unet_SIZE_int8.hpp).
-#define SPECPW_UNET_QCONV(dst, ns, layer) \
-    load_qconv_golden(dst, ns::layer##_weight, ns::layer##_weight_frac, ns::layer##_bias, ns::layer##_bias_frac)
-#define SPECPW_UNET_LOAD_QPARAMS(p, ns) do { \
-    SPECPW_UNET_QCONV((p).sp1, ns, convsp1); SPECPW_UNET_QCONV((p).sp2, ns, convsp2); \
-    SPECPW_UNET_QCONV((p).sp3, ns, convsp3); \
-    SPECPW_UNET_QCONV((p).d1a, ns, double1_block_0); SPECPW_UNET_QCONV((p).d1b, ns, double1_block_3); \
-    SPECPW_UNET_QCONV((p).d2a, ns, double2_block_0); SPECPW_UNET_QCONV((p).d2b, ns, double2_block_3); \
-    SPECPW_UNET_QCONV((p).up1, ns, up1_1); \
-    SPECPW_UNET_QCONV((p).d3a, ns, double3_block_0); SPECPW_UNET_QCONV((p).d3b, ns, double3_block_3); \
-    SPECPW_UNET_QCONV((p).up2, ns, up2_1); \
-    SPECPW_UNET_QCONV((p).d4a, ns, double4_block_0); SPECPW_UNET_QCONV((p).d4b, ns, double4_block_3); \
-    SPECPW_UNET_QCONV((p).fin, ns, final); } while (0)
+// Fills the params from a weights header's namespace (weights/quantized/sp_unet_SIZE/).
+#define SPECPW_UNET_LOAD_CONV(conv, weights, name) \
+    load_quantized_conv_golden(conv, weights::name##_weight, weights::name##_weight_frac, \
+                               weights::name##_bias, weights::name##_bias_frac)
+#define SPECPW_UNET_LOAD_QUANTIZED_PARAMS(params, weights) do { \
+    SPECPW_UNET_LOAD_CONV((params).convsp1, weights, convsp1); \
+    SPECPW_UNET_LOAD_CONV((params).convsp2, weights, convsp2); \
+    SPECPW_UNET_LOAD_CONV((params).convsp3, weights, convsp3); \
+    SPECPW_UNET_LOAD_CONV((params).double1_conv1, weights, double1_block_0); \
+    SPECPW_UNET_LOAD_CONV((params).double1_conv2, weights, double1_block_3); \
+    SPECPW_UNET_LOAD_CONV((params).double2_conv1, weights, double2_block_0); \
+    SPECPW_UNET_LOAD_CONV((params).double2_conv2, weights, double2_block_3); \
+    SPECPW_UNET_LOAD_CONV((params).up1, weights, up1_1); \
+    SPECPW_UNET_LOAD_CONV((params).double3_conv1, weights, double3_block_0); \
+    SPECPW_UNET_LOAD_CONV((params).double3_conv2, weights, double3_block_3); \
+    SPECPW_UNET_LOAD_CONV((params).up2, weights, up2_1); \
+    SPECPW_UNET_LOAD_CONV((params).double4_conv1, weights, double4_block_0); \
+    SPECPW_UNET_LOAD_CONV((params).double4_conv2, weights, double4_block_3); \
+    SPECPW_UNET_LOAD_CONV((params).final_conv, weights, final); } while (0)
 
-// s * 2^-shift, rounded half up; a negative shift is exact (shifts left).
-inline int64_t round_shift_golden(int64_t s, int shift) {
+// value * 2^-shift, rounded half up; a negative shift shifts left, exactly.
+inline int64_t round_shift_golden(int64_t value, int shift) {
     if (shift <= 0)
-        return s * (int64_t(1) << -shift);
-    return (s + (int64_t(1) << (shift - 1))) >> shift;
+        return value * (int64_t(1) << -shift);
+    return (value + (int64_t(1) << (shift - 1))) >> shift;
 }
 
-// Same-padded KxK conv, then (RELU) ReLU and saturation at act_max, or (not
-// RELU) only the rounding: the final layer's scores.
-template<int H, int W, int IN_CH, int OUT_CH, int K, bool RELU>
-void conv2d_same_fixed_golden(const int32_t din[H][W][IN_CH],
-                              const qconv_golden<OUT_CH, IN_CH, K> &layer,
+// Same-padded conv; with RELU also ReLU and saturation at act_max, without it
+// only the rounding (the final layer).
+template<int HEIGHT, int WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL, bool RELU>
+void conv2d_same_fixed_golden(const int32_t din[HEIGHT][WIDTH][IN_CHANNELS],
+                              const quantized_conv_golden<OUT_CHANNELS, IN_CHANNELS, KERNEL> &conv,
                               int in_frac, int out_frac, int32_t act_max,
-                              int32_t dout[H][W][OUT_CH]) {
-    constexpr int PAD = (K - 1) / 2;
-    const int sum_frac = in_frac + layer.w_frac;
-    for (int i = 0; i < H; i++)
-        for (int j = 0; j < W; j++)
-            for (int oc = 0; oc < OUT_CH; oc++) {
-                int64_t sum = (int64_t)layer.b[oc] * (int64_t(1) << (sum_frac - layer.b_frac));
-                for (int ic = 0; ic < IN_CH; ic++)
-                    for (int ki = 0; ki < K; ki++)
-                        for (int kj = 0; kj < K; kj++) {
-                            const int y = i + ki - PAD, x = j + kj - PAD;
-                            if (y < 0 || y >= H || x < 0 || x >= W) continue;
-                            sum += (int64_t)din[y][x][ic] * layer.w[oc][ic][ki][kj];
+                              int32_t dout[HEIGHT][WIDTH][OUT_CHANNELS]) {
+    constexpr int PAD = (KERNEL - 1) / 2;
+    const int sum_frac = in_frac + conv.weight_frac;
+    for (int row = 0; row < HEIGHT; row++)
+        for (int col = 0; col < WIDTH; col++)
+            for (int out = 0; out < OUT_CHANNELS; out++) {
+                int64_t sum = (int64_t)conv.bias[out] * (int64_t(1) << (sum_frac - conv.bias_frac));
+                for (int in = 0; in < IN_CHANNELS; in++)
+                    for (int ky = 0; ky < KERNEL; ky++)
+                        for (int kx = 0; kx < KERNEL; kx++) {
+                            const int y = row + ky - PAD, x = col + kx - PAD;
+                            if (y >= 0 && y < HEIGHT && x >= 0 && x < WIDTH)
+                                sum += (int64_t)din[y][x][in] * conv.weight[out][in][ky][kx];
                         }
-                int64_t v = round_shift_golden(sum, sum_frac - out_frac);
+                int64_t value = round_shift_golden(sum, sum_frac - out_frac);
                 if (RELU)
-                    v = v < 0 ? 0 : (v > act_max ? act_max : v);
-                dout[i][j][oc] = (int32_t)v;
+                    value = value < 0 ? 0 : (value > act_max ? act_max : value);
+                dout[row][col][out] = (int32_t)value;
             }
 }
 
-template<int H, int W, int IN_CH, int N_CLS, typename Size>
-void specpw_unet_fixed_golden(const int32_t din[H][W][IN_CH],
-                              const specpw_unet_qparams_golden<IN_CH, N_CLS, Size> &p,
+template<int HEIGHT, int WIDTH, int BANDS, int CLASSES, typename Size>
+void specpw_unet_fixed_golden(const int32_t din[HEIGHT][WIDTH][BANDS],
+                              const specpw_unet_quantized_params_golden<BANDS, CLASSES, Size> &params,
                               int in_frac, int act_frac, int out_frac, int32_t act_max,
-                              int32_t dout[H][W][N_CLS]) {
-    static_assert(H % 4 == 0 && W % 4 == 0, "H and W must be divisible by 4 (two maxpools)");
-    constexpr int S1 = Size::S1, S2 = Size::S2, S3 = Size::S3;
-    constexpr int C1 = Size::C1, C2 = Size::C2, C3 = Size::C3, C4 = Size::C4;
-    constexpr int H2 = H / 2, W2 = W / 2, H4 = H / 4, W4 = W / 4;
-    const int a = act_frac;
+                              int32_t dout[HEIGHT][WIDTH][CLASSES]) {
+    constexpr int S1 = Size::STEM1, S2 = Size::STEM2, S3 = Size::STEM3;
+    constexpr int D1 = Size::DOUBLE1, D2 = Size::DOUBLE2, D3 = Size::DOUBLE3, D4 = Size::DOUBLE4;
+    constexpr int HALF_H = HEIGHT / 2, HALF_W = WIDTH / 2, QUARTER_H = HEIGHT / 4, QUARTER_W = WIDTH / 4;
+    const int act = act_frac;
 
-    static int32_t s1[H][W][S1], s2[H][W][S2], s3[H][W][S3];
-    static int32_t d1[H][W][C1], skip[H][W][C1], pool1[H2][W2][C1];
-    static int32_t d2[H2][W2][C2], enc2[H2][W2][C2], pool2[H4][W4][C2];
-    static int32_t up1_in[H2][W2][C2], up1[H2][W2][C2];
-    static int32_t d3[H2][W2][C3], dec3[H2][W2][C3];
-    static int32_t up2_in[H][W][C3], up2[H][W][C3], cat[H][W][C3 + C1];
-    static int32_t d4[H][W][C4], dec4[H][W][C4];
+    static int32_t stem1[HEIGHT][WIDTH][S1], stem2[HEIGHT][WIDTH][S2], stem3[HEIGHT][WIDTH][S3];
+    static int32_t double1_first[HEIGHT][WIDTH][D1], skip[HEIGHT][WIDTH][D1], pooled1[HALF_H][HALF_W][D1];
+    static int32_t double2_first[HALF_H][HALF_W][D2], double2[HALF_H][HALF_W][D2], pooled2[QUARTER_H][QUARTER_W][D2];
+    static int32_t up1_input[HALF_H][HALF_W][D2], up1[HALF_H][HALF_W][D2];
+    static int32_t double3_first[HALF_H][HALF_W][D3], double3[HALF_H][HALF_W][D3];
+    static int32_t up2_input[HEIGHT][WIDTH][D3], up2[HEIGHT][WIDTH][D3], joined[HEIGHT][WIDTH][D3 + D1];
+    static int32_t double4_first[HEIGHT][WIDTH][D4], double4[HEIGHT][WIDTH][D4];
 
-    conv2d_same_fixed_golden<H, W, IN_CH, S1, 1, true>(din, p.sp1, in_frac, a, act_max, s1);
-    conv2d_same_fixed_golden<H, W, S1, S2, 1, true>(s1, p.sp2, a, a, act_max, s2);
-    conv2d_same_fixed_golden<H, W, S2, S3, 1, true>(s2, p.sp3, a, a, act_max, s3);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, BANDS, S1, 1, true>(din, params.convsp1, in_frac, act, act_max, stem1);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S1, S2, 1, true>(stem1, params.convsp2, act, act, act_max, stem2);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S2, S3, 1, true>(stem2, params.convsp3, act, act, act_max, stem3);
 
-    conv2d_same_fixed_golden<H, W, S3, C1, 3, true>(s3, p.d1a, a, a, act_max, d1);
-    conv2d_same_fixed_golden<H, W, C1, C1, 3, true>(d1, p.d1b, a, a, act_max, skip);
-    maxpool_golden<int32_t, H, W, C1, 2>(skip, pool1);
-    conv2d_same_fixed_golden<H2, W2, C1, C2, 3, true>(pool1, p.d2a, a, a, act_max, d2);
-    conv2d_same_fixed_golden<H2, W2, C2, C2, 3, true>(d2, p.d2b, a, a, act_max, enc2);
-    maxpool_golden<int32_t, H2, W2, C2, 2>(enc2, pool2);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S3, D1, 3, true>(stem3, params.double1_conv1, act, act, act_max, double1_first);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D1, D1, 3, true>(double1_first, params.double1_conv2, act, act, act_max, skip);
+    maxpool_golden<int32_t, HEIGHT, WIDTH, D1>(skip, pooled1);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D1, D2, 3, true>(pooled1, params.double2_conv1, act, act, act_max, double2_first);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(double2_first, params.double2_conv2, act, act, act_max, double2);
+    maxpool_golden<int32_t, HALF_H, HALF_W, D2>(double2, pooled2);
 
-    nearest_neighbor_golden<int32_t, H4, W4, C2, 2>(pool2, up1_in);
-    conv2d_same_fixed_golden<H2, W2, C2, C2, 3, true>(up1_in, p.up1, a, a, act_max, up1);
-    conv2d_same_fixed_golden<H2, W2, C2, C3, 3, true>(up1, p.d3a, a, a, act_max, d3);
-    conv2d_same_fixed_golden<H2, W2, C3, C3, 3, true>(d3, p.d3b, a, a, act_max, dec3);
-    nearest_neighbor_golden<int32_t, H2, W2, C3, 2>(dec3, up2_in);
-    conv2d_same_fixed_golden<H, W, C3, C3, 3, true>(up2_in, p.up2, a, a, act_max, up2);
+    upsample_golden<int32_t, QUARTER_H, QUARTER_W, D2>(pooled2, up1_input);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(up1_input, params.up1, act, act, act_max, up1);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D3, 3, true>(up1, params.double3_conv1, act, act, act_max, double3_first);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D3, D3, 3, true>(double3_first, params.double3_conv2, act, act, act_max, double3);
+    upsample_golden<int32_t, HALF_H, HALF_W, D3>(double3, up2_input);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3, D3, 3, true>(up2_input, params.up2, act, act, act_max, up2);
 
-    concat_golden<int32_t, H, W, C3, C1>(up2, skip, cat);
-    conv2d_same_fixed_golden<H, W, C3 + C1, C4, 3, true>(cat, p.d4a, a, a, act_max, d4);
-    conv2d_same_fixed_golden<H, W, C4, C4, 3, true>(d4, p.d4b, a, a, act_max, dec4);
-    conv2d_same_fixed_golden<H, W, C4, N_CLS, 1, false>(dec4, p.fin, a, out_frac, act_max, dout);
+    concat_golden<int32_t, HEIGHT, WIDTH, D3, D1>(up2, skip, joined);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3 + D1, D4, 3, true>(joined, params.double4_conv1, act, act, act_max, double4_first);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, D4, 3, true>(double4_first, params.double4_conv2, act, act, act_max, double4);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, CLASSES, 1, false>(double4, params.final_conv, act, out_frac, act_max, dout);
 }

@@ -5,72 +5,35 @@
 #include "../../common/hls_vector_shim.hpp"
 #include "../../common/hls_burst_maxi_shim.hpp"
 
-// The direct SpecPW-UNet kernels (sp_unet_SIZE_opt_direct, read
-// src/hls/sp_unet_small_opt_direct/sp_unet_direct_dataflow.hpp first) sized for
-// the Zynq-7020 (the PYNQ-Z2; build with --board zynq7020): sp_unet_small_opt_direct_zynq7020,
-// _medium_ and _large_. The same model, the same integer arithmetic, the same
-// answers bit for bit, the same raw cube in and scores out; what changes is
-// what fits on the chip (boards/README.md): 220 DSP48E1 (these use at most 205),
-// 53 k LUTs, 140 BRAM36, no UltraRAM, 64-bit HP ports.
-//
-//   read_rows_ahead (HP0) ─► pixel_buffer ─► convsp1 ─► convsp2 ─► convsp3 ─►
-//   double1 (conv, conv) ─► pool + skip ─┬──► skip FIFO (BRAM) ──────────────────┐
-//   double2 (conv, conv) ─► pool + up ───┘                                      │
-//   up1 (conv) ─► double3 (conv, conv) ─► up ─► up2 (conv) ─► cat ◄─────────────┘
-//   ─► double4 (conv, conv) ─► final 1x1 ─► store (HP1)      every conv with its ReLU
-//
-// - Every multiplier counts: a conv takes one tap or one column of its 3x3
-//   window a step (conv3x3_lines' KT = 1 or 3), so its size goes in steps of 1-3
-//   DSPs, not 9;
-//   convsp1 packs two multiplies per DSP48E1 (16 bits apart, groups of 2) and
-//   goes over its output pairs in passes (zynq7020/pointwise_wide.hpp);
-//   convsp2/3 and the final layer have time to spare, and take PI inputs a
-//   step on 1-4 DSPs (the .cpp's table).
-// - LUTs and flip-flops are the scarce part (the first small build needed 66 k
-//   LUTs of 53 k; the 3x3 windows in registers would take 45 k of the 106 k
-//   flip-flops on medium, 60 k on large): every conv keeps its window in three
-//   row memories (conv3x3_lines) and sends ReLU'd int16 activations itself, rounded as
-//   each output group finishes (conv3x3_grouped's RELU_SHIFT: PO rounding units,
-//   not OUT), so no 32-bit sums cross a FIFO and the pooling only takes maxima;
-//   convsp2/3, the final layer and the z-score on a few DSPs (pointwise's PI), not
-//   dozens of LUT multipliers; convsp1 rounds a pass's pairs at a time; one read port (the DSPs, not the
-//   reads, set the pace: 30 720 cycles a patch of reads against T of 76 000 or
-//   more); the FIFOs between the processes 2 deep: 16, as on the ZCU104, would
-//   save 7 % of the time (a conv's short wait freezes the next), but the LUTs
-//   are not there.
-// - No UltraRAM: the skip connection waits in block RAM.
-//
-// din0: the raw cube, [height][width][120] uint16. A pixel is 30 words of 4
-// bands; words 0-1 (raw 0-7) are dropped, words 2-29 are the kept bands (raw
-// 8-117) and raw 118-119, which the z-score zeroes.
-// dout: [height][width][4] int32, as the ZCU104 kernels': the 3 scores (score *
-// 2^OUT_FRAC), then the class (0 cloud, 1 land, 2 sea).
-// cycles: an output register, the kernel's time in clock cycles (count_cycles.hpp).
+// The direct SpecPW-UNet kernels sized for the Zynq-7020 (--board zynq7020 or
+// zedboard), at most 205 of its 220 DSPs. LUTs and flip-flops are the scarce
+// part, so every conv keeps its window in three row memories (conv3x3_lines)
+// and sends ReLU'd activations itself; the stem's later layers take a few
+// inputs a step on a few DSPs; one read port; the FIFOs between the processes
+// 2 deep (16 would save 7 % of the time, but the LUTs are not there); the skip
+// in block RAM. Only small fits; see optimizations_implemented/sp_unet.md.
 
-// The kernels' sizes and formats, used as they are by the .cpp and the
-// testbench (the same names as sp_unet_opt.hpp's, other ports and words).
-constexpr int H = 32, W = 32;    // patch size
-constexpr int RAW_BANDS = 120;   // bands in the cube
-constexpr int IN_CH = 110;       // bands the model uses: raw 8-117
+constexpr int PATCH_SIZE = 32;
+constexpr int CUBE_BANDS = 120;
+constexpr int MODEL_BANDS = 110;                // raw bands 8-117
 constexpr int CLASSES = 3;
-constexpr int PORTS = 1;         // read ports
-constexpr int PORT_BANDS = 4;    // bands per 64-bit word
+constexpr int READ_PORTS = 1;
+constexpr int BANDS_PER_WORD = 4;               // one 64-bit word
 
-constexpr int IN_FRAC = 5;       // the z-scores: x * 2^5 (int8: -3.97 .. +3.97)
-constexpr int ACT_FRAC = 10;     // activations (int16: 0 .. 32.0)
-constexpr int OUT_FRAC = 16;     // dout = score * 2^16
+constexpr int ZSCORE_FRAC_BITS = 5;             // fraction bits of the int8 z-scores
+constexpr int ACTIVATION_FRAC_BITS = 10;        // ... of the int16 activations
+constexpr int SCORE_FRAC_BITS = 16;             // ... of the scores
 
-// One word of the cube: 4 bands of a pixel, 64 bits.
-typedef hls::vector<uint16_t, PORT_BANDS> spu_raw_t;
-// One pixel of dout: 3 scores and the class, 128 bits.
-typedef hls::vector<int32_t, 4> spu_out_t;
+typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
+typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
 
-// A conv layer's size in a kernel's table: PI input x PO output channels x KT
-// taps of the 3x3 window a cycle (1, or a column of 3), its multipliers in DSPs or in LUTs.
-template<int PI_, int PO_, int KT_, bool DSP_>
-struct spu7_layer {
-    static constexpr int PI = PI_, PO = PO_, KT = KT_;
+// A conv's size in a kernel's table: input and output channels and taps of the
+// window a cycle (1, or a column of 3), and whether its multipliers are DSPs.
+template<int IN_PER_CYCLE_, int OUT_PER_CYCLE_, int TAPS_PER_STEP_, bool DSP_>
+struct lines_layer_size {
+    static constexpr int IN_PER_CYCLE = IN_PER_CYCLE_, OUT_PER_CYCLE = OUT_PER_CYCLE_;
+    static constexpr int TAPS_PER_STEP = TAPS_PER_STEP_;
     static constexpr bool DSP = DSP_;
 };
 
-#endif // SP_UNET_OPT_ZYNQ7020_HLS_HPP
+#endif

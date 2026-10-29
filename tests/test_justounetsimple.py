@@ -246,8 +246,8 @@ class JustoUNetSimpleTests(unittest.TestCase):
         source.write_text("""
 #include "justounetsimple.hpp"
 #include <cstdio>
-static float din[JUNETS_H][JUNETS_W][JUNETS_IN_CH];
-static float dout[JUNETS_H][JUNETS_W][JUNETS_OUT_CH];
+static float din[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_BANDS];
+static float dout[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_CLASSES];
 int main(int, char** argv) {
     FILE* f = fopen(argv[1], "rb"); if (fread(din, sizeof din, 1, f) != 1) return 1; fclose(f);
     justounetsimple(din, dout);
@@ -313,14 +313,14 @@ int main(int, char** argv) {
 #include <vector>
 int main(int, char** argv) {{
     const int h = atoi(argv[3]), w = atoi(argv[4]);
-    std::vector<jopt_raw_t> din(h * w * RAW_BANDS / PORT_BANDS);
-    std::vector<jopt_out_t> dout(h * w);
+    std::vector<cube_word_t> din(h * w * CUBE_BANDS / BANDS_PER_WORD);
+    std::vector<score_word_t> dout(h * w);
     FILE* f = fopen(argv[1], "rb");
-    if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
+    if (fread(din.data(), sizeof(cube_word_t), din.size(), f) != din.size()) return 1;
     fclose(f);
-    jopt_raw_t *d = din.data();   // hls::burst_maxi takes a plain pointer
+    cube_word_t *d = din.data();   // hls::burst_maxi takes a plain pointer
     {call};
-    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jopt_out_t), dout.size(), f); fclose(f);
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(score_word_t), dout.size(), f); fclose(f);
 }}
 """)
                 exe = self.dir / f'run_{name}.exe'
@@ -380,8 +380,8 @@ void reg_write(struct board *, unsigned offset, uint32_t value) {
     const int dins[] = REG_DINS;                // every port must read the same cube
     const int h = regs[REG_HEIGHT / 4], w = regs[REG_WIDTH / 4];
     if (regs[dins[0] / 4] != regs[dins[1] / 4]) exit(4);
-    jopt_raw_t *d = (jopt_raw_t *)at(dins[0], (size_t)h * w * RAW_BANDS * 2);
-    jopt_out_t *out = (jopt_out_t *)at(REG_DOUT, (size_t)h * w * sizeof(jopt_out_t));
+    cube_word_t *d = (cube_word_t *)at(dins[0], (size_t)h * w * CUBE_BANDS * 2);
+    score_word_t *out = (score_word_t *)at(REG_DOUT, (size_t)h * w * sizeof(score_word_t));
     justounetsimple_opt_zynq7020(d, d, out, h, w);
     regs[REG_AP_CTRL / 4] = 4 | 2;              // done, idle
     fprintf(stderr, "fake board: a start, %d x %d\n", h, w);
@@ -501,12 +501,13 @@ uint32_t reg_read(struct board *, unsigned offset) {
         setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
         ns = {}
         exec(re.search(r'^BANDS, OUT_FRAC, LANES = .*$', setup, re.M).group(0), ns)
-        self.assertEqual(ns['BANDS'], define('RAW_BANDS'))
-        self.assertEqual(ns['OUT_FRAC'], define('OUT_FRAC'))
-        self.assertEqual(ns['LANES'], 4, 'jopt_out_t: 3 scores and the class')
-        self.assertIn('hls::vector<int32_t, 4> jopt_out_t', header)
-        for name in ('IN_FRAC', 'ACT_FRAC', 'OUT_FRAC'):
-            self.assertEqual(getattr(self.model, name), define(name), name)
+        self.assertEqual(ns['BANDS'], define('CUBE_BANDS'))
+        self.assertEqual(ns['OUT_FRAC'], define('SCORE_FRAC_BITS'))
+        self.assertEqual(ns['LANES'], 4, 'score_word_t: 3 scores and the class')
+        self.assertIn('hls::vector<int32_t, 4> score_word_t', header)
+        for model_name, kernel_name in (('IN_FRAC', 'ZSCORE_FRAC_BITS'), ('ACT_FRAC', 'ACTIVATION_FRAC_BITS'),
+                                        ('OUT_FRAC', 'SCORE_FRAC_BITS')):
+            self.assertEqual(getattr(self.model, model_name), define(kernel_name), kernel_name)
 
     def run_opt(self, h, w, broken=False, max_bytes=None):
         board = self.prepare(h, w, ('xjustounetsimple_opt_hw.h', OPT_HEADER), counts=True)

@@ -2,23 +2,16 @@
 
 #include <cmath>
 
-// PyTorch's BatchNorm1d in inference mode over a [position][channel] spectrum
-// (see conv1d_golden.hpp): per channel, (x - running_mean) / sqrt(running_var +
-// eps) * weight + bias, with the stored running statistics. weight is gamma,
-// bias is beta, all length CH as in the state_dict. eps is an argument
-// (PyTorch's default is 1e-5). The quantized networks have no BatchNorm: it is
-// folded into the conv before it (tools/quantize_weights.py); this module is
-// for the float reference of the trained model.
-template<typename data_t, int L, int CH>
-void batchnorm1d_golden(const data_t din[L][CH],
-                        const data_t weight[CH], const data_t bias[CH],
-                        const data_t running_mean[CH], const data_t running_var[CH],
+// BatchNorm1d in inference mode, on a [position][channel] spectrum.
+template<typename data_t, int LENGTH, int CHANNELS>
+void batchnorm1d_golden(const data_t din[LENGTH][CHANNELS],
+                        const data_t weight[CHANNELS], const data_t bias[CHANNELS],
+                        const data_t running_mean[CHANNELS], const data_t running_var[CHANNELS],
                         data_t eps,
-                        data_t dout[L][CH]) {
-    for (int j = 0; j < L; j++) {
-        for (int c = 0; c < CH; c++) {
-            const data_t normalized = (din[j][c] - running_mean[c]) / std::sqrt(running_var[c] + eps);
-            dout[j][c] = weight[c] * normalized + bias[c];
+                        data_t dout[LENGTH][CHANNELS]) {
+    for (int pos = 0; pos < LENGTH; pos++)
+        for (int ch = 0; ch < CHANNELS; ch++) {
+            const data_t normalized = (din[pos][ch] - running_mean[ch]) / std::sqrt(running_var[ch] + eps);
+            dout[pos][ch] = weight[ch] * normalized + bias[ch];
         }
-    }
 }

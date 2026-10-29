@@ -7,7 +7,7 @@
 namespace q = justoliunet_bn_int8;
 namespace fmt = justoliunet_bn_formats;
 
-static void run_kernel(jl_raw_t *din, jl_out_t *dout, int height, int width, uint32_t& cycles) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width, uint32_t& cycles) {
     // Both ports read the cube; hls::burst_maxi takes a plain (not const) pointer.
     justoliunet_bn_opt(din, din, dout, height, width, cycles);
 }

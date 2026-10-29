@@ -3,50 +3,44 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// relu_pool_skip: relu_pool (ReLU, 2x2 max-pool, H x W -> H/2 x W/2 per patch)
-// that also sends every activation on to skip, as it is: a U-Net encoder
-// block's output, both to the next block and to the skip connection. In: a
-// conv layer's sums with S fraction bits, all channels of a pixel, raster
-// order; out: activations with S - SHIFT, the same order. The image is cut
-// into PH x PW patches (patch_grid.hpp); H x W is the layer's size of a patch.
-// The input can also be activations a conv already ReLU'd and rounded
-// (conv3x3_grouped's RELU_SHIFT): then SHIFT is 0 and this only moves them
-// (relu_in, fixed_point.hpp).
-template<int H, int W, int SHIFT, int CH, typename IN_T>
-void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
-                          hls::stream<vec_t<act_t, CH> >& out) {
-    act_t row[W / 2][CH];   // the even row's pairs, pooled
-    #pragma HLS ARRAY_PARTITION variable=row type=complete dim=2
-    act_t left[CH];         // the even column's value
+// relu_pool that also sends every activation to skip: a U-Net encoder block's
+// output goes both to the next block and to the skip connection. Activations
+// a conv already ReLU'd pass as they are (SHIFT 0, see relu_in).
+template<int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& skip,
+                          hls::stream<vec_t<act_t, CHANNELS> >& out) {
+    act_t even_row[MAP_WIDTH / 2][CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=even_row type=complete dim=2
+    act_t left[CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=left type=complete
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
+    for (int y = 0; y < MAP_HEIGHT; y++)
+        for (int x = 0; x < MAP_WIDTH; x++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS DEPENDENCE variable=row type=inter false
-            const vec_t<IN_T, CH> v = in.read();
-            vec_t<act_t, CH> a, o;
-            for (int ch = 0; ch < CH; ch++) {
+            #pragma HLS DEPENDENCE variable=even_row type=inter false
+            const vec_t<IN_T, CHANNELS> value = in.read();
+            vec_t<act_t, CHANNELS> activations, pooled;
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                a.v[ch] = relu_in<SHIFT>(v.v[ch]);
+                activations.v[ch] = relu_in<SHIFT>(value.v[ch]);
                 if (x % 2 == 0) {
-                    left[ch] = a.v[ch];
+                    left[ch] = activations.v[ch];
                 } else {
-                    const act_t m = max2(left[ch], a.v[ch]);
-                    if (y % 2 == 0) row[x / 2][ch] = m;
-                    else o.v[ch] = max2(row[x / 2][ch], m);
+                    const act_t pair = max2(left[ch], activations.v[ch]);
+                    if (y % 2 == 0) even_row[x / 2][ch] = pair;
+                    else pooled.v[ch] = max2(even_row[x / 2][ch], pair);
                 }
             }
-            skip.write(a);
-            if (y % 2 == 1 && x % 2 == 1) out.write(o);
+            skip.write(activations);
+            if (y % 2 == 1 && x % 2 == 1) out.write(pooled);
         }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH, typename IN_T>
-void relu_pool_skip(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& skip,
-                    hls::stream<vec_t<act_t, CH> >& out, int height, int width) {
-    const int n = patch_count<PH, PW>(height, width);
-    patches: for (int k = 0; k < n; k++) {
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+void relu_pool_skip(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& skip,
+                    hls::stream<vec_t<act_t, CHANNELS> >& out, int height, int width) {
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+    patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        relu_pool_skip_patch<H, W, SHIFT>(in, skip, out);
+        relu_pool_skip_patch<MAP_HEIGHT, MAP_WIDTH, SHIFT>(in, skip, out);
     }
 }

@@ -2,165 +2,120 @@
 
 #include "fixed_point.hpp"
 
-// The convolution engine of the streaming CNN kernels, on one image (a patch).
-// The golden/ templates say *what* is computed; this says *how fast*: it reads
-// its input from an hls::stream in the order it consumes it, keeps only two
-// lines of it on chip, and does many multiply-adds per clock cycle. The layer
-// modules (conv3x3_narrow, the boards' conv3x3_wide) run it once per patch.
-
-// Copy one conv layer's weights from ROM into a local array, and its biases
-// shifted left to the scale of the sums (BIAS_SHIFT = the sums' fraction bits
-// minus the bias's; a constant, so the shift is no multiplier). The caller
-// partitions wl/bl as conv3x3_stream needs.
-// IN_PAD > IN_CH pads the input channels with zero weights, so a layer can take
-// IN_PAD channels at P per cycle when P does not divide IN_CH.
-template<int OUT_CH, int IN_CH, int BIAS_SHIFT, int IN_PAD = IN_CH>
-void load_conv_weights(const wgt_t w[OUT_CH][IN_CH][3][3], const wgt_t b[OUT_CH],
-                       wgt_t wl[OUT_CH][IN_PAD][3][3], acc_t bl[OUT_CH]) {
-    static_assert(IN_PAD >= IN_CH, "IN_PAD must be at least IN_CH");
-    load_w: for (int oc = 0; oc < OUT_CH; oc++)
-        for (int ic = 0; ic < IN_PAD; ic++)
-            for (int ki = 0; ki < 3; ki++)
-                for (int kj = 0; kj < 3; kj++) {
+// Copies a conv's weights from ROM into a local array the caller partitions, and
+// its biases shifted up to the sums' fraction bits.
+template<int OUT_CHANNELS, int IN_CHANNELS, int BIAS_SHIFT>
+void load_conv_weights(const wgt_t weight[OUT_CHANNELS][IN_CHANNELS][3][3], const wgt_t bias[OUT_CHANNELS],
+                       wgt_t local_weight[OUT_CHANNELS][IN_CHANNELS][3][3], acc_t local_bias[OUT_CHANNELS]) {
+    load_w: for (int out = 0; out < OUT_CHANNELS; out++)
+        for (int in = 0; in < IN_CHANNELS; in++)
+            for (int ky = 0; ky < 3; ky++)
+                for (int kx = 0; kx < 3; kx++) {
                     #pragma HLS PIPELINE II=1
-                    const int src = ic < IN_CH ? ic : IN_CH - 1;   // never read past w
-                    wl[oc][ic][ki][kj] = ic < IN_CH ? w[oc][src][ki][kj] : (wgt_t)0;
+                    local_weight[out][in][ky][kx] = weight[out][in][ky][kx];
                 }
-    load_b: for (int oc = 0; oc < OUT_CH; oc++) {
+    load_b: for (int out = 0; out < OUT_CHANNELS; out++) {
         #pragma HLS PIPELINE II=1
-        bl[oc] = (acc_t)b[oc] * ((acc_t)1 << BIAS_SHIFT);
+        local_bias[out] = (acc_t)bias[out] * ((acc_t)1 << BIAS_SHIFT);
     }
 }
 
-// Same-padded (zero) 3x3 convolution of one H x W image, streamed. Out: for
-// every pixel, raster order, the OUT_CH sums bias + sum(act * q), unscaled.
+// A same-padded 3x3 conv of one map, streamed: every input channel of a pixel
+// in, raster order; every pixel's sums out, the same order. Two lines of input
+// are kept on chip, the window in registers.
 //
-// Input order: P channels at a time, plane by plane -- for each chunk c of P
-// channels, every pixel in raster order (IN_CH/P * H * W vectors). With
-// P = IN_CH that is simply one vector per pixel in raster order. A pixel's sums
-// are complete in the last chunk, so they leave then, one pixel per step;
-// earlier chunks' partial sums wait in acc.
-//
-// The 3x3 window's centre trails the input by one row and one pixel (W + 1
-// vectors) all the way through, across row and chunk boundaries: the taps
-// that fall outside the image are zeroed by the centre's position, not by
-// feeding zeros in. So the loop runs IN_CH/P * H * W + W + 1 steps -- the
-// only padding steps are the last W + 1, once per image.
-//
-// STEPS spreads the output channels over STEPS cycles per pixel: each cycle
-// does OUT_CH/STEPS x P x 9 multiply-adds, so a layer with time to spare uses
-// fewer multipliers. The weights of the other channels wait in small memories
-// (wl partitioned complete in dims 2-4, not in dim 1, when STEPS > 1). With
-// STEPS = 1 the caller partitions wl complete in dims 1, 3, 4 and cyclic by P
-// in dim 2.
-//
-// DSP: the multipliers in DSPs, or in LUTs (mul, fixed_point.hpp). A_T, the
-// activations' type, comes from the input stream: act_t, or act8_t for a
-// first layer.
-template<int H, int W, int IN_CH, int OUT_CH, int P, int STEPS, bool DSP, typename A_T>
-void conv3x3_stream(hls::stream<vec_t<A_T, P> >& in,
-                    const wgt_t wl[OUT_CH][IN_CH][3][3], const acc_t bl[OUT_CH],
-                    hls::stream<vec_t<acc_t, OUT_CH> >& out) {
-    static_assert(IN_CH % P == 0, "IN_CH must be a multiple of P");
-    static_assert(OUT_CH % STEPS == 0, "OUT_CH must be a multiple of STEPS");
-    constexpr int CHUNKS = IN_CH / P, PER_STEP = OUT_CH / STEPS;
-    constexpr int VECTORS = CHUNKS * H * W, LAG = W + 1;
+// The window's centre trails the input by a row and a pixel, so the loop runs
+// W + 1 steps past the last input. Taps outside the map are zeroed by the
+// centre's position. STEPS spreads the output channels over STEPS cycles a
+// pixel, so a layer with time to spare uses fewer multipliers.
+template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int STEPS, bool DSP, typename A_T>
+void conv3x3_stream(hls::stream<vec_t<A_T, IN_CHANNELS> >& in,
+                    const wgt_t weight[OUT_CHANNELS][IN_CHANNELS][3][3], const acc_t bias[OUT_CHANNELS],
+                    hls::stream<vec_t<acc_t, OUT_CHANNELS> >& out) {
+    constexpr int OUT_PER_STEP = OUT_CHANNELS / STEPS;
+    constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
 
-    // Partial sums between chunks (not needed, and 1 x 1, with one chunk).
-    acc_t acc[CHUNKS > 1 ? H : 1][CHUNKS > 1 ? W : 1][OUT_CH];
-    #pragma HLS ARRAY_PARTITION variable=acc type=complete dim=3
-    A_T lb[2][W][P];         // the two previous input lines
-    #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=lb type=complete dim=3
-    A_T win[3][3][P];        // the 3x3 window, in registers
-    #pragma HLS ARRAY_PARTITION variable=win type=complete dim=0
-    acc_t pix[OUT_CH];       // the finished sums of one pixel, filled over STEPS
-    #pragma HLS ARRAY_PARTITION variable=pix type=complete
+    A_T lines[2][MAP_WIDTH][IN_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=3
+    A_T window[3][3][IN_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=window type=complete dim=0
+    acc_t sums[OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=sums type=complete
 
-    int s = 0;                  // column of the next input vector
-    int co = 0, y = 0, x = 0;   // chunk and position of the window's centre
-    int step = 0, g = 0;        // g: input steps so far, the last W + 1 without input
+    int in_col = 0;
+    int y = 0, x = 0;               // the window's centre
+    int step = 0, inputs = 0;       // inputs: input steps so far, the last W + 1 without input
 
-    conv: for (int t = 0; t < (VECTORS + LAG) * STEPS; t++) {
+    conv: for (int t = 0; t < (PIXELS + LAG) * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        // acc[y][x] is written once per chunk and read H*W steps later; a line
-        // buffer column, W steps later.
-        #pragma HLS DEPENDENCE variable=acc type=inter false
-        #pragma HLS DEPENDENCE variable=lb type=inter false
-        // Spelled out so that with one chunk or one step they are constants
-        // (HLS cannot prove that co or step never leave 0).
+        #pragma HLS DEPENDENCE variable=lines type=inter false
+        // Spelled out so that with one step they are constants.
         const bool first_step = STEPS == 1 || step == 0;
         const bool last_step = STEPS == 1 || step == STEPS - 1;
-        const bool first_chunk = CHUNKS == 1 || co == 0;
-        const bool last_chunk = CHUNKS == 1 || co == CHUNKS - 1;
-        const int chunk = CHUNKS == 1 ? 0 : co;      // the centre's chunk: its weights
-        const int oc0 = STEPS == 1 ? 0 : step * PER_STEP;
+        const int first_out = STEPS == 1 ? 0 : step * OUT_PER_STEP;
 
         if (first_step) {
-            // A new window column: input rows r-2, r-1, r at column s.
-            const bool have = g < VECTORS;
-            vec_t<A_T, P> v;
-            if (have) v = in.read();
-            for (int p = 0; p < P; p++) {
+            // A new window column: rows r - 2, r - 1, r at column in_col.
+            const bool have = inputs < PIXELS;
+            vec_t<A_T, IN_CHANNELS> pixel;
+            if (have) pixel = in.read();
+            for (int ch = 0; ch < IN_CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                const A_T up2 = lb[0][s][p], up1 = lb[1][s][p];
-                const A_T now = have ? v.v[p] : (A_T)0;
-                lb[0][s][p] = up1;
-                lb[1][s][p] = now;
-                for (int ki = 0; ki < 3; ki++) {
+                const A_T two_up = lines[0][in_col][ch], one_up = lines[1][in_col][ch];
+                const A_T now = have ? pixel.v[ch] : (A_T)0;
+                lines[0][in_col][ch] = one_up;
+                lines[1][in_col][ch] = now;
+                for (int ky = 0; ky < 3; ky++) {
                     #pragma HLS UNROLL
-                    win[ki][0][p] = win[ki][1][p];
-                    win[ki][1][p] = win[ki][2][p];
+                    window[ky][0][ch] = window[ky][1][ch];
+                    window[ky][1][ch] = window[ky][2][ch];
                 }
-                win[0][2][p] = up2;
-                win[1][2][p] = up1;
-                win[2][2][p] = now;
+                window[0][2][ch] = two_up;
+                window[1][2][ch] = one_up;
+                window[2][2][ch] = now;
             }
-            s = (s == W - 1) ? 0 : s + 1;
+            in_col = (in_col == MAP_WIDTH - 1) ? 0 : in_col + 1;
         }
 
-        if (g >= LAG) {
-            // The window is centred on (y, x) of chunk co. Taps outside the
-            // image hold other rows' or chunks' values: they count as zero.
-            const bool row_ok[3] = {y > 0, true, y < H - 1};
-            const bool col_ok[3] = {x > 0, true, x < W - 1};
-            for (int j = 0; j < PER_STEP; j++) {
+        if (inputs >= LAG) {
+            const bool row_inside[3] = {y > 0, true, y < MAP_HEIGHT - 1};
+            const bool col_inside[3] = {x > 0, true, x < MAP_WIDTH - 1};
+            for (int j = 0; j < OUT_PER_STEP; j++) {
                 #pragma HLS UNROLL
-                const int oc = oc0 + j;
+                const int o = first_out + j;
                 acc_t sum = 0;
-                for (int p = 0; p < P; p++) {
+                for (int ch = 0; ch < IN_CHANNELS; ch++) {
                     #pragma HLS UNROLL
-                    for (int ki = 0; ki < 3; ki++) {
+                    for (int ky = 0; ky < 3; ky++) {
                         #pragma HLS UNROLL
-                        for (int kj = 0; kj < 3; kj++) {
+                        for (int kx = 0; kx < 3; kx++) {
                             #pragma HLS UNROLL
-                            const A_T a = (row_ok[ki] && col_ok[kj]) ? win[ki][kj][p] : (A_T)0;
-                            sum += mul<DSP, acc_t>(a, wl[oc][chunk * P + p][ki][kj]);
+                            const A_T a = (row_inside[ky] && col_inside[kx]) ? window[ky][kx][ch] : (A_T)0;
+                            sum += mul<DSP, acc_t>(a, weight[o][ch][ky][kx]);
                         }
                     }
                 }
-                const acc_t total = (first_chunk ? bl[oc] : acc[y][x][oc]) + sum;
-                if (last_chunk) pix[oc] = total;
-                else acc[y][x][oc] = total;
+                sums[o] = bias[o] + sum;
             }
-            if (last_chunk && last_step) {
-                vec_t<acc_t, OUT_CH> o;
-                for (int oc = 0; oc < OUT_CH; oc++) {
+            if (last_step) {
+                vec_t<acc_t, OUT_CHANNELS> pixel_sums;
+                for (int o = 0; o < OUT_CHANNELS; o++) {
                     #pragma HLS UNROLL
-                    o.v[oc] = pix[oc];
+                    pixel_sums.v[o] = sums[o];
                 }
-                out.write(o);
+                out.write(pixel_sums);
             }
         }
 
         if (last_step) {
             step = 0;
-            if (g >= LAG) {
-                if (x < W - 1) x++;
-                else if (y < H - 1) { x = 0; y++; }
-                else { x = 0; y = 0; co++; }
+            if (inputs >= LAG) {
+                if (x < MAP_WIDTH - 1) x++;
+                else if (y < MAP_HEIGHT - 1) { x = 0; y++; }
+                else { x = 0; y = 0; }
             }
-            g++;
+            inputs++;
         } else {
             step++;
         }

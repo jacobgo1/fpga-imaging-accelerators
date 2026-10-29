@@ -3,14 +3,11 @@
 
 #include "../sp_unet_small_opt_direct_zynq7020/sp_unet_opt_zynq7020.hpp"
 
-// Does NOT fit the Zynq-7020 (csynth 2026-10-28: too many LUTs, and on large block
-// RAM): bit-exact in C++, kept as a starting point; see optimizations_implemented/
-// sp_unet.md, "Medium and large do not fit the 7020". Only small is built for the 7020.
-//
-// The direct SpecPW-UNet, large, on the Zynq-7020 (--board zynq7020): the design
-// is in sp_unet_small_opt_direct_zynq7020/sp_unet_opt_zynq7020.hpp, its sizes in
-// sp_unet_large_opt_direct_zynq7020.cpp. The same answers as sp_unet_large_opt_direct.
-void sp_unet_large_opt_direct_zynq7020(hls::burst_maxi<spu_raw_t> din0, hls::burst_maxi<spu_out_t> dout,
-                                       int height, int width, uint32_t& cycles);
+// SpecPW-UNet large, direct convs, on the Zynq-7020: the chain is sp_unet_direct_zynq7020_dataflow.hpp,
+// the sizes in the .cpp.
+// It does not fit the 7020 (too many LUTs); kept as a starting point, see optimizations_implemented/sp_unet.md.
+// The argument names become the kernel's register names: keep them.
+void sp_unet_large_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
+                                      int height, int width, uint32_t& cycles);
 
-#endif // SP_UNET_LARGE_OPT_DIRECT_ZYNQ7020_HLS_HPP
+#endif

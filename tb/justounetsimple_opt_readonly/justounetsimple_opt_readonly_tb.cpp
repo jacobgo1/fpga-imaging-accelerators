@@ -1,67 +1,66 @@
-// justounetsimple_opt_readonly_tb.cpp  --  testbench for the read-only kernel.
-// Random raw cubes of a few sizes, the edge patches partly outside the image:
-// the checksum must be every band of every pixel of every 32 x 32 patch, the
-// bottom row and right column repeated as read_rows does, added up the plain
-// way (lane = band % 8, mod 2^16). The kernel writes one word: the next must
-// be untouched. A reader that skipped, repeated or swapped rows, or a drain
-// that took too few or too many words, fails here (or hangs in a stream read).
+// Testbench of the read-only kernel: the checksum must be every band of every pixel
+// of every patch, the bottom row and right column repeated as the readers do, and
+// the kernel must write nothing past it.
 #include "justounetsimple_opt_readonly.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <random>
 #include <vector>
 
-constexpr int LANES = PORT_BANDS;     // the checksum's uint16 lanes
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
 
-static void reference(const std::vector<jopt_raw_t>& cube, int h, int w, uint16_t sum[LANES]) {
-    const int words = RAW_BANDS / PORT_BANDS;
-    for (int b = 0; b < LANES; b++) sum[b] = 0;
-    for (int y = 0; y < (h + H - 1) / H * H; y++)
-        for (int x = 0; x < (w + W - 1) / W * W; x++) {
-            const int yy = y < h ? y : h - 1, xx = x < w ? x : w - 1;
-            for (int k = 0; k < words; k++)
-                for (int b = 0; b < LANES; b++)
-                    sum[b] = (uint16_t)(sum[b] + cube[(yy * w + xx) * words + k][b]);
+static void expected_checksum(const std::vector<cube_word_t>& cube, int height, int width,
+                              uint16_t band_sums[BANDS_PER_WORD]) {
+    for (int band = 0; band < BANDS_PER_WORD; band++) band_sums[band] = 0;
+    const int padded_height = (height + PATCH_SIZE - 1) / PATCH_SIZE * PATCH_SIZE;
+    const int padded_width = (width + PATCH_SIZE - 1) / PATCH_SIZE * PATCH_SIZE;
+    for (int y = 0; y < padded_height; y++)
+        for (int x = 0; x < padded_width; x++) {
+            const int pixel = std::min(y, height - 1) * width + std::min(x, width - 1);
+            for (int word = 0; word < WORDS_PER_PIXEL; word++)
+                for (int band = 0; band < BANDS_PER_WORD; band++)
+                    band_sums[band] += cube[pixel * WORDS_PER_PIXEL + word][band];
         }
 }
 
-static bool check(int h, int w, unsigned seed) {
+static bool check(int height, int width, unsigned seed) {
     std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> value(0, 65535);
-    std::vector<jopt_raw_t> cube(h * w * RAW_BANDS / PORT_BANDS);
+    std::uniform_int_distribution<int> random_value(0, 65535);
+    std::vector<cube_word_t> cube(height * width * WORDS_PER_PIXEL);
     for (auto& word : cube)
-        for (int b = 0; b < PORT_BANDS; b++) word[b] = (uint16_t)value(rng);
-    const int32_t SENTINEL = 0x5a5a5a5a;
-    std::vector<jopt_out_t> dout(2);
+        for (int band = 0; band < BANDS_PER_WORD; band++) word[band] = (uint16_t)random_value(rng);
+
+    const int32_t UNTOUCHED = 0x5a5a5a5a;
+    std::vector<score_word_t> dout(2);
     for (auto& word : dout)
-        for (int i = 0; i < 4; i++) word[i] = SENTINEL;
+        for (int i = 0; i < 4; i++) word[i] = UNTOUCHED;
 
-    jopt_raw_t *d = cube.data();   // all four ports read the cube; hls::burst_maxi takes a plain pointer
-    uint32_t cycles = 0;           // counts only in the RTL (cosim): 0 in C simulation
-    justounetsimple_opt_readonly(d, d, d, d, dout.data(), h, w, cycles);
+    cube_word_t *d = cube.data();
+    uint32_t cycles = 0;   // only counts in co-simulation
+    justounetsimple_opt_readonly(d, d, d, d, dout.data(), height, width, cycles);
 
-    uint16_t want[LANES];
-    reference(cube, h, w, want);
+    uint16_t want[BANDS_PER_WORD];
+    expected_checksum(cube, height, width, want);
     bool ok = true;
-    for (int b = 0; b < LANES; b++) {
-        const uint16_t got = (uint16_t)((uint32_t)dout[0][b / 2] >> (16 * (b % 2)));
-        if (got != want[b]) {
-            std::printf("  %d x %d: lane %d is %u, expected %u\n", h, w, b, got, want[b]);
+    for (int band = 0; band < BANDS_PER_WORD; band++) {
+        const uint16_t got = (uint16_t)((uint32_t)dout[0][band / 2] >> (16 * (band % 2)));
+        if (got != want[band]) {
+            std::printf("  %d x %d: band %d sums to %u, expected %u\n", height, width, band, got, want[band]);
             ok = false;
         }
     }
     for (int i = 0; i < 4; i++)
-        if (dout[1][i] != SENTINEL) {
-            std::printf("  %d x %d: wrote past the checksum\n", h, w);
+        if (dout[1][i] != UNTOUCHED) {
+            std::printf("  %d x %d: wrote past the checksum\n", height, width);
             ok = false;
             break;
         }
-    std::printf("%s %d x %d, cycles register: %u\n", ok ? "PASS" : "FAIL", h, w, (unsigned)cycles);
+    std::printf("%s %d x %d, cycles register: %u\n", ok ? "PASS" : "FAIL", height, width, (unsigned)cycles);
     return ok;
 }
 
 int main() {
-    // 40 x 50 matches the m_axi depth pragmas (2 x 2 patches, the edge ones partial);
-    // the others are smaller: one whole patch, one pixel, a strip one patch high.
+    // 40 x 50 matches the m_axi depth pragmas; then one whole patch, one pixel, a strip.
     const int sizes[][2] = {{40, 50}, {32, 32}, {1, 1}, {7, 70}};
     bool ok = true;
     for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++)

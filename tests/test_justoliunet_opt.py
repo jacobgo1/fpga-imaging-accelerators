@@ -111,15 +111,15 @@ class JustoLiuNetOptTests(unittest.TestCase):
 #include <vector>
 int main(int, char** argv) {{
     const int n = atoi(argv[3]);
-    std::vector<jl_raw_t> din(n * WORDS);
-    std::vector<jl_out_t> dout(n);
+    std::vector<cube_word_t> din(n * WORDS_PER_PIXEL);
+    std::vector<score_word_t> dout(n);
     FILE* f = fopen(argv[1], "rb");
-    if (fread(din.data(), sizeof(jl_raw_t), din.size(), f) != din.size()) return 1;
+    if (fread(din.data(), sizeof(cube_word_t), din.size(), f) != din.size()) return 1;
     fclose(f);
     uint32_t cycles = 0;
-    jl_raw_t *d = din.data();     // hls::burst_maxi takes a plain pointer
+    cube_word_t *d = din.data();     // hls::burst_maxi takes a plain pointer
     {call};
-    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jl_out_t), dout.size(), f); fclose(f);
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(score_word_t), dout.size(), f); fclose(f);
 }}
 """)
                     exe = tmp / f'run_{kernel}.exe'

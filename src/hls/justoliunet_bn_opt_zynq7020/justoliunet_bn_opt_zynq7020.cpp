@@ -1,25 +1,21 @@
-// justoliunet_bn_opt_zynq7020: the 1D-Justo-LiuNet with BatchNorm (folded into conv1) for the Zynq-7020 (ZedBoard) on a whole raw capture.
-// The design is in justoliunet_opt_zynq7020.hpp, the processes in justoliunet_opt_zynq7020_dataflow.hpp.
 #include "../../../weights/quantized/justoliunet_bn/justoliunet_bn_int8.hpp"
 #include "../justoliunet_opt/justoliunet_opt_formats.hpp"
-namespace q = justoliunet_bn_int8;
-namespace fmt = justoliunet_bn_formats;
+namespace weights = justoliunet_bn_int8;
+namespace model_formats = justoliunet_bn_formats;
 #include "../justoliunet_opt_zynq7020/justoliunet_opt_zynq7020_dataflow.hpp"
 #include "justoliunet_bn_opt_zynq7020.hpp"
 
-void justoliunet_bn_opt_zynq7020(hls::burst_maxi<jl_raw_t> din0, hls::burst_maxi<jl_out_t> dout,
+void justoliunet_bn_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
                                  int height, int width, uint32_t& cycles)
 {
-// Two AXI masters, each on its own HP port (boards/zedboard/system.tcl): one reads
-// the cube through HP0, one writes the scores through HP1. depth is only for
-// co-simulation: the testbench's 9 x 7 image.
-#pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
-#pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem1 offset=slave depth=63 max_write_burst_length=64 num_write_outstanding=16
-#pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
-#pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
-#pragma HLS INTERFACE mode=s_axilite port=height bundle=control
-#pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
-#pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
-#pragma HLS INTERFACE mode=s_axilite port=return bundle=control
+    // The reader on HP0, the writer on HP1. depth is for co-simulation only.
+    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem1 offset=slave depth=63 max_write_burst_length=64 num_write_outstanding=16
+    #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
     justoliunet_opt_zynq7020_dataflow(din0, dout, height, width, cycles);
 }

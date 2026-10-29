@@ -1,9 +1,8 @@
-// justounetsimple_opt_zynq7020_tb.cpp  --  testbench for the Zynq-7020 version
-// of the optimized kernel: the checks of justounetsimple_opt, the same answers.
+// Testbench of justounetsimple_opt_zynq7020: the checks of justounetsimple_opt.
 #include "justounetsimple_opt_zynq7020.hpp"
 
-static void run_kernel(jopt_raw_t *din, jopt_out_t *dout, int height, int width) {
-    justounetsimple_opt_zynq7020(din, din, dout, height, width);    // both ports read the cube
+static void run_kernel(cube_word_t *cube, score_word_t *scores, int height, int width) {
+    justounetsimple_opt_zynq7020(cube, cube, scores, height, width);
 }
 
 #include "../justounetsimple_opt/justounetsimple_opt_check.hpp"

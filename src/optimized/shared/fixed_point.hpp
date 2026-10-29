@@ -3,104 +3,90 @@
 #include <stdint.h>
 #include "../../common/hls_stream_shim.hpp"
 
-// The numbers every block in src/optimized/ shares, in integer fixed point.
-// An activation is an int16 a meaning a * 2^-F (F fraction bits, set by the
-// kernel), a weight is the quantized int8 q meaning q * 2^-frac, so a product
-// is exact in an int32 with F + frac fraction bits, and so is a sum of them.
-// No floating point anywhere: a 16 x 8 bit multiply is one DSP, against about
-// five for a float multiply-add.
+// Integer fixed point, shared by every module. An activation a means a * 2^-F,
+// a weight q means q * 2^-frac, so products and their sums are exact in int32.
 
-typedef int16_t act_t;   // an activation (fixed point, F fraction bits)
-typedef int8_t  act8_t;  // an int8 activation, -127 .. 127 (conv3x3_wide's input)
-typedef int8_t  wgt_t;   // a quantized weight q
-typedef int32_t acc_t;   // a sum of products, and a bias at the same scale
+typedef int16_t act_t;   // an activation
+typedef int8_t  act8_t;  // an int8 activation, -127 .. 127
+typedef int8_t  wgt_t;   // a quantized weight
+typedef int32_t acc_t;   // a sum of products, or a bias at the same scale
 
-// P values that travel together through a stream (P channels of one pixel).
-template<typename T, int P>
+// SIZE values that travel together through a stream, e.g. the channels of a pixel.
+template<typename T, int SIZE>
 struct vec_t {
-    T v[P];
+    T v[SIZE];
 };
 
-// One sum -> one activation: ReLU, round off SHIFT bits, saturate at the int16
-// maximum. Rounding is monotonic, so max-pooling before or after it gives the
-// same result.
+// A sum to an activation: ReLU, round off SHIFT bits, saturate at the int16 maximum.
 template<int SHIFT>
-act_t requant_relu(acc_t v) {
+act_t requant_relu(acc_t sum) {
     #pragma HLS INLINE
-    static_assert(SHIFT >= 1, "requant_relu drops at least one bit");
-    if (v <= 0) return 0;
-    const acc_t r = (v + ((acc_t)1 << (SHIFT - 1))) >> SHIFT;
-    return r > 32767 ? (act_t)32767 : (act_t)r;
+    if (sum <= 0) return 0;
+    const acc_t rounded = (sum + ((acc_t)1 << (SHIFT - 1))) >> SHIFT;
+    return rounded > 32767 ? (act_t)32767 : (act_t)rounded;
 }
 
-// Round off SHIFT bits (no ReLU, no saturation: the result only gets smaller).
+// Round off SHIFT bits, half up.
 template<int SHIFT>
-acc_t round_shift(acc_t v) {
+acc_t round_shift(acc_t sum) {
     #pragma HLS INLINE
-    static_assert(SHIFT >= 0, "round_shift only drops bits");
-    return SHIFT == 0 ? v : (v + ((acc_t)1 << (SHIFT > 0 ? SHIFT - 1 : 0))) >> SHIFT;
+    return SHIFT == 0 ? sum : (sum + ((acc_t)1 << (SHIFT > 0 ? SHIFT - 1 : 0))) >> SHIFT;
 }
 
-// One sum -> one signed int16 activation (no ReLU): round off SHIFT bits,
-// saturate to [-32768, 32767].
+// A sum to a signed activation, no ReLU: round off SHIFT bits, saturate to int16.
 template<int SHIFT>
-act_t requant_act(acc_t v) {
+act_t requant_act(acc_t sum) {
     #pragma HLS INLINE
-    const acc_t r = round_shift<SHIFT>(v);
-    return r > 32767 ? (act_t)32767 : r < -32768 ? (act_t)-32768 : (act_t)r;
+    const acc_t rounded = round_shift<SHIFT>(sum);
+    return rounded > 32767 ? (act_t)32767 : rounded < -32768 ? (act_t)-32768 : (act_t)rounded;
 }
 
-// LeakyReLU in integers: v >= 0 ? v : round_shift<LEAK_FRAC>(v * LEAK_NUM).
-// Default 41 * 2^-12 = 41 / 4096 = 0.01000977 (PyTorch's 0.01 negative slope);
-// 41 = 32 + 8 + 1 is a constant, so HLS turns it into two additions in LUTs.
+// LeakyReLU with slope LEAK_NUM * 2^-LEAK_FRAC: 41 / 4096 = 0.0100 by default,
+// and 41 = 32 + 8 + 1 costs two additions, no multiplier.
 template<int LEAK_NUM = 41, int LEAK_FRAC = 12>
-acc_t leaky_relu(acc_t v) {
+acc_t leaky_relu(acc_t value) {
     #pragma HLS INLINE
-    if (v >= 0) return v;
-    const int64_t p = (int64_t)v * LEAK_NUM + ((int64_t)1 << (LEAK_FRAC - 1));
-    return (acc_t)(p >> LEAK_FRAC);
+    if (value >= 0) return value;
+    const int64_t scaled = (int64_t)value * LEAK_NUM + ((int64_t)1 << (LEAK_FRAC - 1));
+    return (acc_t)(scaled >> LEAK_FRAC);
 }
 
-// One sum -> one signed int16 activation with LeakyReLU(0.01): round off SHIFT
-// bits, apply leaky_relu, saturate to [-32768, 32767].
+// A sum to a signed activation with LeakyReLU: round, leak, saturate to int16.
 template<int SHIFT, int LEAK_NUM = 41, int LEAK_FRAC = 12>
-act_t requant_leaky_relu(acc_t v) {
+act_t requant_leaky_relu(acc_t sum) {
     #pragma HLS INLINE
-    const acc_t r = leaky_relu<LEAK_NUM, LEAK_FRAC>(round_shift<SHIFT>(v));
-    return r > 32767 ? (act_t)32767 : r < -32768 ? (act_t)-32768 : (act_t)r;
+    const acc_t leaked = leaky_relu<LEAK_NUM, LEAK_FRAC>(round_shift<SHIFT>(sum));
+    return leaked > 32767 ? (act_t)32767 : leaked < -32768 ? (act_t)-32768 : (act_t)leaked;
 }
 
-// What a conv layer sends on: with RELU_SHIFT 0 its sums as they are (for a
-// ReLU module after it, or a final layer's scores); otherwise each ReLU'd and
-// rounded off RELU_SHIFT bits to an int16 activation, the next conv's input.
+// What a conv sends on: its sums as they are (RELU_SHIFT 0), or ReLU'd and
+// rounded off RELU_SHIFT bits to activations.
 template<int RELU_SHIFT> struct sums_out {
     typedef act_t type;
-    static type of(acc_t v) {
+    static type of(acc_t sum) {
         #pragma HLS INLINE
-        return requant_relu<RELU_SHIFT>(v);
+        return requant_relu<RELU_SHIFT>(sum);
     }
 };
 template<> struct sums_out<0> {
     typedef acc_t type;
-    static type of(acc_t v) {
+    static type of(acc_t sum) {
         #pragma HLS INLINE
-        return v;
+        return sum;
     }
 };
 
-// A ReLU module's input -> an activation: a conv's sums, ReLU'd and rounded
-// off SHIFT bits; or activations a conv already ReLU'd and rounded (SHIFT 0),
-// as they are. The input's type picks which.
+// A ReLU module's input to an activation: sums are ReLU'd and rounded off SHIFT
+// bits; activations (already ReLU'd by their conv) pass as they are.
 template<int SHIFT>
-act_t relu_in(acc_t v) {
+act_t relu_in(acc_t sum) {
     #pragma HLS INLINE
-    return requant_relu<SHIFT>(v);
+    return requant_relu<SHIFT>(sum);
 }
 template<int SHIFT>
-act_t relu_in(act_t v) {
+act_t relu_in(act_t activation) {
     #pragma HLS INLINE
-    static_assert(SHIFT == 0, "activations in are rounded already: SHIFT 0");
-    return v;
+    return activation;
 }
 
 static inline act_t max2(act_t a, act_t b) {
@@ -108,26 +94,20 @@ static inline act_t max2(act_t a, act_t b) {
     return a > b ? a : b;
 }
 
-// a * b in R, built from a DSP (DSP = true) or from LUTs (false; HLS calls
-// them "fabric"), said with a pragma instead of left to HLS. BIND_OP's impl
-// takes only a literal word, not a template argument, so each choice has its
-// own branch; HLS keeps the one DSP picks. The modules with multipliers take
-// DSP as a template argument, so a kernel's top function shows where each
-// process's go; the index arithmetic (patch counts, row addresses) is always
-// LUTs. The csynth report's "Bind Op Report" lists what HLS built. A multiply
-// by a constant needs neither: HLS turns it into shifts and adds.
+// a * b on a DSP or in LUTs ("fabric"), chosen here instead of by HLS. BIND_OP
+// takes only a literal word, so each choice is its own branch.
 template<bool DSP, typename R, typename A, typename B>
 R mul(A a, B b) {
     #pragma HLS INLINE
-    R p;
+    R product;
     if (DSP) {
         const R d = (R)a * (R)b;
         #pragma HLS BIND_OP variable=d op=mul impl=dsp
-        p = d;
+        product = d;
     } else {
         const R f = (R)a * (R)b;
         #pragma HLS BIND_OP variable=f op=mul impl=fabric
-        p = f;
+        product = f;
     }
-    return p;
+    return product;
 }

@@ -20,7 +20,7 @@
 namespace q = spectralpointwise1d_int8;
 
 constexpr int PIXELS = 32;   // the kernel's cosim depth is 32 pixels
-constexpr int L = SPW_BANDS, C1 = SPW_CH1, C2 = SPW_CH2, C = SPW_CLASSES;
+constexpr int L = SPW_BANDS, C1 = SPW_CONV1_CHANNELS, C2 = SPW_CONV2_CHANNELS, C = SPW_CLASSES;
 
 static float w1[C1][L], b1[C1];
 static float w2[C2][C1], b2[C2];

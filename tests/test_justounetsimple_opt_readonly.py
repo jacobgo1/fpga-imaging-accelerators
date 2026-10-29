@@ -40,15 +40,15 @@ DRIVER = f"""
 #include <vector>
 int main(int, char** argv) {{
     const int h = atoi(argv[3]), w = atoi(argv[4]);
-    std::vector<jopt_raw_t> din(h * w * RAW_BANDS / PORT_BANDS);
-    std::vector<jopt_out_t> dout(1);
+    std::vector<cube_word_t> din(h * w * CUBE_BANDS / BANDS_PER_WORD);
+    std::vector<score_word_t> dout(1);
     FILE* f = fopen(argv[1], "rb");
-    if (fread(din.data(), sizeof(jopt_raw_t), din.size(), f) != din.size()) return 1;
+    if (fread(din.data(), sizeof(cube_word_t), din.size(), f) != din.size()) return 1;
     fclose(f);
-    jopt_raw_t *d = din.data();   // hls::burst_maxi takes a plain pointer
+    cube_word_t *d = din.data();   // hls::burst_maxi takes a plain pointer
     uint32_t cycles;
     {NAME}(d, d, d, d, dout.data(), h, w, cycles);
-    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(jopt_out_t), 1, f); fclose(f);
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(score_word_t), 1, f); fclose(f);
 }}
 """
 

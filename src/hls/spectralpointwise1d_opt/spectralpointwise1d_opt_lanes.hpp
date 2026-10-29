@@ -1,10 +1,7 @@
 #pragma once
 
-// The optimized 1D-SpectralPointwise's lane: one copy of the network, its three
-// layers as DATAFLOW processes, shared by every board's kernel (ZCU104, Zynq-7030,
-// Zynq-7020; they differ in the words, 8 or 4 bands, the lanes and where the
-// multipliers go). Before including it, a kernel's .cpp includes its own header,
-// which sets those. spectralpointwise1d_opt.hpp has the design.
+// One lane: a copy of the network, its three layers as processes on lane LANE's
+// pixels. Shared by every board's kernel; the kernel's header comes first.
 
 #include "../../../weights/quantized/spectralpointwise1d/spectralpointwise1d_int8.hpp"
 #include "../justoliunet_opt/justoliunet_opt_formats.hpp"
@@ -13,49 +10,45 @@
 #include "../../optimized/shared/zscore_pointwise.hpp"
 #include "../../optimized/shared/pointwise1d.hpp"
 #include "../../optimized/shared/count_cycles.hpp"
-#include <type_traits>
 
-namespace q = spectralpointwise1d_int8;
-namespace jf = justoliunet_opt_formats;           // the input: 12-bit z-score, as 1D-Justo-LiuNet's
-namespace fmt = spectralpointwise1d_formats;      // the activations
-static_assert(std::is_same<std::remove_const<std::remove_all_extents<
-                               decltype(q::convsp1_weight)>::type>::type,
-                           wgt_t>::value,
-              "the weights must be int8; did the header's element type change?");
-static_assert(jf::FIRST_BAND == FIRST * PORT_BANDS && KEPT * PORT_BANDS == 112,
-              "the kept bands must be whole words, to the end of each pixel");
+namespace weights = spectralpointwise1d_int8;
+namespace shared_formats = justoliunet_opt_formats;    // the input and the scores, as 1D-Justo-LiuNet's
+namespace model_formats = spectralpointwise1d_formats; // the activations
 
-// Fraction bits: each layer's sums carry its input's plus its weights'; the
-// bias is shifted up to them, the sums rounded down to the next activations'.
-constexpr int SUM1 = jf::IN_FRAC + q::convsp1_weight_frac;
-constexpr int SUM2 = fmt::ACT_FRAC1 + q::convsp2_weight_frac;
-constexpr int SUM3 = fmt::ACT_FRAC2 + q::convsp3_weight_frac;
-// int32 never overflows: convsp1's largest |sum| is 2047 x 110 x 128 + bias < 2^25,
-// the others' 255 x 24 x 128 + bias < 2^20, the scores' 255 x 12 x 128 x 2^5.
+// A layer's sums have its input's fraction bits plus its weights'.
+constexpr int CONVSP1_SUM_FRAC_BITS = shared_formats::IN_FRAC + weights::convsp1_weight_frac;
+constexpr int CONVSP2_SUM_FRAC_BITS = model_formats::ACT_FRAC1 + weights::convsp2_weight_frac;
+constexpr int CONVSP3_SUM_FRAC_BITS = model_formats::ACT_FRAC2 + weights::convsp3_weight_frac;
 
-// A lane's three layers, each one DATAFLOW process (INLINE: the wrapper goes,
-// the module's call stays), on lane L's pixels.
-template<int L> using lane_pixels = pixel_lane<BLOCK, LANES, L>;
+template<int LANE> using lane_pixels = pixel_lane<BLOCK_PIXELS, LANES, LANE>;
 
-template<int L>
-void spw_convsp1(hls::stream<spw_raw_t>& in, hls::stream<vec_t<uact_t, 24> >& out, int height, int width) {
+// INLINE: the wrapper goes, the module stays its own process.
+template<int LANE>
+void lane_convsp1(hls::stream<cube_word_t>& in, hls::stream<vec_t<uact_t, 24> >& out, int height, int width) {
     #pragma HLS INLINE
-    zscore_pointwise<WORDS, FIRST, PORT_BANDS, jf::PREP_FRAC, jf::IN_MAX, jf::A, jf::B, 110, 24,
-                     SUM1 - q::convsp1_bias_frac, SUM1 - fmt::ACT_FRAC1, jf::ACT_MAX,
-                     q::convsp1_weight, q::convsp1_bias, ZSCORE_DSP, SP1_DSP, lane_pixels<L> >(in, out, height, width);
+    zscore_pointwise<WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, shared_formats::PREP_FRAC,
+                     shared_formats::IN_MAX, shared_formats::A, shared_formats::B, 110, 24,
+                     CONVSP1_SUM_FRAC_BITS - weights::convsp1_bias_frac, CONVSP1_SUM_FRAC_BITS - model_formats::ACT_FRAC1,
+                     shared_formats::ACT_MAX, weights::convsp1_weight, weights::convsp1_bias,
+                     ZSCORE_ON_DSPS, CONVSP1_ON_DSPS, lane_pixels<LANE> >(in, out, height, width);
 }
 
-template<int L>
-void spw_convsp2(hls::stream<vec_t<uact_t, 24> >& in, hls::stream<vec_t<uact_t, 12> >& out, int height, int width) {
+template<int LANE>
+void lane_convsp2(hls::stream<vec_t<uact_t, 24> >& in, hls::stream<vec_t<uact_t, 12> >& out, int height, int width) {
     #pragma HLS INLINE
-    pointwise1d<24, 12, SP2_PO, true, SUM2 - q::convsp2_bias_frac, SUM2 - fmt::ACT_FRAC2, jf::ACT_MAX,
-                q::convsp2_weight, q::convsp2_bias, SP2_DSP, lane_pixels<L> >(in, out, height, width);
+    pointwise1d<24, 12, CONVSP2_OUT_PER_CYCLE, true, CONVSP2_SUM_FRAC_BITS - weights::convsp2_bias_frac,
+                CONVSP2_SUM_FRAC_BITS - model_formats::ACT_FRAC2, shared_formats::ACT_MAX,
+                weights::convsp2_weight, weights::convsp2_bias, CONVSP2_ON_DSPS, lane_pixels<LANE> >(
+        in, out, height, width);
 }
 
-// The head: the scores at the output's OUT_FRAC fraction bits.
-template<int L>
-void spw_convsp3(hls::stream<vec_t<uact_t, 12> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out, int height, int width) {
+// The head: the scores.
+template<int LANE>
+void lane_convsp3(hls::stream<vec_t<uact_t, 12> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out,
+                  int height, int width) {
     #pragma HLS INLINE
-    pointwise1d<12, CLASSES, SP3_PO, false, SUM3 - q::convsp3_bias_frac, jf::OUT_FRAC - SUM3, jf::ACT_MAX,
-                q::convsp3_weight, q::convsp3_bias, SP3_DSP, lane_pixels<L> >(in, out, height, width);
+    pointwise1d<12, CLASSES, CONVSP3_OUT_PER_CYCLE, false, CONVSP3_SUM_FRAC_BITS - weights::convsp3_bias_frac,
+                shared_formats::OUT_FRAC - CONVSP3_SUM_FRAC_BITS, shared_formats::ACT_MAX,
+                weights::convsp3_weight, weights::convsp3_bias, CONVSP3_ON_DSPS, lane_pixels<LANE> >(
+        in, out, height, width);
 }

@@ -100,12 +100,12 @@ FIXED_DRIVER = """
 #include <cstdio>
 #include <cstdlib>
 
-typedef specpw_unet_qparams_golden<110, 3, specpw_unet_{size}> qparams_t;
+typedef specpw_unet_quantized_params_golden<110, 3, specpw_unet_{size}> qparams_t;
 static qparams_t params;
 static int32_t din[32][32][110], dout[32][32][3];
 
 int main(int, char** argv) {{
-    SPECPW_UNET_LOAD_QPARAMS(params, sp_unet_{size}_int8);
+    SPECPW_UNET_LOAD_QUANTIZED_PARAMS(params, sp_unet_{size}_int8);
     const int n = atoi(argv[3]), act_max = atoi(argv[4]);
     FILE* in = fopen(argv[1], "rb");
     FILE* out = fopen(argv[2], "wb");
@@ -126,13 +126,13 @@ OPT_DRIVER = """
 #include <vector>
 int main(int, char** argv) {{
     const int h = atoi(argv[3]), w = atoi(argv[4]);
-    std::vector<uint16_t> cube((size_t)h * w * RAW_BANDS);
+    std::vector<uint16_t> cube((size_t)h * w * CUBE_BANDS);
     FILE* f = fopen(argv[1], "rb");
     if (fread(cube.data(), 2, cube.size(), f) != cube.size()) return 1;
     fclose(f);
-    std::vector<spu_raw_t> din(cube.size() / PORT_BANDS);
-    for (size_t i = 0; i < cube.size(); i++) din[i / PORT_BANDS][i % PORT_BANDS] = cube[i];
-    std::vector<spu_out_t> dout((size_t)h * w);
+    std::vector<cube_word_t> din(cube.size() / BANDS_PER_WORD);
+    for (size_t i = 0; i < cube.size(); i++) din[i / BANDS_PER_WORD][i % BANDS_PER_WORD] = cube[i];
+    std::vector<score_word_t> dout((size_t)h * w);
     uint32_t cycles = 0;
     {name}({ports}dout.data(), h, w, cycles);
     f = fopen(argv[2], "wb");
@@ -640,12 +640,13 @@ class SpecPWUNetOptNotebookTests(unittest.TestCase):
         setup = ''.join(json.loads(OPT_NOTEBOOK.read_text(encoding='utf-8'))['cells'][2]['source'])
         ns = {}
         exec(re.search(r'^BANDS, OUT_FRAC, LANES = .*$', setup, re.M).group(0), ns)
-        self.assertEqual(ns['BANDS'], define('RAW_BANDS'))
-        self.assertEqual(ns['OUT_FRAC'], define('OUT_FRAC'))
-        self.assertEqual(ns['LANES'], 4, 'spu_out_t: 3 scores and the class')
-        self.assertIn('hls::vector<int32_t, 4> spu_out_t', header)
-        for name in ('IN_FRAC', 'ACT_FRAC', 'OUT_FRAC'):
-            self.assertEqual(getattr(self.model, name), define(name), name)
+        self.assertEqual(ns['BANDS'], define('CUBE_BANDS'))
+        self.assertEqual(ns['OUT_FRAC'], define('SCORE_FRAC_BITS'))
+        self.assertEqual(ns['LANES'], 4, 'score_word_t: 3 scores and the class')
+        self.assertIn('hls::vector<int32_t, 4> score_word_t', header)
+        for model_name, kernel_name in (('IN_FRAC', 'ZSCORE_FRAC_BITS'), ('ACT_FRAC', 'ACTIVATION_FRAC_BITS'),
+                                        ('OUT_FRAC', 'SCORE_FRAC_BITS')):
+            self.assertEqual(getattr(self.model, model_name), define(kernel_name), kernel_name)
 
     def test_notebook_classifies_the_whole_image_in_one_start(self):
         board = self.prepare(70, 50)                 # 3 x 2 patches, not a multiple of 32

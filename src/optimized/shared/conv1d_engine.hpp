@@ -3,269 +3,234 @@
 #include <stdint.h>
 #include "../../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
-#include "conv3x3_packed.hpp"   // pack_w_t, pack_s_t, pack_low, pack_high
-#include "pixel_io.hpp"         // map_t, pixel_count
+#include "conv3x3_packed.hpp"
+#include "pixel_io.hpp"
 
-// The layers of a 1D (per-pixel, spectral) network, streaming one pixel after
-// another. A layer is two processes:
-//
-//   map (pixel's input) ─► conv1d_engine ─► POS x OCP sums a cycle ─► pool_assemble ─► map (pooled)
-//
-// conv1d_engine does the multiply-adds: every cycle POS output positions x OCP
-// output channels, all IC x K taps of each at once (IC x K x POS x OCP
-// multipliers), so a pixel takes STEPS = ceil(L_OUT / POS) x (OC / OCP) cycles.
-// The kernel picks POS and OCP per layer so that every layer takes about the
-// same number of cycles a pixel: then each one's multipliers are busy all the
-// time, and they go where the work is. pool_assemble rebuilds the outputs into
-// the pooled map the next layer reads.
-//
-// Every array index in both is a constant: the input window is a shift register
-// that moves POS positions a step, and the outputs are shifted in at the end.
-// So the hardware has no multiplexers in front of the multipliers, only wires.
+// The layers of a per-pixel (1D) network, one pixel after another. A layer is
+// two processes: conv1d_engine does POSITIONS_PER_CYCLE x OUT_PER_CYCLE outputs a
+// cycle, every tap at once, and pool_assemble pools them into the next layer's
+// map. Each layer is sized to take about the same cycles a pixel. Every array
+// index is a constant (shift registers), so there are no multiplexers in front
+// of the multipliers.
 
-typedef uint8_t uact_t;   // an activation after ReLU: never negative, so uint8 (0 .. 255)
+typedef uint8_t uact_t;   // an activation after ReLU, 0 .. 255
 
-// One sum -> one activation: ReLU, round off SHIFT bits, saturate at ACT_MAX.
-// Rounding is monotonic, so max-pooling after it gives what pooling before it would.
+// ReLU, round off SHIFT bits, saturate at ACT_MAX.
 template<int SHIFT, int ACT_MAX>
-uact_t requant_relu8(acc_t v) {
+uact_t requant_relu8(acc_t sum) {
     #pragma HLS INLINE
-    static_assert(SHIFT >= 1, "requant_relu8 drops at least one bit");
-    if (v <= 0) return 0;
-    const acc_t r = (v + ((acc_t)1 << (SHIFT - 1))) >> SHIFT;
-    return r > ACT_MAX ? (uact_t)ACT_MAX : (uact_t)r;
+    if (sum <= 0) return 0;
+    const acc_t rounded = (sum + ((acc_t)1 << (SHIFT - 1))) >> SHIFT;
+    return rounded > ACT_MAX ? (uact_t)ACT_MAX : (uact_t)rounded;
 }
 
-// conv1d_engine: a valid 1D convolution (PyTorch's Conv1d(IC, OC, K)), the first
-// L_OUT outputs of each pixel (the ones the network uses; the pools after it drop
-// the rest), then ReLU and requantization to uint8: out = clip(round((bias *
-// 2^BIAS_SHIFT + sum(act * q)) / 2^SHIFT), 0, ACT_MAX).
-//
-// In: one map per pixel, L_IN positions x IC channels (only the first LPAD are
-// read; positions past L_IN count as zero). Out: STEPS vectors per pixel, step s
-// holding positions (s / GROUPS) * POS + p and channels (s % GROUPS) * OCP + j at
-// [p * OCP + j].
-//
-// PACKED: two output channels share each activation, so their two weights are
-// packed into one multiply (conv3x3_packed.hpp, AMD WP486) and one DSP48E2 does
-// both: OCP / 2 x POS x IC x K DSPs. The activations must be uint8 (0 .. 255):
-// a product is then at most 255 x 128 = 32 640, and GROUP of them must stay
-// below 2^(SHIFT_P - 1) = 2^17: GROUP 4. Otherwise one multiply per product, in
-// DSPs (DSP) or LUTs, for any activation type (the first layer's 12-bit input).
-template<int L_IN, int IC, int OC, int K, int L_OUT, int POS, int OCP, int BIAS_SHIFT, int SHIFT, int ACT_MAX,
-         const wgt_t (&WEIGHT)[OC][IC][K], const wgt_t (&BIAS)[OC], bool PACKED, bool DSP, typename IN_T>
-void conv1d_engine(hls::stream<map_t<IN_T, L_IN, IC> >& in, hls::stream<vec_t<uact_t, POS * OCP> >& out,
+// Conv1d without padding, the first OUT_LENGTH outputs of each pixel (the pools
+// drop the rest), then ReLU and requantization to uint8. Input positions past
+// IN_LENGTH count as zero. Step s sends positions (s / GROUPS) * POSITIONS_PER_CYCLE
+// + p, channels (s % GROUPS) * OUT_PER_CYCLE + j, at [p * OUT_PER_CYCLE + j].
+// PACKED: two channels per DSP as in conv3x3_packed.hpp; uint8 products are at most
+// 32 640, so groups of 4 fit 18 bits. Otherwise one multiply each, DSP or LUTs.
+template<int IN_LENGTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL, int OUT_LENGTH, int POSITIONS_PER_CYCLE,
+         int OUT_PER_CYCLE, int BIAS_SHIFT, int SHIFT, int ACT_MAX,
+         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][KERNEL], const wgt_t (&BIAS)[OUT_CHANNELS],
+         bool PACKED, bool DSP, typename IN_T>
+void conv1d_engine(hls::stream<map_t<IN_T, IN_LENGTH, IN_CHANNELS> >& in,
+                   hls::stream<vec_t<uact_t, POSITIONS_PER_CYCLE * OUT_PER_CYCLE> >& out,
                    int height, int width) {
-    constexpr int GROUPS = OC / OCP;                       // output channel groups, one a step
-    constexpr int PSTEPS = (L_OUT + POS - 1) / POS;        // position steps
-    constexpr int STEPS = PSTEPS * GROUPS;
-    constexpr int LPAD = PSTEPS * POS + K - 1;             // input positions the window reaches
-    constexpr int F = IC * K;                              // taps of one output
-    constexpr int SHIFT_P = 18, GROUP = 4;                 // packing (DSP48E2: 27 x 18 bits)
-    static_assert(OC % OCP == 0, "OCP must divide OC");
-    static_assert(!PACKED || (OCP % 2 == 0 && F % GROUP == 0), "packed: channels in pairs, taps in groups of 4");
-    static_assert(!PACKED || sizeof(IN_T) == 1, "packed: uint8 activations");
-    static_assert(GROUP * 255 * 128 < (1 << (SHIFT_P - 1)), "a group's low sum must stay inside SHIFT_P signed bits");
-    static_assert(BIAS_SHIFT >= 0, "the bias must not have more fraction bits than the sums");
+    constexpr int GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
+    constexpr int POSITION_STEPS = (OUT_LENGTH + POSITIONS_PER_CYCLE - 1) / POSITIONS_PER_CYCLE;
+    constexpr int STEPS = POSITION_STEPS * GROUPS;
+    constexpr int WINDOW_LENGTH = POSITION_STEPS * POSITIONS_PER_CYCLE + KERNEL - 1;
+    constexpr int TAPS = IN_CHANNELS * KERNEL;
+    constexpr int PACK_SHIFT = 18, GROUP = 4;   // DSP48E2
 
-    // The weights, once, into registers: [group][channel of the group][tap], and
-    // for PACKED the pairs [group][pair][tap] = w[odd] * 2^18 + w[even].
-    wgt_t wl[GROUPS][OCP][F];
-    pack_w_t<SHIFT_P> wp[GROUPS][OCP / 2 > 0 ? OCP / 2 : 1][F];
-    acc_t bl[GROUPS][OCP];
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=3
-    #pragma HLS ARRAY_PARTITION variable=bl type=complete dim=2
+    wgt_t weight[GROUPS][OUT_PER_CYCLE][TAPS];
+    packed_weight_t<PACK_SHIFT> packed[GROUPS][OUT_PER_CYCLE / 2 > 0 ? OUT_PER_CYCLE / 2 : 1][TAPS];
+    acc_t bias[GROUPS][OUT_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
+    #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=3
+    #pragma HLS ARRAY_PARTITION variable=bias type=complete dim=2
     load_w: for (int g = 0; g < GROUPS; g++)
-        for (int j = 0; j < OCP; j++)
-            for (int f = 0; f < F; f++) {
+        for (int j = 0; j < OUT_PER_CYCLE; j++)
+            for (int tap = 0; tap < TAPS; tap++) {
                 #pragma HLS PIPELINE II=1
-                const int oc = g * OCP + j;
-                wl[g][j][f] = WEIGHT[oc][f / K][f % K];
+                const int o = g * OUT_PER_CYCLE + j;
+                weight[g][j][tap] = WEIGHT[o][tap / KERNEL][tap % KERNEL];
                 if (PACKED && j % 2 == 1)
-                    wp[g][j / 2][f] = (pack_w_t<SHIFT_P>)WEIGHT[oc][f / K][f % K] * (pack_w_t<SHIFT_P>)(1 << SHIFT_P)
-                                      + (pack_w_t<SHIFT_P>)WEIGHT[oc - 1][f / K][f % K];
-                if (f == 0) bl[g][j] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
+                    packed[g][j / 2][tap] =
+                        (packed_weight_t<PACK_SHIFT>)WEIGHT[o][tap / KERNEL][tap % KERNEL]
+                            * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
+                        + (packed_weight_t<PACK_SHIFT>)WEIGHT[o - 1][tap / KERNEL][tap % KERNEL];
+                if (tap == 0) bias[g][j] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
             }
 
     const uint32_t pixels = pixel_count(height, width);
-    IN_T x[LPAD][IC];          // the window: position 0 is the current step's first output's first tap
-    #pragma HLS ARRAY_PARTITION variable=x type=complete dim=0
-    int ps = 0, g = 0;         // position step, channel group
+    IN_T window[WINDOW_LENGTH][IN_CHANNELS];   // position 0: this step's first output's first tap
+    #pragma HLS ARRAY_PARTITION variable=window type=complete dim=0
+    int position_step = 0, g = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=16 max=11754288
-        if (ps == 0 && g == 0) {
-            const map_t<IN_T, L_IN, IC> m = in.read();
-            for (int l = 0; l < LPAD; l++)
-                for (int c = 0; c < IC; c++) {
+        if (position_step == 0 && g == 0) {
+            const map_t<IN_T, IN_LENGTH, IN_CHANNELS> map = in.read();
+            for (int pos = 0; pos < WINDOW_LENGTH; pos++)
+                for (int ch = 0; ch < IN_CHANNELS; ch++) {
                     #pragma HLS UNROLL
-                    x[l][c] = l < L_IN ? m.v[l < L_IN ? l : 0][c] : (IN_T)0;
+                    window[pos][ch] = pos < IN_LENGTH ? map.v[pos < IN_LENGTH ? pos : 0][ch] : (IN_T)0;
                 }
         } else if (g == 0) {
-            for (int l = 0; l < LPAD; l++)
-                for (int c = 0; c < IC; c++) {
+            for (int pos = 0; pos < WINDOW_LENGTH; pos++)
+                for (int ch = 0; ch < IN_CHANNELS; ch++) {
                     #pragma HLS UNROLL
-                    x[l][c] = l + POS < LPAD ? x[l + POS < LPAD ? l + POS : 0][c] : (IN_T)0;
+                    const int next = pos + POSITIONS_PER_CYCLE;
+                    window[pos][ch] = next < WINDOW_LENGTH ? window[next < WINDOW_LENGTH ? next : 0][ch] : (IN_T)0;
                 }
         }
-        vec_t<uact_t, POS * OCP> o;
-        for (int p = 0; p < POS; p++) {
+        vec_t<uact_t, POSITIONS_PER_CYCLE * OUT_PER_CYCLE> outputs;
+        for (int p = 0; p < POSITIONS_PER_CYCLE; p++) {
             #pragma HLS UNROLL
             if (PACKED) {
-                for (int jp = 0; jp < OCP / 2; jp++) {
+                for (int pair = 0; pair < OUT_PER_CYCLE / 2; pair++) {
                     #pragma HLS UNROLL
-                    acc_t lo = bl[g][2 * jp], hi = bl[g][2 * jp + 1];
-                    for (int f0 = 0; f0 < F; f0 += GROUP) {
+                    acc_t low = bias[g][2 * pair], high = bias[g][2 * pair + 1];
+                    for (int first = 0; first < TAPS; first += GROUP) {
                         #pragma HLS UNROLL
-                        pack_s_t s = 0;
-                        for (int f = f0; f < f0 + GROUP; f++) {
+                        packed_sum_t sum = 0;
+                        for (int tap = first; tap < first + GROUP; tap++) {
                             #pragma HLS UNROLL
-                            // 27 x 8 bits: the uint8 itself, not widened first (that would
-                            // ask for a 27 x 48 multiplier, several DSPs), as in conv3x3_packed.
-                            const pack_s_t prod = wp[g][jp][f] * x[p + f % K][f / K];
+                            // The uint8 as it is: widened first, it would need a 27 x 48 multiplier.
+                            const packed_sum_t prod = packed[g][pair][tap] * window[p + tap % KERNEL][tap / KERNEL];
                             #pragma HLS BIND_OP variable=prod op=mul impl=dsp
-                            s += prod;
+                            sum += prod;
                         }
-                        lo += pack_low<SHIFT_P>((int64_t)s);
-                        hi += pack_high<SHIFT_P>((int64_t)s);
+                        low += packed_low<PACK_SHIFT>((int64_t)sum);
+                        high += packed_high<PACK_SHIFT>((int64_t)sum);
                     }
-                    o.v[p * OCP + 2 * jp] = requant_relu8<SHIFT, ACT_MAX>(lo);
-                    o.v[p * OCP + 2 * jp + 1] = requant_relu8<SHIFT, ACT_MAX>(hi);
+                    outputs.v[p * OUT_PER_CYCLE + 2 * pair] = requant_relu8<SHIFT, ACT_MAX>(low);
+                    outputs.v[p * OUT_PER_CYCLE + 2 * pair + 1] = requant_relu8<SHIFT, ACT_MAX>(high);
                 }
             } else {
-                for (int j = 0; j < OCP; j++) {
+                for (int j = 0; j < OUT_PER_CYCLE; j++) {
                     #pragma HLS UNROLL
-                    acc_t sum = bl[g][j];
-                    for (int f = 0; f < F; f++) {
+                    acc_t sum = bias[g][j];
+                    for (int tap = 0; tap < TAPS; tap++) {
                         #pragma HLS UNROLL
-                        sum += mul<DSP, acc_t>(x[p + f % K][f / K], wl[g][j][f]);
+                        sum += mul<DSP, acc_t>(window[p + tap % KERNEL][tap / KERNEL], weight[g][j][tap]);
                     }
-                    o.v[p * OCP + j] = requant_relu8<SHIFT, ACT_MAX>(sum);
+                    outputs.v[p * OUT_PER_CYCLE + j] = requant_relu8<SHIFT, ACT_MAX>(sum);
                 }
             }
         }
-        out.write(o);
-        if (g == GROUPS - 1) { g = 0; ps = ps == PSTEPS - 1 ? 0 : ps + 1; }
+        out.write(outputs);
+        if (g == GROUPS - 1) { g = 0; position_step = position_step == POSITION_STEPS - 1 ? 0 : position_step + 1; }
         else g++;
     }
 }
 
-// pool_assemble: conv1d_engine's vectors -> the pooled map the next layer reads:
-// MaxPool1d(2) over the first 2 x L_POOL positions (the rest are the engine's
-// round-up, never used). The positions arrive in order; each position step's POS
-// x OC values are shifted in at the end of a register array (every index a
-// constant), and at a pixel's last step the pairs are pooled and the map goes out.
-template<int L_OUT, int POS, int OCP, int OC, int L_POOL>
-void pool_assemble(hls::stream<vec_t<uact_t, POS * OCP> >& in, hls::stream<map_t<uact_t, L_POOL, OC> >& out,
-                   int height, int width) {
-    constexpr int GROUPS = OC / OCP;
-    constexpr int PSTEPS = (L_OUT + POS - 1) / POS;
-    constexpr int STEPS = PSTEPS * GROUPS;
-    constexpr int LP = PSTEPS * POS;                       // positions held
-    static_assert(2 * L_POOL <= LP, "the pool needs 2 x L_POOL positions");
-    uact_t conv[LP][OC];
+// conv1d_engine's outputs to the pooled map the next layer reads: MaxPool1d(2)
+// over the first 2 x POOLED_LENGTH positions. Each step's values are shifted in
+// at the end of a register array; at a pixel's last step the map goes out.
+template<int OUT_LENGTH, int POSITIONS_PER_CYCLE, int OUT_PER_CYCLE, int OUT_CHANNELS, int POOLED_LENGTH>
+void pool_assemble(hls::stream<vec_t<uact_t, POSITIONS_PER_CYCLE * OUT_PER_CYCLE> >& in,
+                   hls::stream<map_t<uact_t, POOLED_LENGTH, OUT_CHANNELS> >& out, int height, int width) {
+    constexpr int GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
+    constexpr int POSITION_STEPS = (OUT_LENGTH + POSITIONS_PER_CYCLE - 1) / POSITIONS_PER_CYCLE;
+    constexpr int STEPS = POSITION_STEPS * GROUPS;
+    constexpr int HELD = POSITION_STEPS * POSITIONS_PER_CYCLE;
+    uact_t conv[HELD][OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=conv type=complete dim=0
     const uint32_t pixels = pixel_count(height, width);
-    int ps = 0, g = 0;
+    int position_step = 0, g = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=16 max=11754288
-        const vec_t<uact_t, POS * OCP> v = in.read();
+        const vec_t<uact_t, POSITIONS_PER_CYCLE * OUT_PER_CYCLE> value = in.read();
         if (g == 0) {
-            // A new position step: make room for its POS positions at the end.
-            for (int l = 0; l < LP - POS; l++)
-                for (int c = 0; c < OC; c++) {
+            for (int pos = 0; pos < HELD - POSITIONS_PER_CYCLE; pos++)
+                for (int ch = 0; ch < OUT_CHANNELS; ch++) {
                     #pragma HLS UNROLL
-                    conv[l][c] = conv[l + POS][c];
+                    conv[pos][ch] = conv[pos + POSITIONS_PER_CYCLE][ch];
                 }
         }
-        // This group's channels of the newest POS positions. With one group (GROUPS
-        // == 1) the channel index is a constant; otherwise a GROUPS-way choice.
-        // (Written with the index g, not as a loop over the groups with "if (gg ==
-        // g)": Apple clang 15 at -O2 got that form wrong in conv1d_stream.hpp.)
-        for (int p = 0; p < POS; p++)
-            for (int j = 0; j < OCP; j++) {
+        // Indexed by g, not a loop over the groups with "if (gg == g)": Apple clang 15
+        // at -O2 got that form wrong in conv1d_stream.hpp.
+        for (int p = 0; p < POSITIONS_PER_CYCLE; p++)
+            for (int j = 0; j < OUT_PER_CYCLE; j++) {
                 #pragma HLS UNROLL
-                conv[LP - POS + p][g * OCP + j] = v.v[p * OCP + j];
+                conv[HELD - POSITIONS_PER_CYCLE + p][g * OUT_PER_CYCLE + j] = value.v[p * OUT_PER_CYCLE + j];
             }
-        if (ps == PSTEPS - 1 && g == GROUPS - 1) {
-            map_t<uact_t, L_POOL, OC> m;
-            for (int l = 0; l < L_POOL; l++)
-                for (int c = 0; c < OC; c++) {
+        if (position_step == POSITION_STEPS - 1 && g == GROUPS - 1) {
+            map_t<uact_t, POOLED_LENGTH, OUT_CHANNELS> pooled;
+            for (int pos = 0; pos < POOLED_LENGTH; pos++)
+                for (int ch = 0; ch < OUT_CHANNELS; ch++) {
                     #pragma HLS UNROLL
-                    const uact_t a = conv[2 * l][c], b = conv[2 * l + 1][c];
-                    m.v[l][c] = a > b ? a : b;
+                    const uact_t a = conv[2 * pos][ch], b = conv[2 * pos + 1][ch];
+                    pooled.v[pos][ch] = a > b ? a : b;
                 }
-            out.write(m);
+            out.write(pooled);
         }
-        if (g == GROUPS - 1) { g = 0; ps = ps == PSTEPS - 1 ? 0 : ps + 1; }
+        if (g == GROUPS - 1) { g = 0; position_step = position_step == POSITION_STEPS - 1 ? 0 : position_step + 1; }
         else g++;
     }
 }
 
-// dense_scores: flatten (channel-major, as torch.flatten on (C, L): feature c * L
-// + l) and the dense layer, FEAT features x CLASSES a cycle: F / FEAT cycles a
-// pixel. Out: the CLASSES sums, times 2^OUT_SHIFT (bias * 2^BIAS_SHIFT + sum(act
-// * q), all left-shifted to the scores' fraction bits). DSP: the FEAT x CLASSES
-// multipliers in DSPs or LUTs.
-template<int L, int C, int CLASSES, int FEAT, int BIAS_SHIFT, int OUT_SHIFT,
-         const wgt_t (&WEIGHT)[CLASSES][L * C], const wgt_t (&BIAS)[CLASSES], bool DSP>
-void dense_scores(hls::stream<map_t<uact_t, L, C> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out,
+// Flatten (channel-major, as torch.flatten) and the dense layer, FEATURES_PER_CYCLE
+// features a cycle. Out: the scores, shifted left by OUT_SHIFT to their fraction bits.
+template<int LENGTH, int CHANNELS, int CLASSES, int FEATURES_PER_CYCLE, int BIAS_SHIFT, int OUT_SHIFT,
+         const wgt_t (&WEIGHT)[CLASSES][LENGTH * CHANNELS], const wgt_t (&BIAS)[CLASSES], bool DSP>
+void dense_scores(hls::stream<map_t<uact_t, LENGTH, CHANNELS> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out,
                   int height, int width) {
-    constexpr int F = L * C, STEPS = F / FEAT;
-    static_assert(F % FEAT == 0, "FEAT must divide the features");
-    static_assert(BIAS_SHIFT >= 0 && OUT_SHIFT >= 0, "the scores keep every fraction bit of the sums");
-    wgt_t wl[STEPS][CLASSES][FEAT];                        // per step: its features' weights
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
+    constexpr int FEATURES = LENGTH * CHANNELS, STEPS = FEATURES / FEATURES_PER_CYCLE;
+    wgt_t weight[STEPS][CLASSES][FEATURES_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
     load_w: for (int s = 0; s < STEPS; s++)
         for (int c = 0; c < CLASSES; c++)
-            for (int i = 0; i < FEAT; i++) {
+            for (int i = 0; i < FEATURES_PER_CYCLE; i++) {
                 #pragma HLS PIPELINE II=1
-                wl[s][c][i] = WEIGHT[c][s * FEAT + i];
+                weight[s][c][i] = WEIGHT[c][s * FEATURES_PER_CYCLE + i];
             }
 
     const uint32_t pixels = pixel_count(height, width);
-    uact_t flat[F];            // the features, shifted FEAT a step
+    uact_t flat[FEATURES];
     #pragma HLS ARRAY_PARTITION variable=flat type=complete
-    acc_t acc[CLASSES];
-    #pragma HLS ARRAY_PARTITION variable=acc type=complete
+    acc_t sums[CLASSES];
+    #pragma HLS ARRAY_PARTITION variable=sums type=complete
     int s = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=16 max=10448256
         if (s == 0) {
-            const map_t<uact_t, L, C> m = in.read();
-            for (int c = 0; c < C; c++)
-                for (int l = 0; l < L; l++) {
+            const map_t<uact_t, LENGTH, CHANNELS> map = in.read();
+            for (int ch = 0; ch < CHANNELS; ch++)
+                for (int pos = 0; pos < LENGTH; pos++) {
                     #pragma HLS UNROLL
-                    flat[c * L + l] = m.v[l][c];
+                    flat[ch * LENGTH + pos] = map.v[pos][ch];
                 }
         } else {
-            for (int f = 0; f < F - FEAT; f++) {
+            for (int f = 0; f < FEATURES - FEATURES_PER_CYCLE; f++) {
                 #pragma HLS UNROLL
-                flat[f] = flat[f + FEAT];
+                flat[f] = flat[f + FEATURES_PER_CYCLE];
             }
         }
         for (int c = 0; c < CLASSES; c++) {
             #pragma HLS UNROLL
             acc_t part = 0;
-            for (int i = 0; i < FEAT; i++) {
+            for (int i = 0; i < FEATURES_PER_CYCLE; i++) {
                 #pragma HLS UNROLL
-                part += mul<DSP, acc_t>(flat[i], wl[s][c][i]);
+                part += mul<DSP, acc_t>(flat[i], weight[s][c][i]);
             }
-            acc[c] = (s == 0 ? (acc_t)BIAS[c] * ((acc_t)1 << BIAS_SHIFT) : acc[c]) + part;
+            sums[c] = (s == 0 ? (acc_t)BIAS[c] * ((acc_t)1 << BIAS_SHIFT) : sums[c]) + part;
         }
         if (s == STEPS - 1) {
-            vec_t<acc_t, CLASSES> o;
+            vec_t<acc_t, CLASSES> scores;
             for (int c = 0; c < CLASSES; c++) {
                 #pragma HLS UNROLL
-                o.v[c] = acc[c] * ((acc_t)1 << OUT_SHIFT);
+                scores.v[c] = sums[c] * ((acc_t)1 << OUT_SHIFT);
             }
-            out.write(o);
+            out.write(scores);
             s = 0;
         } else {
             s++;

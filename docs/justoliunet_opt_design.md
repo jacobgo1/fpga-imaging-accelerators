@@ -46,7 +46,7 @@ memory, this one by arithmetic. A full capture is $N = 598 \cdot 1092 = 653\,016
 - **DSPs where the work is:** conv2 and conv3 (75 % of the MACs) on DSPs, two
   multiplies per DSP48E2 (two output channels share a uint8 activation). conv1 (12-bit
   input, not packable), conv4, dense in LUTs. ~1 304 of 1 728 DSPs. Every layer's
-  parallelism and DSP/LUT choice is a constant in `justoliunet_opt.hpp` (`C4_PACKED`
+  parallelism and DSP/LUT choice is a constant in `justoliunet_opt.hpp` (`CONV4_PACKED`
   moves conv4 to 324 more DSPs).
 - **Formats** (chosen on the labelled aegean pixels, `tools/justoliunet_model.py`):
   12-bit z-score input with 8 fraction bits (the 2D kernel's int8/5 bits cost

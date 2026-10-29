@@ -2,11 +2,11 @@
 // SpecPW-UNet, small: the checks of the ZCU104 kernels (sp_unet_small_opt/sp_unet_opt_check.hpp),
 // the same answers.
 #include "sp_unet_small_opt_direct_zynq7020.hpp"
-// The golden kernel: the float reference, and the weights as namespace q (floats).
+// The golden kernel: the float reference, and the weights as namespace weights (floats).
 #include "../../src/hls/sp_unet_small/sp_unet_small.cpp"
 #include <cstdio>
 
-static void run_kernel(spu_raw_t *din, spu_out_t *dout, int height, int width) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {
     // hls::burst_maxi takes a plain (not const) pointer; cycles counts only in the RTL.
     uint32_t cycles = 0;
     sp_unet_small_opt_direct_zynq7020(din, dout, height, width, cycles);

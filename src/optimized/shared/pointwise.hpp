@@ -3,115 +3,107 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// pointwise: a 1x1 conv layer on int16 activations, pixel by pixel: every
-// input channel of a pixel at once, PO output channels a cycle, OUT/PO cycles
-// a pixel, IN x PO multipliers (DSP: in DSPs, or LUTs). The weights: one small
-// memory per (input channel, output lane), OUT/PO deep.
-//
-// RELU: each output ReLU'd and rounded off SHIFT bits to an int16 activation
-// (out: act_t); otherwise the plain sums, bias included (out: acc_t), for the
-// final layer's scores. G pixels go out together: G = 4 gathers each 2x2
-// block's pixels into one vector, for a layer in block order
-// (wino_conv3x3.hpp) when the pixels come in block order.
-//
-// The image is cut into PH x PW patches (patch_grid.hpp), PIX pixels each.
-// WEIGHT and BIAS: the layer's int8 arrays, template arguments so that they
-// stay a ROM inside this process. BIAS_SHIFT: the sums' fraction bits minus
-// the bias's.
+// A 1x1 conv on int16 activations: IN_PER_CYCLE input channels times OUT_PER_CYCLE
+// output channels a cycle, so a layer with time to spare uses fewer multipliers.
+// RELU: outputs ReLU'd and rounded off SHIFT bits to activations; otherwise the
+// sums, for the scores. PIXELS_PER_WORD = 4 sends each 2x2 block's pixels
+// together, for a next layer in block order.
 template<bool RELU, int SHIFT> struct pointwise_out {
     typedef act_t type;
-    static type of(acc_t v) {
+    static type of(acc_t sum) {
         #pragma HLS INLINE
-        return requant_relu<SHIFT>(v);
+        return requant_relu<SHIFT>(sum);
     }
 };
 template<int SHIFT> struct pointwise_out<false, SHIFT> {
     typedef acc_t type;
-    static type of(acc_t v) {
+    static type of(acc_t sum) {
         #pragma HLS INLINE
-        return v;
+        return sum;
     }
 };
 
-// PI: the input channels a step (default all of them): IN/PI x OUT/PO steps a
-// pixel, PI x PO multipliers, for a layer with time to spare on a chip with
-// few multipliers. Steps: output group outer, input group inner, PO running sums.
-template<int PH, int PW, int PIX, int IN, int OUT, int PO, int G, bool RELU, int BIAS_SHIFT, int SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][1][1], const wgt_t (&BIAS)[OUT], bool DSP, int PI = IN>
-void pointwise(hls::stream<vec_t<act_t, IN> >& in,
-               hls::stream<vec_t<typename pointwise_out<RELU, SHIFT>::type, G * OUT> >& out,
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
+         int PIXELS_PER_WORD, bool RELU, int BIAS_SHIFT, int SHIFT,
+         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const wgt_t (&BIAS)[OUT_CHANNELS], bool DSP,
+         int IN_PER_CYCLE = IN_CHANNELS>
+void pointwise(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
+               hls::stream<vec_t<typename pointwise_out<RELU, SHIFT>::type, PIXELS_PER_WORD * OUT_CHANNELS> >& out,
                int height, int width) {
-    static_assert(OUT % PO == 0 && IN % PI == 0 && PIX % G == 0, "PO must divide OUT, PI IN, G the pixels");
     typedef typename pointwise_out<RELU, SHIFT>::type out_t;
-    constexpr int OG = OUT / PO, IG = IN / PI, STEPS = OG * IG;
-    wgt_t wl[STEPS][PO][PI];    // step og * IG + ig: its PO x PI weights
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=2
-    #pragma HLS ARRAY_PARTITION variable=wl type=complete dim=3
-    acc_t bl[OG][PO];
-    #pragma HLS ARRAY_PARTITION variable=bl type=complete dim=2
-    load: for (int oc = 0; oc < OUT; oc++) {
-        for (int ic = 0; ic < IN; ic++) {
+    constexpr int OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE, IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE;
+    constexpr int STEPS = OUT_GROUPS * IN_GROUPS;   // per pixel: output group outer, input group inner
+    wgt_t weight[STEPS][OUT_PER_CYCLE][IN_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
+    acc_t bias[OUT_GROUPS][OUT_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=bias type=complete dim=2
+    load: for (int o = 0; o < OUT_CHANNELS; o++) {
+        for (int i = 0; i < IN_CHANNELS; i++) {
             #pragma HLS PIPELINE II=1
-            wl[(oc / PO) * IG + ic / PI][oc % PO][ic % PI] = WEIGHT[oc][ic][0][0];
+            weight[(o / OUT_PER_CYCLE) * IN_GROUPS + i / IN_PER_CYCLE][o % OUT_PER_CYCLE][i % IN_PER_CYCLE] =
+                WEIGHT[o][i][0][0];
         }
-        bl[oc / PO][oc % PO] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o / OUT_PER_CYCLE][o % OUT_PER_CYCLE] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
     }
 
-    act_t x[IN];                // this pixel
-    #pragma HLS ARRAY_PARTITION variable=x type=complete
-    acc_t run[PO];              // this output group's sums so far
-    #pragma HLS ARRAY_PARTITION variable=run type=complete
-    out_t ob[G * OUT];          // the G pixels' outputs
-    #pragma HLS ARRAY_PARTITION variable=ob type=complete
-    const int pixels = patch_count<PH, PW>(height, width) * PIX;
-    int og = 0, ig = 0, g = 0;  // the step's output and input group, the pixel of the G
-    constexpr int TRIPS = PIX * STEPS, MAX_TRIPS = 665 * TRIPS;   // a patch; a 598 x 1092 capture
+    act_t pixel[IN_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=pixel type=complete
+    acc_t running[OUT_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=running type=complete
+    out_t outputs[PIXELS_PER_WORD * OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=outputs type=complete
+    const int pixels = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * PIXELS;
+    int out_group = 0, in_group = 0, word_pixel = 0;
+    constexpr int TRIPS = PIXELS * STEPS, MAX_TRIPS = 665 * TRIPS;
     (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
     px: for (int t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
-        if (og == 0 && ig == 0) {
-            const vec_t<act_t, IN> v = in.read();
-            for (int i = 0; i < IN; i++) {
+        if (out_group == 0 && in_group == 0) {
+            const vec_t<act_t, IN_CHANNELS> value = in.read();
+            for (int i = 0; i < IN_CHANNELS; i++) {
                 #pragma HLS UNROLL
-                x[i] = v.v[i];
+                pixel[i] = value.v[i];
             }
         }
-        const int st = og * IG + ig;
-        for (int j = 0; j < PO; j++) {
+        const int step = out_group * IN_GROUPS + in_group;
+        for (int j = 0; j < OUT_PER_CYCLE; j++) {
             #pragma HLS UNROLL
-            acc_t sum = ig == 0 ? bl[og][j] : run[j];
-            for (int i = 0; i < PI; i++) {
+            acc_t sum = in_group == 0 ? bias[out_group][j] : running[j];
+            for (int i = 0; i < IN_PER_CYCLE; i++) {
                 #pragma HLS UNROLL
-                sum += mul<DSP, acc_t>(x[(IG == 1 ? 0 : ig * PI) + i], wl[st][j][i]);
+                sum += mul<DSP, acc_t>(pixel[(IN_GROUPS == 1 ? 0 : in_group * IN_PER_CYCLE) + i], weight[step][j][i]);
             }
-            run[j] = sum;
-            const out_t y = pointwise_out<RELU, SHIFT>::of(sum);
-            for (int s2 = 0; s2 < OG; s2++) {
+            running[j] = sum;
+            const out_t result = pointwise_out<RELU, SHIFT>::of(sum);
+            // Written at fixed places, the run-time choice in which statement runs.
+            for (int og = 0; og < OUT_GROUPS; og++) {
                 #pragma HLS UNROLL
-                for (int q = 0; q < G; q++) {
+                for (int p = 0; p < PIXELS_PER_WORD; p++) {
                     #pragma HLS UNROLL
-                    if (ig == IG - 1 && og == s2 && g == q) ob[q * OUT + s2 * PO + j] = y;
+                    if (in_group == IN_GROUPS - 1 && out_group == og && word_pixel == p)
+                        outputs[p * OUT_CHANNELS + og * OUT_PER_CYCLE + j] = result;
                 }
             }
         }
-        if (og == OG - 1 && ig == IG - 1 && g == G - 1) {
-            vec_t<out_t, G * OUT> o;
-            for (int i = 0; i < G * OUT; i++) {
+        if (out_group == OUT_GROUPS - 1 && in_group == IN_GROUPS - 1 && word_pixel == PIXELS_PER_WORD - 1) {
+            vec_t<out_t, PIXELS_PER_WORD * OUT_CHANNELS> word;
+            for (int i = 0; i < PIXELS_PER_WORD * OUT_CHANNELS; i++) {
                 #pragma HLS UNROLL
-                o.v[i] = ob[i];
+                word.v[i] = outputs[i];
             }
-            out.write(o);
+            out.write(word);
         }
-        if (ig < IG - 1) {
-            ig++;
+        if (in_group < IN_GROUPS - 1) {
+            in_group++;
         } else {
-            ig = 0;
-            if (og < OG - 1) {
-                og++;
+            in_group = 0;
+            if (out_group < OUT_GROUPS - 1) {
+                out_group++;
             } else {
-                og = 0;
-                g = g < G - 1 ? g + 1 : 0;
+                out_group = 0;
+                word_pixel = word_pixel < PIXELS_PER_WORD - 1 ? word_pixel + 1 : 0;
             }
         }
     }

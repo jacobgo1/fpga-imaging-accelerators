@@ -25,9 +25,9 @@ namespace jf = justoliunet_opt_formats;
 namespace fmt = spectralpointwise1d_formats;
 constexpr int IMG_H = 9, IMG_W = 7, PIX = IMG_H * IMG_W;
 
-static uint16_t raw[PIX][RAW_BANDS];
-static spw_raw_t din[PIX * WORDS];
-static spw_out_t dout[PIX];
+static uint16_t raw[PIX][CUBE_BANDS];
+static cube_word_t din[PIX * WORDS_PER_PIXEL];
+static score_word_t dout[PIX];
 static int32_t want[PIX][4];
 
 static int64_t round_shift64(int64_t s, int shift) {
@@ -52,7 +52,7 @@ static void ref_layer(const int64_t in[IN], const int8_t w[OUT][IN][1][1], int f
     }
 }
 
-static void reference_fixed(const uint16_t px[RAW_BANDS], int32_t out[4]) {
+static void reference_fixed(const uint16_t px[CUBE_BANDS], int32_t out[4]) {
     int64_t x[110], h1[24], h2[12], s[3];
     for (int k = 0; k < 110; k++) {
         const int64_t v = ((int64_t)px[8 + k] * jf::A[k] + jf::B[k]) >> jf::PREP_FRAC;
@@ -74,7 +74,7 @@ static void reference_fixed(const uint16_t px[RAW_BANDS], int32_t out[4]) {
 }
 
 // The float golden network on the float z-scores of the same pixel.
-static void reference_float(const uint16_t px[RAW_BANDS], float out[3]) {
+static void reference_float(const uint16_t px[CUBE_BANDS], float out[3]) {
     float x[110];
     for (int k = 0; k < 110; k++) {
         // mean and std back from A and B: A = 2^(IN_FRAC+PREP_FRAC) / std, B = -mean * A + half
@@ -82,14 +82,14 @@ static void reference_float(const uint16_t px[RAW_BANDS], float out[3]) {
         x[k] = (float)((px[8 + k] + b / a) * a / std::ldexp(1.0, jf::IN_FRAC + jf::PREP_FRAC));
     }
     spectralpointwise1d_golden<float, int8_t, 110, 24, 12, 3>(
-        x, q::convsp1_weight, pow2_neg(q::convsp1_weight_frac), q::convsp1_bias, pow2_neg(q::convsp1_bias_frac),
-        q::convsp2_weight, pow2_neg(q::convsp2_weight_frac), q::convsp2_bias, pow2_neg(q::convsp2_bias_frac),
-        q::convsp3_weight, pow2_neg(q::convsp3_weight_frac), q::convsp3_bias, pow2_neg(q::convsp3_bias_frac), out);
+        x, q::convsp1_weight, frac_to_scale(q::convsp1_weight_frac), q::convsp1_bias, frac_to_scale(q::convsp1_bias_frac),
+        q::convsp2_weight, frac_to_scale(q::convsp2_weight_frac), q::convsp2_bias, frac_to_scale(q::convsp2_bias_frac),
+        q::convsp3_weight, frac_to_scale(q::convsp3_weight_frac), q::convsp3_bias, frac_to_scale(q::convsp3_bias_frac), out);
 }
 
 static int compare(int height, int width) {
     const int n = height * width;
-    for (int i = 0; i < PIX; i++) dout[i] = spw_out_t();
+    for (int i = 0; i < PIX; i++) dout[i] = score_word_t();
     uint32_t cycles = 0;
     run_kernel(din, dout, height, width, cycles);
     int wrong = 0;
@@ -117,7 +117,7 @@ static int check_kernel() {
     std::mt19937 rng(5);
     std::normal_distribution<double> z(0.0, 1.0);
     for (int i = 0; i < PIX; i++)
-        for (int r = 0; r < RAW_BANDS; r++) {
+        for (int r = 0; r < CUBE_BANDS; r++) {
             double v = 65535.0;
             if (r >= 8 && r < 118) {
                 const int k = r - 8;
@@ -128,9 +128,9 @@ static int check_kernel() {
             raw[i][r] = (uint16_t)(v < 0 ? 0 : v > 65535 ? 65535 : std::lround(v));
         }
     for (int i = 0; i < PIX; i++)
-        for (int w = 0; w < WORDS; w++)
-            for (int l = 0; l < PORT_BANDS; l++)
-                din[i * WORDS + w][l] = raw[i][w * PORT_BANDS + l];
+        for (int w = 0; w < WORDS_PER_PIXEL; w++)
+            for (int l = 0; l < BANDS_PER_WORD; l++)
+                din[i * WORDS_PER_PIXEL + w][l] = raw[i][w * BANDS_PER_WORD + l];
 
     int classes[3] = {0}, agree = 0;
     float worst = 0, lo = 1e9f, hi = -1e9f;

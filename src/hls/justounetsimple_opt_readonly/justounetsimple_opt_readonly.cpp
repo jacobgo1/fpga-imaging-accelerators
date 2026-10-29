@@ -2,89 +2,86 @@
 #include "../../optimized/shared/read_rows.hpp"
 #include "../../optimized/shared/count_cycles.hpp"
 
-constexpr int WORDS = RAW_BANDS / PORT_BANDS;        // 15 words per pixel in the cube
-static_assert(RAW_BANDS % PORT_BANDS == 0, "a pixel is whole words");
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
 
-// drain: in patch_buffer's place, a word from every reader each cycle. Each
-// reader sends PH / PORTS rows x PW pixels x WORDS words a patch (the edge
-// patches padded to full size), so drain takes exactly that many: fewer would
-// leave the readers stuck on full FIFOs, more would wait forever. The sum
-// keeps the reads from being optimized away. Then a word on finished, for
-// count_cycles, as store_scores does in justounetsimple_opt.
-template<int PH, int PW, int WORDS, int PORTS>
-void drain(hls::stream<jopt_raw_t> in[PORTS], hls::burst_maxi<jopt_out_t> dout, int height, int width,
-           hls::stream<bool>& finished) {
-    static_assert(PORT_BANDS % 2 == 0, "two lanes per int32 of dout");
-    constexpr int PER_PATCH = PH / PORTS * PW * WORDS;
-    const int patches = patch_count<PH, PW>(height, width);
-    uint16_t sum[PORT_BANDS];
-    #pragma HLS ARRAY_PARTITION variable=sum type=complete
-    for (int b = 0; b < PORT_BANDS; b++) sum[b] = 0;
+// Takes a word from every reader each cycle, as patch_buffer does, and adds
+// them up so HLS keeps every read. It must take exactly as many words as the
+// readers send, or they stall.
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int WORDS_PER_PIXEL, int READ_PORTS>
+void sum_all_words(hls::stream<cube_word_t> cube_words[READ_PORTS], hls::burst_maxi<score_word_t> dout,
+                   int height, int width, hls::stream<bool>& all_written)
+{
+    constexpr int WORDS_PER_PORT_AND_PATCH = PATCH_HEIGHT / READ_PORTS * PATCH_WIDTH * WORDS_PER_PIXEL;
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+
+    uint16_t band_sums[BANDS_PER_WORD];
+    #pragma HLS ARRAY_PARTITION variable=band_sums type=complete
+    for (int band = 0; band < BANDS_PER_WORD; band++)
+        band_sums[band] = 0;
+
     patch: for (int p = 0; p < patches; p++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        word: for (int k = 0; k < PER_PATCH; k++) {
+        word: for (int w = 0; w < WORDS_PER_PORT_AND_PATCH; w++) {
             #pragma HLS PIPELINE II=1
-            jopt_raw_t v[PORTS];
-            for (int i = 0; i < PORTS; i++) {
+            cube_word_t words[READ_PORTS];
+            for (int port = 0; port < READ_PORTS; port++) {
                 #pragma HLS UNROLL
-                v[i] = in[i].read();
+                words[port] = cube_words[port].read();
             }
-            for (int b = 0; b < PORT_BANDS; b++) {
+            for (int band = 0; band < BANDS_PER_WORD; band++) {
                 #pragma HLS UNROLL
-                uint16_t s = sum[b];
-                for (int i = 0; i < PORTS; i++) {
+                uint16_t sum = band_sums[band];
+                for (int port = 0; port < READ_PORTS; port++) {
                     #pragma HLS UNROLL
-                    s += v[i][b];
+                    sum += words[port][band];
                 }
-                sum[b] = s;
+                band_sums[band] = sum;
             }
         }
     }
-    jopt_out_t out;
-    for (int i = 0; i < PORT_BANDS / 2; i++) {
+
+    score_word_t checksum;
+    for (int i = 0; i < BANDS_PER_WORD / 2; i++) {
         #pragma HLS UNROLL
-        out[i] = (int32_t)((uint32_t)sum[2 * i] | ((uint32_t)sum[2 * i + 1] << 16));
+        checksum[i] = (int32_t)((uint32_t)band_sums[2 * i] | ((uint32_t)band_sums[2 * i + 1] << 16));
     }
     dout.write_request(0, 1);
-    dout.write(out);
+    dout.write(checksum);
     dout.write_response();
-    finished.write(true);
+    all_written.write(true);
 }
 
-void justounetsimple_opt_readonly(hls::burst_maxi<jopt_raw_t> din0, hls::burst_maxi<jopt_raw_t> din1,
-                                  hls::burst_maxi<jopt_raw_t> din2, hls::burst_maxi<jopt_raw_t> din3,
-                                  hls::burst_maxi<jopt_out_t> dout, int height, int width,
+void justounetsimple_opt_readonly(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
+                                  hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+                                  hls::burst_maxi<score_word_t> dout, int height, int width,
                                   uint32_t& cycles)
 {
-// The interfaces of justounetsimple_opt, unchanged, so the reads are the same
-// and the same block design (boards/zcu104/system.tcl) wires it the same way.
-// depth is only for co-simulation: the testbench's 40 x 50 image.
-#pragma HLS INTERFACE mode = m_axi port = din0 bundle = gmem0 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
-#pragma HLS INTERFACE mode = m_axi port = din1 bundle = gmem1 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
-#pragma HLS INTERFACE mode = m_axi port = din2 bundle = gmem2 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
-#pragma HLS INTERFACE mode = m_axi port = din3 bundle = gmem3 offset = slave depth = 30000 max_read_burst_length = 256 num_read_outstanding = 4
-#pragma HLS INTERFACE mode = m_axi port = dout bundle = gmem4 offset = slave depth = 2000 max_write_burst_length = 32 num_write_outstanding = 16
-#pragma HLS INTERFACE mode = s_axilite port = din0 bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = din1 bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = din2 bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = din3 bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = dout bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = height bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = width bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = cycles bundle = control
-#pragma HLS INTERFACE mode = s_axilite port = return bundle = control
-#pragma HLS DATAFLOW
+    // justounetsimple_opt's interfaces, so the reads are the same.
+    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din2 bundle=gmem2 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din3 bundle=gmem3 offset=slave depth=30000 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem4 offset=slave depth=2000 max_write_burst_length=32 num_write_outstanding=16
+    #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din2   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din3   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
+    #pragma HLS DATAFLOW
 
-    hls::stream<jopt_raw_t> s_raw[PORTS];
-    hls::stream<bool> s_finished("s_finished");
-// As in justounetsimple_opt: the readers run ahead of whoever takes their words.
-#pragma HLS STREAM variable = s_raw depth = 64
+    hls::stream<cube_word_t> cube_words[READ_PORTS];
+    hls::stream<bool> all_written("all_written");
+    #pragma HLS STREAM variable=cube_words depth=64
 
-    read_rows_ahead<H, W, WORDS, PORTS, 0>(din0, s_raw[0], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 1>(din1, s_raw[1], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 2>(din2, s_raw[2], height, width);
-    read_rows_ahead<H, W, WORDS, PORTS, 3>(din3, s_raw[3], height, width);
-    drain<H, W, WORDS, PORTS>(s_raw, dout, height, width, s_finished);
-    // Last: C simulation runs the processes in this order (count_cycles.hpp).
-    count_cycles(s_finished, cycles);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
+    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
+    sum_all_words<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS>(cube_words, dout, height, width, all_written);
+
+    count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
 }

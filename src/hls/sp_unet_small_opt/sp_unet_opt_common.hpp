@@ -1,67 +1,45 @@
 #pragma once
 
-// What the optimized SpecPW-UNet kernels' DATAFLOW chains share (the Winograd one,
-// sp_unet_opt_dataflow.hpp, and the direct one, sp_unet_direct_dataflow.hpp): the
-// checks on the weights and the preprocessing, the channel counts, the fraction
-// bits. Before including it, a kernel's .cpp includes its header and its model's int8 weights as
-// namespace q and its table of sizes as namespace cfg.
+// What the optimized SpecPW-UNet chains share. The kernel's .cpp first includes
+// its header, its model's weights as namespace weights and its size table as
+// namespace sizes.
 
-// The kernel's header comes first (sp_unet_opt.hpp, or sp_unet_opt_zynq7020.hpp):
-// it sets the ports, the word width and the formats this file checks against.
 #include "../justounetsimple_opt/justounetsimple_prep.hpp"
 #include "../../optimized/shared/fixed_point.hpp"
-#include <type_traits>
 
-// The preprocessing is justounetsimple_opt's (tools/specpw_unet_model.py uses
-// its preprocess_fixed): the same integer z-score constants.
-namespace prep = justounetsimple_prep;
-static_assert(std::is_same<std::remove_const<std::remove_all_extents<
-                               decltype(q::convsp1_weight)>::type>::type,
-                           wgt_t>::value,
-              "the weights must be int8; did the header's element type change?");
-static_assert(prep::IN_FRAC == IN_FRAC && prep::IN_MAX == 127,
-              "justounetsimple_prep.hpp is out of date: run python tools/justounetsimple_model.py");
+namespace zscore = justounetsimple_prep;   // justounetsimple_opt's preprocessing
 
-// The channel counts, from the weights (int8: one byte each).
-constexpr int S1 = sizeof(q::convsp1_bias), S2 = sizeof(q::convsp2_bias), S3 = sizeof(q::convsp3_bias);
-constexpr int C1 = sizeof(q::double1_block_0_bias), C2 = sizeof(q::double2_block_0_bias);
-constexpr int C3 = sizeof(q::double3_block_0_bias), C4 = sizeof(q::double4_block_0_bias);
-static_assert(sizeof(q::convsp1_weight) == S1 * IN_CH && sizeof(q::final_bias) == CLASSES &&
-                  sizeof(q::double4_block_0_weight) == C4 * (C3 + C1) * 9,
-              "the weights are not SpecPW-UNet's");
+// The channel counts, from the weights (int8: a byte each).
+constexpr int STEM1 = sizeof(weights::convsp1_bias), STEM2 = sizeof(weights::convsp2_bias);
+constexpr int STEM3 = sizeof(weights::convsp3_bias);
+constexpr int DOUBLE1 = sizeof(weights::double1_block_0_bias), DOUBLE2 = sizeof(weights::double2_block_0_bias);
+constexpr int DOUBLE3 = sizeof(weights::double3_block_0_bias), DOUBLE4 = sizeof(weights::double4_block_0_bias);
 
-constexpr int WORDS = RAW_BANDS / PORT_BANDS;        // 15 words per pixel in the cube
-constexpr int FIRST = prep::FIRST_BAND / PORT_BANDS; // word 0 (raw bands 0-7) is dropped
-constexpr int KEPT = WORDS - FIRST;                  // words 1-14: kept bands 0-111
-constexpr int CHUNKS = (IN_CH + cfg::P1 - 1) / cfg::P1;   // convsp1's chunks a pixel
-static_assert(RAW_BANDS % PORT_BANDS == 0 && cfg::P1 % PORT_BANDS == 0, "a chunk is whole words");
-static_assert(prep::FIRST_BAND % PORT_BANDS == 0 && KEPT * PORT_BANDS >= IN_CH &&
-                  (KEPT * PORT_BANDS + cfg::P1 - 1) / cfg::P1 == CHUNKS &&
-                  sizeof(prep::A) / sizeof(prep::A[0]) == KEPT * PORT_BANDS,
-              "the kept bands must be whole words, to the end of each pixel, in convsp1's chunks");
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
+constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
+constexpr int CONVSP1_CHUNKS = (MODEL_BANDS + sizes::CONVSP1_BANDS_PER_CYCLE - 1) / sizes::CONVSP1_BANDS_PER_CYCLE;
 
-// A layer's fraction bits: its sums carry its input's plus its weights'; the
-// bias is shifted up to them, the sums rounded off to the next activations'.
-template<int IN_F, int W_F, int B_F, int OUT_F>
-struct spu_fracs {
-    static constexpr int SUM = IN_F + W_F, BIAS_SHIFT = SUM - B_F, SHIFT = SUM - OUT_F;
-    static_assert(BIAS_SHIFT >= 0, "a bias has more fraction bits than its layer's sums");
-    static_assert(SHIFT >= 0, "a requantization would have to add bits");
+// A layer's sums have its input's fraction bits plus its weights'; the bias is
+// shifted up to them, the sums rounded down to the output's.
+template<int IN_FRAC_BITS, int WEIGHT_FRAC_BITS, int BIAS_FRAC_BITS, int OUT_FRAC_BITS>
+struct layer_fracs {
+    static constexpr int SUM = IN_FRAC_BITS + WEIGHT_FRAC_BITS;
+    static constexpr int BIAS_SHIFT = SUM - BIAS_FRAC_BITS, SHIFT = SUM - OUT_FRAC_BITS;
 };
-#define SPU_FRACS(name, layer, in_frac, out_frac) \
-    typedef spu_fracs<in_frac, q::layer##_weight_frac, q::layer##_bias_frac, out_frac> name
-SPU_FRACS(F_SP1, convsp1, IN_FRAC, ACT_FRAC);
-SPU_FRACS(F_SP2, convsp2, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_SP3, convsp3, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D1A, double1_block_0, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D1B, double1_block_3, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D2A, double2_block_0, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D2B, double2_block_3, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_UP1, up1_1, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D3A, double3_block_0, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D3B, double3_block_3, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_UP2, up2_1, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D4A, double4_block_0, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_D4B, double4_block_3, ACT_FRAC, ACT_FRAC);
-SPU_FRACS(F_FIN, final, ACT_FRAC, OUT_FRAC);
-#undef SPU_FRACS
+#define LAYER_FRACS(name, layer, in_frac, out_frac) \
+    typedef layer_fracs<in_frac, weights::layer##_weight_frac, weights::layer##_bias_frac, out_frac> name
+LAYER_FRACS(CONVSP1_FRACS, convsp1, ZSCORE_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(CONVSP2_FRACS, convsp2, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(CONVSP3_FRACS, convsp3, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE1_CONV1_FRACS, double1_block_0, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE1_CONV2_FRACS, double1_block_3, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE2_CONV1_FRACS, double2_block_0, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE2_CONV2_FRACS, double2_block_3, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(UP1_FRACS, up1_1, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE3_CONV1_FRACS, double3_block_0, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE3_CONV2_FRACS, double3_block_3, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(UP2_FRACS, up2_1, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE4_CONV1_FRACS, double4_block_0, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(DOUBLE4_CONV2_FRACS, double4_block_3, ACTIVATION_FRAC_BITS, ACTIVATION_FRAC_BITS);
+LAYER_FRACS(FINAL_FRACS, final, ACTIVATION_FRAC_BITS, SCORE_FRAC_BITS);
+#undef LAYER_FRACS

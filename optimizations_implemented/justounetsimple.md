@@ -113,7 +113,7 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
   between the stages: a cycle model with HLS's pipeline stalls (the one that matched
   sp_unet_small_opt_direct within 0.3 %) gives 4 140 with ideal memory, as built, because every
   stage after conv1 has time to spare. With DDR in the model, the kernel takes exactly as long as the
-  read-only kernel (`patch_buffer` hides nothing and loses nothing; deeper `s_raw` changes nothing):
+  read-only kernel (`patch_buffer` hides nothing and loses nothing; deeper `cube_words` changes nothing):
   6 707 cycles at 250 MHz is DDR giving the four ports ~9.2 GB/s together. conv1's 4 129 would need
   ~14.9 GB/s. So it is memory-bound: compare in microseconds, not cycles (26.8 us a patch); a faster
   clock adds cycles, not speed. To confirm: `justounetsimple_opt_readonly` at 250 MHz, ~6 700 cycles a patch.

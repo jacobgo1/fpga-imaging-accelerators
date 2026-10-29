@@ -1,11 +1,8 @@
 #pragma once
 
-// Elementwise ReLU over a [position][channel] spectrum (see conv1d_golden.hpp).
-template<typename data_t, int L, int CH>
-void relu1d_golden(const data_t din[L][CH], data_t dout[L][CH]) {
-    for (int j = 0; j < L; j++) {
-        for (int c = 0; c < CH; c++) {
-            dout[j][c] = din[j][c] > 0 ? din[j][c] : 0;
-        }
-    }
+template<typename data_t, int LENGTH, int CHANNELS>
+void relu1d_golden(const data_t din[LENGTH][CHANNELS], data_t dout[LENGTH][CHANNELS]) {
+    for (int pos = 0; pos < LENGTH; pos++)
+        for (int ch = 0; ch < CHANNELS; ch++)
+            dout[pos][ch] = din[pos][ch] > 0 ? din[pos][ch] : 0;
 }

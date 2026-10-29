@@ -3,122 +3,108 @@
 #include "conv3x3_packed.hpp"
 #include "patch_grid.hpp"
 
-// pointwise_packed: a 1x1 conv layer on int8 inputs (the z-scored bands, a
-// spectral stem's first layer), two multiplies per DSP as in
-// conv3x3_packed.hpp (read that first): output channels 2j and 2j + 1 share
-// each band, so their weights are packed into one number and one multiply
-// gives both products. ReLU, then rounded off SHIFT bits to int16 activations.
-//
-// In: a pixel's bands in chunks of P, one chunk a cycle (pixel_buffer), the
-// last one padded with zero bands. Out: the pixel's OUT activations, once its
-// last chunk is in. OUT / 2 x P DSPs, IN_PAD / P cycles a pixel. The pixel
-// order does not matter (a 1x1 conv): raster or block order.
-//
-// The image is cut into PH x PW patches (patch_grid.hpp), PIX pixels each.
-// WEIGHT and BIAS: the layer's int8 arrays, template arguments so that they
-// stay a ROM inside this process. BIAS_SHIFT: the sums' fraction bits minus
-// the bias's. PSHIFT and GROUP: the packing, the board's (zcu104/pointwise_wide.hpp).
-//
-// OPASS: the channel pairs in OPASS passes over each chunk (the chunk read once
-// and kept), OUT / 2 / OPASS x P DSPs and IN_PAD / P x OPASS cycles a pixel,
-// for a chip with few DSPs; 1: all pairs at once.
-template<int PH, int PW, int PIX, int IN, int OUT, int P, int BIAS_SHIFT, int SHIFT,
-         const wgt_t (&WEIGHT)[OUT][IN][1][1], const wgt_t (&BIAS)[OUT], int PSHIFT, int GROUP, int OPASS = 1>
-void pointwise_packed(hls::stream<vec_t<act8_t, P> >& in, hls::stream<vec_t<act_t, OUT> >& out,
+// A 1x1 conv on int8 inputs (the z-scored bands), two multiplies per DSP as in
+// conv3x3_packed.hpp, then ReLU and SHIFT bits rounded off. A pixel's bands come
+// in chunks of IN_PER_CYCLE, the last padded with zeros; its activations leave
+// after the last chunk. OUTPUT_PASSES > 1 splits the channel pairs over that many
+// passes per chunk, for a chip with few DSPs. PACK_SHIFT and GROUP: the board's packing.
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
+         int BIAS_SHIFT, int SHIFT,
+         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const wgt_t (&BIAS)[OUT_CHANNELS],
+         int PACK_SHIFT, int GROUP, int OUTPUT_PASSES = 1>
+void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec_t<act_t, OUT_CHANNELS> >& out,
                       int height, int width) {
-    static_assert(OUT % 2 == 0, "output channels go in pairs");
-    static_assert((OUT / 2) % OPASS == 0, "OPASS must divide the channel pairs");
-    static_assert(P % GROUP == 0, "P must be a multiple of GROUP");
-    static_assert(GROUP * 127 * 128 < (1 << (PSHIFT - 1)), "a group's low sum must stay inside PSHIFT signed bits");
-    constexpr int CHUNKS = (IN + P - 1) / P, IN_PAD = CHUNKS * P, PP = OUT / 2 / OPASS;
+    constexpr int CHUNKS = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE, PADDED_IN = CHUNKS * IN_PER_CYCLE;
+    constexpr int PAIRS_PER_PASS = OUT_CHANNELS / 2 / OUTPUT_PASSES;
 
-    // Pair o * PP + jj's packed weights at [jj][chunk * OPASS + o][lane], zero past IN.
-    pack_w_t<PSHIFT> wp[PP][CHUNKS * OPASS][P];
-    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=1
-    #pragma HLS ARRAY_PARTITION variable=wp type=complete dim=3
-    acc_t bl[OUT];
-    #pragma HLS ARRAY_PARTITION variable=bl type=complete
-    load_w: for (int j = 0; j < OUT / 2; j++)
-        for (int ic = 0; ic < IN_PAD; ic++) {
+    // Pair pass * PAIRS_PER_PASS + p at packed[p][chunk * OUTPUT_PASSES + pass][band].
+    packed_weight_t<PACK_SHIFT> packed[PAIRS_PER_PASS][CHUNKS * OUTPUT_PASSES][IN_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=3
+    acc_t bias[OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=bias type=complete
+    load_w: for (int j = 0; j < OUT_CHANNELS / 2; j++)
+        for (int in_ch = 0; in_ch < PADDED_IN; in_ch++) {
             #pragma HLS PIPELINE II=1
-            const int src = ic < IN ? ic : IN - 1;   // never read past WEIGHT
-            const wgt_t hi = ic < IN ? WEIGHT[2 * j + 1][src][0][0] : (wgt_t)0;
-            const wgt_t lo = ic < IN ? WEIGHT[2 * j][src][0][0] : (wgt_t)0;
-            wp[j % PP][(ic / P) * OPASS + j / PP][ic % P] =
-                (pack_w_t<PSHIFT>)hi * (pack_w_t<PSHIFT>)(1 << PSHIFT) + (pack_w_t<PSHIFT>)lo;
+            const int source = in_ch < IN_CHANNELS ? in_ch : IN_CHANNELS - 1;   // never read past WEIGHT
+            const wgt_t high = in_ch < IN_CHANNELS ? WEIGHT[2 * j + 1][source][0][0] : (wgt_t)0;
+            const wgt_t low = in_ch < IN_CHANNELS ? WEIGHT[2 * j][source][0][0] : (wgt_t)0;
+            packed[j % PAIRS_PER_PASS][(in_ch / IN_PER_CYCLE) * OUTPUT_PASSES + j / PAIRS_PER_PASS][in_ch % IN_PER_CYCLE] =
+                (packed_weight_t<PACK_SHIFT>)high * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
+                + (packed_weight_t<PACK_SHIFT>)low;
         }
-    load_b: for (int oc = 0; oc < OUT; oc++) {
+    load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
-        bl[oc] = (acc_t)BIAS[oc] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
     }
 
-    acc_t acc[OUT];             // the pixel's sums so far
-    #pragma HLS ARRAY_PARTITION variable=acc type=complete
-    act_t ob[OUT];              // its activations, a pass's pairs at a time
-    #pragma HLS ARRAY_PARTITION variable=ob type=complete
-    act8_t x[P];                // this chunk, kept for its passes
-    #pragma HLS ARRAY_PARTITION variable=x type=complete
-    const int pixels = patch_count<PH, PW>(height, width) * PIX;
-    int c = 0, o = 0;           // the chunk of the pixel, the pass over it
-    constexpr int TRIPS = PIX * CHUNKS * OPASS, MAX_TRIPS = 665 * TRIPS;  // a patch; a 598 x 1092 capture
+    acc_t sums[OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=sums type=complete
+    act_t activations[OUT_CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=activations type=complete
+    act8_t chunk_bands[IN_PER_CYCLE];
+    #pragma HLS ARRAY_PARTITION variable=chunk_bands type=complete
+    const int pixels = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * PIXELS;
+    int chunk = 0, pass = 0;
+    constexpr int TRIPS = PIXELS * CHUNKS * OUTPUT_PASSES, MAX_TRIPS = 665 * TRIPS;
     (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
-    px: for (int t = 0; t < pixels * CHUNKS * OPASS; t++) {
+    px: for (int t = 0; t < pixels * CHUNKS * OUTPUT_PASSES; t++) {
         #pragma HLS PIPELINE II=1
         #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
-        if (o == 0) {
-            const vec_t<act8_t, P> v = in.read();
-            for (int p = 0; p < P; p++) {
+        if (pass == 0) {
+            const vec_t<act8_t, IN_PER_CYCLE> value = in.read();
+            for (int b = 0; b < IN_PER_CYCLE; b++) {
                 #pragma HLS UNROLL
-                x[p] = v.v[p];
+                chunk_bands[b] = value.v[b];
             }
         }
-        for (int jj = 0; jj < PP; jj++) {
+        for (int p = 0; p < PAIRS_PER_PASS; p++) {
             #pragma HLS UNROLL
-            acc_t lo = 0, hi = 0;   // channels 2j and 2j + 1, j = o * PP + jj
-            for (int p0 = 0; p0 < P; p0 += GROUP) {
+            acc_t low = 0, high = 0;
+            for (int first = 0; first < IN_PER_CYCLE; first += GROUP) {
                 #pragma HLS UNROLL
-                pack_s_t sum = 0;
-                for (int p = p0; p < p0 + GROUP; p++) {
+                packed_sum_t sum = 0;
+                for (int b = first; b < first + GROUP; b++) {
                     #pragma HLS UNROLL
-                    const pack_s_t prod = wp[jj][c * OPASS + o][p] * x[p];
+                    const packed_sum_t prod = packed[p][chunk * OUTPUT_PASSES + pass][b] * chunk_bands[b];
                     #pragma HLS BIND_OP variable=prod op=mul impl=dsp
                     sum += prod;
                 }
-                lo += pack_low<PSHIFT>((int64_t)sum);
-                hi += pack_high<PSHIFT>((int64_t)sum);
+                low += packed_low<PACK_SHIFT>((int64_t)sum);
+                high += packed_high<PACK_SHIFT>((int64_t)sum);
             }
-            // The pass's pair j = o * PP + jj: its sums so far picked by o, one
-            // adder and one rounding unit a lane whatever OPASS is; written back
-            // by the pass whose turn it is (a run-time choice of which statement runs).
-            const int j = o * PP + jj;
-            const acc_t lo_total = (c == 0 ? bl[2 * j] : acc[2 * j]) + lo;
-            const acc_t hi_total = (c == 0 ? bl[2 * j + 1] : acc[2 * j + 1]) + hi;
-            const act_t lo_act = requant_relu<SHIFT>(lo_total), hi_act = requant_relu<SHIFT>(hi_total);
-            for (int k = 0; k < OPASS; k++) {
+            // One adder and one rounding a lane whatever the passes; the result is
+            // written by the pass whose turn it is.
+            const int j = pass * PAIRS_PER_PASS + p;
+            const acc_t low_total = (chunk == 0 ? bias[2 * j] : sums[2 * j]) + low;
+            const acc_t high_total = (chunk == 0 ? bias[2 * j + 1] : sums[2 * j + 1]) + high;
+            const act_t low_activation = requant_relu<SHIFT>(low_total);
+            const act_t high_activation = requant_relu<SHIFT>(high_total);
+            for (int k = 0; k < OUTPUT_PASSES; k++) {
                 #pragma HLS UNROLL
-                if (o == k) {
-                    acc[2 * (k * PP + jj)] = lo_total;
-                    acc[2 * (k * PP + jj) + 1] = hi_total;
-                    if (c == CHUNKS - 1) {
-                        ob[2 * (k * PP + jj)] = lo_act;
-                        ob[2 * (k * PP + jj) + 1] = hi_act;
+                if (pass == k) {
+                    sums[2 * (k * PAIRS_PER_PASS + p)] = low_total;
+                    sums[2 * (k * PAIRS_PER_PASS + p) + 1] = high_total;
+                    if (chunk == CHUNKS - 1) {
+                        activations[2 * (k * PAIRS_PER_PASS + p)] = low_activation;
+                        activations[2 * (k * PAIRS_PER_PASS + p) + 1] = high_activation;
                     }
                 }
             }
         }
-        if (c == CHUNKS - 1 && o == OPASS - 1) {
-            vec_t<act_t, OUT> out_v;
-            for (int oc = 0; oc < OUT; oc++) {
+        if (chunk == CHUNKS - 1 && pass == OUTPUT_PASSES - 1) {
+            vec_t<act_t, OUT_CHANNELS> pixel;
+            for (int o = 0; o < OUT_CHANNELS; o++) {
                 #pragma HLS UNROLL
-                out_v.v[oc] = ob[oc];
+                pixel.v[o] = activations[o];
             }
-            out.write(out_v);
+            out.write(pixel);
         }
-        if (o < OPASS - 1) {
-            o++;
+        if (pass < OUTPUT_PASSES - 1) {
+            pass++;
         } else {
-            o = 0;
-            c = c < CHUNKS - 1 ? c + 1 : 0;
+            pass = 0;
+            chunk = chunk < CHUNKS - 1 ? chunk + 1 : 0;
         }
     }
 }

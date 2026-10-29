@@ -3,56 +3,50 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// relu_pool_up: ReLU, 2x2 max-pool, then 2x nearest upsample, H x W -> H x W
-// per patch: every 2x2 block replaced by its maximum. Reads a conv layer's
-// sums (all channels of a pixel, raster order), with S fraction bits, and
-// writes activations with S - SHIFT the same way. Each pair of rows is taken
-// in, then given out. The image is cut into PH x PW patches (patch_grid.hpp);
-// H x W is the layer's size of a patch.
-// The input can also be activations a conv already ReLU'd and rounded
-// (conv3x3_grouped's RELU_SHIFT): then SHIFT is 0 and this only moves them
-// (relu_in, fixed_point.hpp).
-template<int H, int W, int SHIFT, int CH, typename IN_T>
-void relu_pool_up_patch(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
-    act_t blk[W / 2][CH];   // the maxima of this row pair's 2x2 blocks
-    #pragma HLS ARRAY_PARTITION variable=blk type=complete dim=2
-    act_t left[CH];
+// ReLU, round off SHIFT bits, 2x2 max pool, upsample by 2: every 2x2 block
+// becomes its maximum, same size. Each pair of rows is taken in, then sent.
+// Activations a conv already ReLU'd pass as they are (SHIFT 0, see relu_in).
+template<int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+void relu_pool_up_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out) {
+    act_t block_max[MAP_WIDTH / 2][CHANNELS];
+    #pragma HLS ARRAY_PARTITION variable=block_max type=complete dim=2
+    act_t left[CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=left type=complete
-    pairs: for (int j = 0; j < H / 2; j++) {
-        take: for (int i = 0; i < 2 * W; i++) {
+    pairs: for (int j = 0; j < MAP_HEIGHT / 2; j++) {
+        take: for (int i = 0; i < 2 * MAP_WIDTH; i++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS DEPENDENCE variable=blk type=inter false
-            const int x = i % W;
-            const vec_t<IN_T, CH> v = in.read();
-            for (int ch = 0; ch < CH; ch++) {
+            #pragma HLS DEPENDENCE variable=block_max type=inter false
+            const int x = i % MAP_WIDTH;
+            const vec_t<IN_T, CHANNELS> value = in.read();
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                const act_t a = relu_in<SHIFT>(v.v[ch]);
+                const act_t a = relu_in<SHIFT>(value.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = a;
                 } else {
-                    const act_t m = max2(left[ch], a);
-                    blk[x / 2][ch] = (i < W) ? m : max2(blk[x / 2][ch], m);
+                    const act_t pair = max2(left[ch], a);
+                    block_max[x / 2][ch] = (i < MAP_WIDTH) ? pair : max2(block_max[x / 2][ch], pair);
                 }
             }
         }
-        give: for (int i = 0; i < 2 * W; i++) {
+        give: for (int i = 0; i < 2 * MAP_WIDTH; i++) {
             #pragma HLS PIPELINE II=1
-            vec_t<act_t, CH> o;
-            for (int ch = 0; ch < CH; ch++) {
+            vec_t<act_t, CHANNELS> pooled;
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                o.v[ch] = blk[(i % W) / 2][ch];
+                pooled.v[ch] = block_max[(i % MAP_WIDTH) / 2][ch];
             }
-            out.write(o);
+            out.write(pooled);
         }
     }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH, typename IN_T>
-void relu_pool_up(hls::stream<vec_t<IN_T, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+void relu_pool_up(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out,
                   int height, int width) {
-    const int n = patch_count<PH, PW>(height, width);
-    patches: for (int k = 0; k < n; k++) {
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+    patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        relu_pool_up_patch<H, W, SHIFT>(in, out);
+        relu_pool_up_patch<MAP_HEIGHT, MAP_WIDTH, SHIFT>(in, out);
     }
 }

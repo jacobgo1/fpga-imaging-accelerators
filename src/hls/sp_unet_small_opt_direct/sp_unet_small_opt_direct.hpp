@@ -3,11 +3,10 @@
 
 #include "../sp_unet_small_opt/sp_unet_opt.hpp"
 
-// The optimized SpecPW-UNet, small, with direct 3x3 convs, on the ZCU104:
-// the design is in sp_unet_small_opt_direct/sp_unet_direct_dataflow.hpp, its
-// sizes in sp_unet_small_opt_direct.cpp. Same ports and answers as sp_unet_small_opt.
-void sp_unet_small_opt_direct(hls::burst_maxi<spu_raw_t> din0, hls::burst_maxi<spu_raw_t> din1,
-                              hls::burst_maxi<spu_raw_t> din2, hls::burst_maxi<spu_raw_t> din3,
-                              hls::burst_maxi<spu_out_t> dout, int height, int width, uint32_t& cycles);
+// SpecPW-UNet small, direct convs, on the ZCU104: the chain is sp_unet_direct_dataflow.hpp, the sizes in the .cpp.
+// The argument names become the kernel's register names: keep them.
+void sp_unet_small_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
+                             hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+                             hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
 
-#endif // SP_UNET_SMALL_OPT_DIRECT_HLS_HPP
+#endif

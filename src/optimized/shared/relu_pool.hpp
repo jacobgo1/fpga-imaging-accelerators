@@ -3,45 +3,41 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// relu_pool: ReLU, then 2x2 max-pool, H x W -> H/2 x W/2 per patch. Reads a
-// conv layer's sums (all channels of a pixel, raster order), with S fraction
-// bits, and writes activations with S - SHIFT the same way: the order the next
-// conv3x3_narrow reads. A pooled pixel leaves as soon as its block's last
-// value (odd row, odd column) arrives. The image is cut into PH x PW patches
-// (patch_grid.hpp); H x W is the layer's size of a patch.
-template<int H, int W, int SHIFT, int CH>
-void relu_pool_patch(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out) {
-    act_t row[W / 2][CH];   // the even row's pairs, pooled
-    #pragma HLS ARRAY_PARTITION variable=row type=complete dim=2
-    act_t left[CH];         // the even column's value
+// ReLU, round off SHIFT bits, 2x2 max pool, raster order in and out. A pooled
+// pixel leaves as soon as its block's last value arrives.
+template<int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS>
+void relu_pool_patch(hls::stream<vec_t<acc_t, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out) {
+    act_t even_row[MAP_WIDTH / 2][CHANNELS];   // the even row, pooled in pairs
+    #pragma HLS ARRAY_PARTITION variable=even_row type=complete dim=2
+    act_t left[CHANNELS];                      // the even column's value
     #pragma HLS ARRAY_PARTITION variable=left type=complete
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
+    for (int y = 0; y < MAP_HEIGHT; y++)
+        for (int x = 0; x < MAP_WIDTH; x++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS DEPENDENCE variable=row type=inter false
-            const vec_t<acc_t, CH> v = in.read();
-            vec_t<act_t, CH> o;
-            for (int ch = 0; ch < CH; ch++) {
+            #pragma HLS DEPENDENCE variable=even_row type=inter false
+            const vec_t<acc_t, CHANNELS> sums = in.read();
+            vec_t<act_t, CHANNELS> pooled;
+            for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                const act_t a = requant_relu<SHIFT>(v.v[ch]);
+                const act_t a = requant_relu<SHIFT>(sums.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = a;
                 } else {
-                    const act_t m = max2(left[ch], a);
-                    if (y % 2 == 0) row[x / 2][ch] = m;
-                    else o.v[ch] = max2(row[x / 2][ch], m);
+                    const act_t pair = max2(left[ch], a);
+                    if (y % 2 == 0) even_row[x / 2][ch] = pair;
+                    else pooled.v[ch] = max2(even_row[x / 2][ch], pair);
                 }
             }
-            if (y % 2 == 1 && x % 2 == 1) out.write(o);
+            if (y % 2 == 1 && x % 2 == 1) out.write(pooled);
         }
 }
 
-template<int PH, int PW, int H, int W, int SHIFT, int CH>
-void relu_pool(hls::stream<vec_t<acc_t, CH> >& in, hls::stream<vec_t<act_t, CH> >& out,
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS>
+void relu_pool(hls::stream<vec_t<acc_t, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out,
                int height, int width) {
-    const int n = patch_count<PH, PW>(height, width);
-    patches: for (int k = 0; k < n; k++) {
+    const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
+    patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        relu_pool_patch<H, W, SHIFT>(in, out);
+        relu_pool_patch<MAP_HEIGHT, MAP_WIDTH, SHIFT>(in, out);
     }
 }

@@ -15,8 +15,8 @@
 
 namespace q = waveletcnn_int8;
 
-constexpr int H = WCNN_H, W = WCNN_W, IC = WCNN_IN_CH, L = WCNN_DWT_LEN;
-constexpr int CC = WCNN_CAT_CH, MC = WCNN_MID_CH, OC = WCNN_OUT_CH;
+constexpr int H = GOLDEN_PATCH_SIZE, W = GOLDEN_PATCH_SIZE, IC = GOLDEN_BANDS, L = GOLDEN_DWT_TAPS;
+constexpr int CC = GOLDEN_WAVELET_CHANNELS, MC = GOLDEN_MID_CHANNELS, OC = GOLDEN_CLASSES;
 
 static float din[H][W][IC];
 static float dout[H][W][OC];

@@ -1,11 +1,8 @@
 #pragma once
 
-// The Zynq-7030 1D-Justo-LiuNet's DATAFLOW chain, shared by
-// justoliunet_opt_zynq7030 and justoliunet_bn_opt_zynq7030 (the same network,
-// other weights and activation formats). Before including it, a kernel's .cpp
-// includes its model's int8 weights as namespace q and its activation formats as
-// namespace fmt (../justoliunet_opt/justoliunet_opt_formats.hpp, the ZCU104
-// kernels' formats). justoliunet_opt_zynq7030.hpp has the design.
+// The chain shared by justoliunet_opt_zynq7030 and justoliunet_bn_opt_zynq7030. The kernel's .cpp first
+// includes its model's weights as namespace weights and its activation formats as
+// namespace model_formats.
 
 #include "justoliunet_opt_zynq7030.hpp"
 #include "../justoliunet_opt/justoliunet_opt_formats.hpp"
@@ -13,67 +10,72 @@
 #include "../../optimized/shared/conv1d_engine.hpp"
 #include "../../optimized/shared/conv1d_stream.hpp"
 #include "../../optimized/shared/count_cycles.hpp"
-#include <type_traits>
 
-namespace jf = justoliunet_opt_formats;
-static_assert(std::is_same<std::remove_const<std::remove_all_extents<
-                               decltype(q::conv1_weight)>::type>::type,
-                           wgt_t>::value,
-              "the weights must be int8; did the header's element type change?");
-static_assert(jf::FIRST_BAND == FIRST * PORT_BANDS && KEPT * PORT_BANDS == 112,
-              "the kept bands must be whole words, to the end of each pixel");
-static_assert(102 % C1_POS == 0 && C1_POS == 2, "pool_adjacent pools conv1's positions in the pairs it sends");
+namespace shared_formats = justoliunet_opt_formats;
 
-// Fraction bits, as in justoliunet_opt_dataflow.hpp.
-constexpr int SUM1 = jf::IN_FRAC + q::conv1_weight_frac;
-constexpr int SUM2 = fmt::ACT_FRAC1 + q::conv2_weight_frac;
-constexpr int SUM3 = fmt::ACT_FRAC2 + q::conv3_weight_frac;
-constexpr int SUM4 = fmt::ACT_FRAC3 + q::conv4_weight_frac;
-constexpr int SUMF = fmt::ACT_FRAC4 + q::fc_weight_frac;
+// A layer's sums have its input's fraction bits plus its weights'.
+constexpr int CONV1_SUM_FRAC_BITS = shared_formats::IN_FRAC + weights::conv1_weight_frac;
+constexpr int CONV2_SUM_FRAC_BITS = model_formats::ACT_FRAC1 + weights::conv2_weight_frac;
+constexpr int CONV3_SUM_FRAC_BITS = model_formats::ACT_FRAC2 + weights::conv3_weight_frac;
+constexpr int CONV4_SUM_FRAC_BITS = model_formats::ACT_FRAC3 + weights::conv4_weight_frac;
+constexpr int DENSE_SUM_FRAC_BITS = model_formats::ACT_FRAC4 + weights::fc_weight_frac;
 
-static void justoliunet_opt_zynq7030_dataflow(hls::burst_maxi<jl_raw_t> din0, hls::burst_maxi<jl_out_t> dout,
+static void justoliunet_opt_zynq7030_dataflow(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
                                               int height, int width, uint32_t& cycles)
 {
-#pragma HLS DATAFLOW
-    hls::stream<jl_raw_t> s_raw[PORTS];
-    hls::stream<map_t<int16_t, BANDS, 1>> s_x("s_x");
-    hls::stream<vec_t<uact_t, C1_POS * 6>> s_c1("s_c1");
-    hls::stream<vec_t<uact_t, 6>> s_p1("s_p1");
-    hls::stream<vec_t<uact_t, 12>> s_p2("s_p2");
-    hls::stream<vec_t<uact_t, 18>> s_p3("s_p3");
-    hls::stream<vec_t<uact_t, 24>> s_p4("s_p4");
-    hls::stream<vec_t<acc_t, CLASSES>> s_scores("s_scores");
-    hls::stream<bool> s_finished("s_finished");
-// The reader's bursts arrive in blocks; let it run ahead. A layer reads its
-// first positions of a pixel back to back (its window): room for them, so the
-// one before it does not wait (the cycle model: 74 cycles a pixel with 8, 93
-// with the default 2).
-#pragma HLS STREAM variable = s_raw depth = 64
-#pragma HLS STREAM variable = s_p1 depth = 8
-#pragma HLS STREAM variable = s_p2 depth = 8
-#pragma HLS STREAM variable = s_p3 depth = 8
-#pragma HLS STREAM variable = s_scores depth = 8
+    #pragma HLS DATAFLOW
+    hls::stream<cube_word_t> cube_words[READ_PORTS];
+    hls::stream<map_t<int16_t, KEPT_BANDS, 1>> zscores("zscores");
+    hls::stream<vec_t<uact_t, CONV1_POSITIONS_PER_CYCLE * 6>> conv1_out("conv1_out");
+    hls::stream<vec_t<uact_t, 6>> pool1_out("pool1_out");
+    hls::stream<vec_t<uact_t, 12>> pool2_out("pool2_out");
+    hls::stream<vec_t<uact_t, 18>> pool3_out("pool3_out");
+    hls::stream<vec_t<uact_t, 24>> pool4_out("pool4_out");
+    hls::stream<vec_t<acc_t, CLASSES>> scores("scores");
+    hls::stream<bool> all_written("all_written");
+    // A layer reads a pixel's first positions back to back to fill its window:
+    // room for them, so the layer before does not wait.
+    #pragma HLS STREAM variable=cube_words depth=64
+    #pragma HLS STREAM variable=pool1_out  depth=8
+    #pragma HLS STREAM variable=pool2_out  depth=8
+    #pragma HLS STREAM variable=pool3_out  depth=8
+    #pragma HLS STREAM variable=scores     depth=8
 
-    read_pixels_ahead<WORDS, BLOCK, PORTS, 0>(din0, s_raw[0], height, width);
-    zscore_pixels<WORDS, FIRST, PORT_BANDS, BLOCK, PORTS, jf::PREP_FRAC, jf::IN_MAX, jf::A, jf::B, ZSCORE_DSP>(
-        s_raw, s_x, height, width);
-    // conv1: 1 -> 6, 102 outputs, two a cycle, 12-bit input: 72 LUT multipliers.
-    conv1d_engine<BANDS, 1, 6, K, 102, C1_POS, 6, SUM1 - q::conv1_bias_frac, SUM1 - fmt::ACT_FRAC1, jf::ACT_MAX,
-                  q::conv1_weight, q::conv1_bias, false, false>(s_x, s_c1, height, width);
-    pool_adjacent<102 / C1_POS, 6>(s_c1, s_p1, height, width);
+    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    zscore_pixels<WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, BLOCK_PIXELS, READ_PORTS,
+                  shared_formats::PREP_FRAC, shared_formats::IN_MAX, shared_formats::A, shared_formats::B,
+                  ZSCORE_ON_DSPS>(cube_words, zscores, height, width);
+
+    // conv1: 1 -> 6, 102 outputs, in LUTs (the 12-bit input cannot be packed).
+    conv1d_engine<KEPT_BANDS, 1, 6, KERNEL_SIZE, 102, CONV1_POSITIONS_PER_CYCLE, 6,
+                  CONV1_SUM_FRAC_BITS - weights::conv1_bias_frac, CONV1_SUM_FRAC_BITS - model_formats::ACT_FRAC1,
+                  shared_formats::ACT_MAX, weights::conv1_weight, weights::conv1_bias, false, false>(
+        zscores, conv1_out, height, width);
+    pool_adjacent<102 / CONV1_POSITIONS_PER_CYCLE, 6>(conv1_out, pool1_out, height, width);
+
     // conv2: 6 -> 12, 46 outputs; 51 positions in, 23 out.
-    conv1d_stream<51, 6, 12, K, 46, C2_OCP, C2_ICP, SUM2 - q::conv2_bias_frac, SUM2 - fmt::ACT_FRAC2, jf::ACT_MAX,
-                  q::conv2_weight, q::conv2_bias, C2_PACKED, C2_PACKED>(s_p1, s_p2, height, width);
+    conv1d_stream<51, 6, 12, KERNEL_SIZE, 46, CONV2_OUT_PER_CYCLE, CONV2_IN_PER_CYCLE,
+                  CONV2_SUM_FRAC_BITS - weights::conv2_bias_frac, CONV2_SUM_FRAC_BITS - model_formats::ACT_FRAC2,
+                  shared_formats::ACT_MAX, weights::conv2_weight, weights::conv2_bias, CONV2_PACKED, CONV2_PACKED>(
+        pool1_out, pool2_out, height, width);
+
     // conv3: 12 -> 18, 18 outputs; 23 in, 9 out.
-    conv1d_stream<23, 12, 18, K, 18, C3_OCP, C3_ICP, SUM3 - q::conv3_bias_frac, SUM3 - fmt::ACT_FRAC3, jf::ACT_MAX,
-                  q::conv3_weight, q::conv3_bias, C3_PACKED, C3_PACKED>(s_p2, s_p3, height, width);
+    conv1d_stream<23, 12, 18, KERNEL_SIZE, 18, CONV3_OUT_PER_CYCLE, CONV3_IN_PER_CYCLE,
+                  CONV3_SUM_FRAC_BITS - weights::conv3_bias_frac, CONV3_SUM_FRAC_BITS - model_formats::ACT_FRAC3,
+                  shared_formats::ACT_MAX, weights::conv3_weight, weights::conv3_bias, CONV3_PACKED, CONV3_PACKED>(
+        pool2_out, pool3_out, height, width);
+
     // conv4: 18 -> 24, 4 outputs; 9 in, 2 out.
-    conv1d_stream<9, 18, 24, K, 4, C4_OCP, C4_ICP, SUM4 - q::conv4_bias_frac, SUM4 - fmt::ACT_FRAC4, jf::ACT_MAX,
-                  q::conv4_weight, q::conv4_bias, C4_PACKED, C4_PACKED>(s_p3, s_p4, height, width);
-    // flatten + dense: 2 positions x 24 -> 3, to the scores' OUT_FRAC fraction bits.
-    dense_stream<2, 24, CLASSES, DENSE_FEAT, SUMF - q::fc_bias_frac, jf::OUT_FRAC - SUMF,
-                 q::fc_weight, q::fc_bias, false>(s_p4, s_scores, height, width);
-    store_pixels<CLASSES, 64, 8>(s_scores, dout, height, width, s_finished);
-    // Last: C simulation runs the processes in this order (count_cycles.hpp).
-    count_cycles(s_finished, cycles);
+    conv1d_stream<9, 18, 24, KERNEL_SIZE, 4, CONV4_OUT_PER_CYCLE, CONV4_IN_PER_CYCLE,
+                  CONV4_SUM_FRAC_BITS - weights::conv4_bias_frac, CONV4_SUM_FRAC_BITS - model_formats::ACT_FRAC4,
+                  shared_formats::ACT_MAX, weights::conv4_weight, weights::conv4_bias, CONV4_PACKED, CONV4_PACKED>(
+        pool3_out, pool4_out, height, width);
+
+    // flatten and dense: 2 positions x 24 -> 3, the scores.
+    dense_stream<2, 24, CLASSES, DENSE_FEATURES_PER_CYCLE, DENSE_SUM_FRAC_BITS - weights::fc_bias_frac,
+                 shared_formats::OUT_FRAC - DENSE_SUM_FRAC_BITS, weights::fc_weight, weights::fc_bias, false>(
+        pool4_out, scores, height, width);
+    store_pixels<CLASSES, 64, 8>(scores, dout, height, width, all_written);
+
+    count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
 }

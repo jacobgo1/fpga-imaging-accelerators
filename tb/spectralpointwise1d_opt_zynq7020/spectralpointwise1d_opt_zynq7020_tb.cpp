@@ -3,7 +3,7 @@
 // reference, close to the float golden network), so the same answers.
 #include "spectralpointwise1d_opt_zynq7020.hpp"
 
-static void run_kernel(spw_raw_t *din, spw_out_t *dout, int height, int width, uint32_t& cycles) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width, uint32_t& cycles) {
     // Both ports read the cube; hls::burst_maxi takes a plain (not const) pointer.
     spectralpointwise1d_opt_zynq7020(din, din, dout, height, width, cycles);
 }

@@ -1,11 +1,11 @@
 // sp_unet_small_opt_tb.cpp  --  testbench for the optimized SpecPW-UNet, small. The
 // checks are in sp_unet_small_opt/sp_unet_opt_check.hpp, shared by the three sizes.
 #include "sp_unet_small_opt.hpp"
-// The golden kernel: the float reference, and the weights as namespace q (floats).
+// The golden kernel: the float reference, and the weights as namespace weights (floats).
 #include "../../src/hls/sp_unet_small/sp_unet_small.cpp"
 #include <cstdio>
 
-static void run_kernel(spu_raw_t *din, spu_out_t *dout, int height, int width) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {
     // All four ports read the cube; hls::burst_maxi takes a plain (not const) pointer.
     // cycles counts only in the RTL (cosim): 0 here, in C simulation.
     uint32_t cycles = 0;

@@ -1,20 +1,16 @@
 #pragma once
 
-template<typename data_t, int H, int W, int IM_CH, int POOL>
-void maxpool_golden(const data_t din[H][W][IM_CH], data_t dout[H/2][W/2][IM_CH]) {
-    for (int i = 0; i < H; i += 2) {
-        for (int j = 0; j < W; j += 2) {
-            for (int k = 0; k < IM_CH; k++) {
-                data_t max_val = din[i][j][k];
-                for (int pool_i = 0; pool_i < POOL; pool_i++) {
-                    for (int pool_j = 0; pool_j < POOL; pool_j++) {
-                        if (din[i + pool_i][j + pool_j][k] > max_val) {
-                            max_val = din[i + pool_i][j + pool_j][k];
-                        }
-                    }
-                }
-                dout[i/2][j/2][k] = max_val;
+// 2 x 2 max pooling, stride 2.
+template<typename data_t, int HEIGHT, int WIDTH, int CHANNELS>
+void maxpool_golden(const data_t din[HEIGHT][WIDTH][CHANNELS], data_t dout[HEIGHT / 2][WIDTH / 2][CHANNELS]) {
+    for (int row = 0; row < HEIGHT / 2; row++)
+        for (int col = 0; col < WIDTH / 2; col++)
+            for (int ch = 0; ch < CHANNELS; ch++) {
+                data_t largest = din[2 * row][2 * col][ch];
+                for (int dy = 0; dy < 2; dy++)
+                    for (int dx = 0; dx < 2; dx++)
+                        if (din[2 * row + dy][2 * col + dx][ch] > largest)
+                            largest = din[2 * row + dy][2 * col + dx][ch];
+                dout[row][col][ch] = largest;
             }
-        }
-    }
 }

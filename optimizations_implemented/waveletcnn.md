@@ -50,7 +50,7 @@ for the quantized float model).
 | Shift-and-add `LeakyReLU(0.01)` (`41 * 2^-12`, `41 = 32 + 8 + 1`, 0 DSPs) | ✓ | ✓ | ✓ |
 | DATAFLOW, layers fused; feature maps never leave the chip | ✓ | ✓ | ✓ |
 | Strip ping-pong buffer (`pixel_buffer`): only `PORTS` rows × 32 pixels in BRAM (8×–16× smaller than a full patch buffer) | 4-row BRAM | 4-row BRAM | 2-row BRAM |
-| Fused 1D DWT + 1×1 projection (`dwt_proj`): 8-band sliding window accumulates `x[2m]`, `x[2m+1]`, `low[m]`, `high[m]` directly into the 12 projection channels; the 226-channel tensor is never stored | `M_PAR = 8` | `M_PAR = 4` | `M_PAR = 2` |
+| Fused 1D DWT + 1×1 projection (`dwt_proj`): 8-band sliding window accumulates `x[2m]`, `x[2m+1]`, `low[m]`, `high[m]` directly into the 12 projection channels; the 226-channel tensor is never stored | `DWT_STEPS_PER_CYCLE = 8` | `DWT_STEPS_PER_CYCLE = 4` | `DWT_STEPS_PER_CYCLE = 2` |
 | Read ports, each every n-th patch row (`read_rows_ahead`, `burst_maxi`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
 | `conv_block` (12 → 12, 3×3): line buffers + 3×3 shift-register window | `conv3x3_narrow` (`STEPS = 6`, 2 out/cycle) | `conv3x3_narrow` (`STEPS = 12`, 1 out/cycle) | `conv3x3_serial` (`P2 = 6` in × 1 out/cycle) |
 | Fused `LeakyReLU` + 1×1 `seg_head` (12 → 3) + `LeakyReLU` (`leaky_head`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
@@ -61,11 +61,11 @@ for the quantized float model).
 
 Each stage runs at II = 1:
 - `read_rows_ahead`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
-- `pixel_buffer` and `dwt_proj`: `ceil(58 / M_PAR)` steps/pixel × 1 024 pixels.
+- `pixel_buffer` and `dwt_proj`: `ceil(58 / DWT_STEPS_PER_CYCLE)` steps/pixel × 1 024 pixels.
 - `conv_block`: `STEPS` cycles/pixel × (1 024 + 33) pixels.
 - `leaky_head` and `store_scores`: 1 024 cycles/patch.
 
-| Stage | ZCU104 (`M_PAR = 8`) | Zynq-7030 (`M_PAR = 4`) | Zynq-7020 (`M_PAR = 2`) |
+| Stage | ZCU104 (`DWT_STEPS_PER_CYCLE = 8`) | Zynq-7030 (`DWT_STEPS_PER_CYCLE = 4`) | Zynq-7020 (`DWT_STEPS_PER_CYCLE = 2`) |
 |---|---|---|---|
 | read (per port) | 3 840 | 7 680 | 15 360 |
 | `pixel_buffer` | **8 192** | **15 360** | **29 696** |
@@ -91,7 +91,7 @@ Each stage runs at II = 1:
 
 | | ZCU104 | Zynq-7030 | Zynq-7020 |
 |---|---|---|---|
-| Limit | `dwt_proj` width (`M_PAR = 8`) | DSPs (336 of 400) | DSPs (186 of 220) |
+| Limit | `dwt_proj` width (`DWT_STEPS_PER_CYCLE = 8`) | DSPs (336 of 400) | DSPs (186 of 220) |
 | DSPs / LUTs | 1 728 / 230 k | 400 / 79 k | 220 / 53 k |
 | `dwt_proj` width | 8 subband steps/cycle (16 bands, 384 DSPs) | 4 subband steps/cycle (8 bands, 192 DSPs) | 2 subband steps/cycle (4 bands, 96 DSPs) |
 | `conv_block` (12→12) | 2 out ch/cycle (216 DSPs) | 1 out ch/cycle (108 DSPs) | 6 in × 1 out ch/cycle (54 DSPs) |

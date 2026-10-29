@@ -1,7 +1,7 @@
 // sp_unet_check.hpp  --  the checks of the SpecPW-UNet testbenches, shared by
 // sp_unet_small_tb.cpp, sp_unet_medium_tb.cpp and sp_unet_large_tb.cpp. Before
 // including it, a testbench includes its kernel's header and its quantized
-// weights as namespace q, and defines run_kernel(din, dout, n).
+// weights as namespace weights, and defines run_kernel(din, dout, n).
 //
 // The reference is the float network as trained, specpw_unet_golden (built from
 // the plain modules: BatchNorm, nearest upsampling, the skip's concat as their
@@ -21,8 +21,8 @@
 #include <random>
 
 constexpr int PATCHES = 2;   // the kernel's cosim depth is 2 patches
-constexpr int H = SPU_H, W = SPU_W, IC = SPU_IN_CH, OC = SPU_OUT_CH;
-typedef specpw_unet_params_golden<float, IC, OC, spu_size> params_t;
+constexpr int H = GOLDEN_PATCH_SIZE, W = GOLDEN_PATCH_SIZE, IC = GOLDEN_BANDS, OC = GOLDEN_CLASSES;
+typedef specpw_unet_params_golden<float, IC, OC, model_size> params_t;
 
 static params_t params;
 static float din[PATCHES][H][W][IC];
@@ -59,27 +59,27 @@ static void load_conv_bn(float (&w)[OUT][IN][3][3], batchnorm_params_golden<floa
     identity_bn<OUT>(bn, bias);
 }
 
-#define CONV_BN(w, bn, name) load_conv_bn(w, bn, q::name##_weight, q::name##_weight_frac, \
-                                          q::name##_bias, q::name##_bias_frac)
-#define BLOCK(p, name) CONV_BN(p.w1, p.bn1, name##_block_0); CONV_BN(p.w2, p.bn2, name##_block_3)
-#define PLAIN(w, b, name) dequantize(q::name##_weight, w, q::name##_weight_frac); \
-                          dequantize(q::name##_bias, b, q::name##_bias_frac)
+#define CONV_BN(w, bn, name) load_conv_bn(w, bn, weights::name##_weight, weights::name##_weight_frac, \
+                                          weights::name##_bias, weights::name##_bias_frac)
+#define BLOCK(p, name) CONV_BN(p.conv1_weight, p.bn1, name##_block_0); CONV_BN(p.conv2_weight, p.bn2, name##_block_3)
+#define PLAIN(w, b, name) dequantize(weights::name##_weight, w, weights::name##_weight_frac); \
+                          dequantize(weights::name##_bias, b, weights::name##_bias_frac)
 
 static void load_reference_weights()
 {
     params_t &p = params;
-    float zero[spu_size::S1] = {};
-    PLAIN(p.stem.w1, p.stem.b1, convsp1);
-    identity_bn<spu_size::S1>(p.stem.bn1, zero);     // bnsp1 is folded into convsp1's bias
-    PLAIN(p.stem.w2, p.stem.b2, convsp2);
-    PLAIN(p.stem.w3, p.stem.b3, convsp3);
+    float zero[model_size::STEM1] = {};
+    PLAIN(p.stem.conv1_weight, p.stem.conv1_bias, convsp1);
+    identity_bn<model_size::STEM1>(p.stem.bn1, zero);     // bnsp1 is folded into convsp1's bias
+    PLAIN(p.stem.conv2_weight, p.stem.conv2_bias, convsp2);
+    PLAIN(p.stem.conv3_weight, p.stem.conv3_bias, convsp3);
     BLOCK(p.double1, double1);
     BLOCK(p.double2, double2);
-    CONV_BN(p.up1.w, p.up1.bn, up1_1);
+    CONV_BN(p.up1.conv_weight, p.up1.bn, up1_1);
     BLOCK(p.double3, double3);
-    CONV_BN(p.up2.w, p.up2.bn, up2_1);
+    CONV_BN(p.up2.conv_weight, p.up2.bn, up2_1);
     BLOCK(p.double4, double4);
-    PLAIN(p.final_w, p.final_b, final);
+    PLAIN(p.final_weight, p.final_bias, final);
 }
 
 static int check_kernel()
@@ -93,7 +93,7 @@ static int check_kernel()
         in_flat[i] = dist(rng);
 
     for (int p = 0; p < PATCHES; p++)
-        specpw_unet_golden<float, H, W, IC, OC, spu_size>(din[p], params, 0.0f, expected[p]);
+        specpw_unet_golden<float, H, W, IC, OC, model_size>(din[p], params, 0.0f, expected[p]);
 
     run_kernel(&din[0][0][0][0], &dout[0][0][0][0], PATCHES);
 

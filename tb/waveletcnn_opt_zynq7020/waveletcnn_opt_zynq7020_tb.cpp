@@ -2,7 +2,7 @@
 // the optimized WaveletCNN kernel: the checks of waveletcnn_opt, the same answers.
 #include "waveletcnn_opt_zynq7020.hpp"
 
-static void run_kernel(wopt_raw_t *din, wopt_out_t *dout, int height, int width) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {
     waveletcnn_opt_zynq7020(din, din, dout, height, width);
 }
 

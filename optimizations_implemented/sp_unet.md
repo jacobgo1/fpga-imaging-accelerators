@@ -278,7 +278,7 @@ for them, convsp2/convsp3 moved from LUT multipliers (~25 k LUTs) to DSPs.
 The simple cycle model (an iteration's read and write in the same cycle) missed this: it gave 9 841
 with 2-deep FIFOs. Only the model with the real pipeline behaviour (reads at issue, writes at the
 loop depth from hls.log, the whole pipeline frozen on any wait, loops drained at their exit)
-reproduced the board, within 0.3 %. Deeper FIFOs in front of the DDR readers (`s_raw`, tried first)
+reproduced the board, within 0.3 %. Deeper FIFOs in front of the DDR readers (`cube_words`, tried first)
 changed nothing.
 
 ## The Zynq-7020 kernels (`sp_unet_SIZE_opt_direct_zynq7020`)
@@ -425,9 +425,9 @@ the aegean pixels (small / medium / large).
   187.5 MHz, against 34.9 ms predicted (≈ 11 560 cycles a patch against 9 828). A cycle simulation
   puts only ~3 % of it on `relu_pool_up`'s and `relu_up`'s take-then-give; with ideal memory the chain
   runs at 9 841, so the rest is not in its model of the chain.
-- 2026-10-27: rebuilt with `s_raw` 512 deep and at 214 MHz: again exactly 11 503 cycles a patch (35.7 ms).
+- 2026-10-27: rebuilt with `cube_words` 512 deep and at 214 MHz: again exactly 11 503 cycles a patch (35.7 ms).
   The same count at another clock means the limit is in the kernel's logic, not DDR (DDR-bound, the
-  faster clock would have needed more cycles a patch). `s_raw` back to 64.
+  faster clock would have needed more cycles a patch). `cube_words` back to 64.
 - 2026-10-27: csynth: interval 6 545 040 cycles for 665 patches (9 842 a patch, the 16 x 16 convs; every
   other process below), clock estimate 3.65 ns, LUT 189 k (82 %), DSP 1 380, BRAM18 102, URAM 3. Cosim:
   RTL bit-exact (8 000 outputs), cycles register 52 558 for the testbench's 4 patches, against 49 062 in

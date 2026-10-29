@@ -8,7 +8,7 @@
 namespace q = justoliunet_int8;
 namespace fmt = justoliunet_formats;
 
-static void run_kernel(jl_raw_t *din, jl_out_t *dout, int height, int width, uint32_t& cycles) {
+static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width, uint32_t& cycles) {
     // hls::burst_maxi takes a plain (not const) pointer.
     justoliunet_opt_zynq7020(din, dout, height, width, cycles);
 }

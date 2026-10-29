@@ -1,12 +1,9 @@
 #pragma once
 
-template<typename data_t, int H, int W, int CH>
-void relu_golden(const data_t din[H][W][CH], data_t dout[H][W][CH]) {
-    for (int i = 0; i < H; i++) {
-        for (int j = 0; j < W; j++) {
-            for (int c = 0; c < CH; c++) {
-                dout[i][j][c] = din[i][j][c] > 0 ? din[i][j][c] : 0;
-            }
-        }
-    }
+template<typename data_t, int HEIGHT, int WIDTH, int CHANNELS>
+void relu_golden(const data_t din[HEIGHT][WIDTH][CHANNELS], data_t dout[HEIGHT][WIDTH][CHANNELS]) {
+    for (int row = 0; row < HEIGHT; row++)
+        for (int col = 0; col < WIDTH; col++)
+            for (int ch = 0; ch < CHANNELS; ch++)
+                dout[row][col][ch] = din[row][col][ch] > 0 ? din[row][col][ch] : 0;
 }

@@ -16,8 +16,8 @@
 #include <random>
 
 constexpr int PIXELS = 32;   // the kernel's cosim depth is 32 pixels
-constexpr int L = JLN_BANDS, B = JLN_BASE_CH, C = JLN_CLASSES, K = JLN_K;
-constexpr int FLAT = 4 * B * justoliunet_flat_len(L, K);
+constexpr int L = JLN_BANDS, B = JLN_BASE_CHANNELS, C = JLN_CLASSES, K = JLN_KERNEL_SIZE;
+constexpr int FLAT = 4 * B * justoliunet_flat_length(L, K);
 static_assert(FLAT == 48, "110 bands, k = 6, 6 base channels: the checkpoints' fc takes 48");
 
 static float w1[B][1][K], b1[B];

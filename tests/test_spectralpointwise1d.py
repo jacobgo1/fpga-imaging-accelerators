@@ -158,15 +158,15 @@ int main(int, char** argv) {{
 #include <vector>
 int main(int, char** argv) {{
     const int h = atoi(argv[3]), w = atoi(argv[4]);
-    std::vector<spw_raw_t> din(h * w * WORDS);
-    std::vector<spw_out_t> dout(h * w);
+    std::vector<cube_word_t> din(h * w * WORDS_PER_PIXEL);
+    std::vector<score_word_t> dout(h * w);
     FILE* f = fopen(argv[1], "rb");
-    if (fread(din.data(), sizeof(spw_raw_t), din.size(), f) != din.size()) return 1;
+    if (fread(din.data(), sizeof(cube_word_t), din.size(), f) != din.size()) return 1;
     fclose(f);
     uint32_t cycles = 0;
-    spw_raw_t *d = din.data();     // hls::burst_maxi takes a plain pointer
+    cube_word_t *d = din.data();     // hls::burst_maxi takes a plain pointer
     {call};
-    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(spw_out_t), dout.size(), f); fclose(f);
+    f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(score_word_t), dout.size(), f); fclose(f);
 }}
 """, tmp / 'in.bin', np.int32, (h, w, 4))
                         np.testing.assert_array_equal(cpp.reshape(-1, 4), want[:h * w])
