@@ -1,5 +1,5 @@
 #include "spectralpointwise1d_opt.hpp"
-#include "spectralpointwise1d_opt_dataflow.hpp"
+#include "spectralpointwise1d_opt_lanes.hpp"
 
 void spectralpointwise1d_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
                              hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
@@ -20,5 +20,34 @@ void spectralpointwise1d_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<
     #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
-    spectralpointwise1d_opt_dataflow(din0, din1, din2, din3, dout, height, width, cycles);
+    #pragma HLS DATAFLOW
+    hls::stream<cube_word_t> cube_words[LANES];
+    hls::stream<vec_t<uact_t, 24>> convsp1_out[LANES];
+    hls::stream<vec_t<uact_t, 12>> convsp2_out[LANES];
+    hls::stream<vec_t<acc_t, CLASSES>> scores[LANES];
+    hls::stream<bool> all_written("all_written");
+    // The store takes the lanes in turn, a block each: each lane's scores need
+    // room for the blocks it finishes meanwhile.
+    #pragma HLS STREAM variable=cube_words depth=64
+    #pragma HLS STREAM variable=scores     depth=32
+
+    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 0>(din0, cube_words[0], height, width);
+    lane_convsp1<0>(cube_words[0], convsp1_out[0], height, width);
+    lane_convsp2<0>(convsp1_out[0], convsp2_out[0], height, width);
+    lane_convsp3<0>(convsp2_out[0], scores[0], height, width);
+    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 1>(din1, cube_words[1], height, width);
+    lane_convsp1<1>(cube_words[1], convsp1_out[1], height, width);
+    lane_convsp2<1>(convsp1_out[1], convsp2_out[1], height, width);
+    lane_convsp3<1>(convsp2_out[1], scores[1], height, width);
+    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 2>(din2, cube_words[2], height, width);
+    lane_convsp1<2>(cube_words[2], convsp1_out[2], height, width);
+    lane_convsp2<2>(convsp1_out[2], convsp2_out[2], height, width);
+    lane_convsp3<2>(convsp2_out[2], scores[2], height, width);
+    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 3>(din3, cube_words[3], height, width);
+    lane_convsp1<3>(cube_words[3], convsp1_out[3], height, width);
+    lane_convsp2<3>(convsp1_out[3], convsp2_out[3], height, width);
+    lane_convsp3<3>(convsp2_out[3], scores[3], height, width);
+    store_pixels_lanes<CLASSES, LANES, BLOCK_PIXELS, 64, 8>(scores, dout, height, width, all_written);
+
+    count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
 }

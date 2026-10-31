@@ -81,13 +81,13 @@ src/golden/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt`, `sp_unet_medium_o
 `sp_unet_large_opt` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; the 3x3
 convs as integer Winograd F(2x2, 3x3) and the UpBlocks from the low-res maps, the maps in
 2x2-block order, the skip in UltraRAM; T = 4 096 / 12 288 / 16 384 cycles a patch, 1 474 / 1 368 / 1 440 DSPs; the
-design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain in sp_unet_opt_dataflow.hpp,
-each size's table of PI x PO per layer in its .cpp; one testbench), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
+design in src/hls/sp_unet_small_opt/sp_unet_opt.hpp, the chain and each size's table of PI x PO
+per layer in its .cpp; one testbench), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
 `_large_opt_direct` (the same kernels without Winograd, simpler: direct 3x3 convs
 (conv3x3_grouped, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
 modules; the same answers bit for bit; T = 9 828 / 34 944 / 69 888 cycles a patch,
-1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in src/hls/sp_unet_small_opt_direct/
-sp_unet_direct_dataflow.hpp; the Winograd kernels' testbench checks),
+1 452 / 1 297 / 1 184 DSPs; small measured 30.6 ms at 214 MHz; the chain in each
+kernel's .cpp; the Winograd kernels' testbench checks),
 `sp_unet_small_opt_direct_zynq7020` (the direct kernel for the 7020; medium and large do not
 fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_lines), a tap or a window column a step, their ReLU inside, one 64-bit read

@@ -3,7 +3,10 @@
 
 #include "../sp_unet_small_opt/sp_unet_opt.hpp"
 
-// SpecPW-UNet large, direct convs, on the ZCU104: the chain is sp_unet_direct_dataflow.hpp, the sizes in the .cpp.
+// SpecPW-UNet large, direct convs, on the ZCU104: the chain and its sizes are in the .cpp. Without
+// Winograd: every 3x3 conv done directly (conv3x3_grouped), the maps in raster order, the
+// pooling and upsampling in justounetsimple_opt's ReLU modules. The same answers; simpler,
+// slower for the same DSPs.
 // The argument names become the kernel's register names: keep them.
 void sp_unet_large_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
                              hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,

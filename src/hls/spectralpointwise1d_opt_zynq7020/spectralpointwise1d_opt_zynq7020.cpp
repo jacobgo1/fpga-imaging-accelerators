@@ -1,10 +1,20 @@
 #include "spectralpointwise1d_opt_zynq7020.hpp"
 #include "../spectralpointwise1d_opt/spectralpointwise1d_opt_lanes.hpp"
 
-static void spectralpointwise1d_opt_zynq7020_dataflow(
-    hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-    hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles)
+void spectralpointwise1d_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
+                                      hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles)
 {
+    // Two readers on HP0-1, the writer on HP2. depth is for co-simulation only.
+    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
+    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=63 max_write_burst_length=64 num_write_outstanding=16
+    #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
+    #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
     #pragma HLS DATAFLOW
     hls::stream<cube_word_t> cube_words[LANES];
     hls::stream<vec_t<uact_t, 24>> convsp1_out[LANES];
@@ -27,21 +37,4 @@ static void spectralpointwise1d_opt_zynq7020_dataflow(
     store_pixels_lanes<CLASSES, LANES, BLOCK_PIXELS, 64, 8>(scores, dout, height, width, all_written);
 
     count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
-}
-
-void spectralpointwise1d_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                                      hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles)
-{
-    // Two readers on HP0-1, the writer on HP2. depth is for co-simulation only.
-    #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=din1 bundle=gmem1 offset=slave depth=1890 max_read_burst_length=256 num_read_outstanding=4
-    #pragma HLS INTERFACE mode=m_axi port=dout bundle=gmem2 offset=slave depth=63 max_write_burst_length=64 num_write_outstanding=16
-    #pragma HLS INTERFACE mode=s_axilite port=din0   bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=din1   bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=dout   bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=height bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=cycles bundle=control
-    #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
-    spectralpointwise1d_opt_zynq7020_dataflow(din0, din1, dout, height, width, cycles);
 }

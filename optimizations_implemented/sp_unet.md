@@ -57,9 +57,8 @@ The optimized kernels give the bit-exact model's answers, bit for bit: `classify
 float golden kernel on the testbench's 2 000 random pixels, scores within 0.01. On the aegean
 pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes (below).
 
-The design: `src/hls/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain, shared by
-the sizes: `sp_unet_opt_dataflow.hpp`; each size's table of layer widths (PI x PO, DSP or
-LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
+The design: `src/hls/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain and each
+size's table of layer widths (PI x PO, DSP or LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
 (`software/pynq/shared/classify.ipynb`), and on the ZedBoard `classify`, both checked
 against the image's labels.
 
@@ -287,8 +286,8 @@ The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the s
 arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
 chip with 220 DSP48E1 (these use at most 205), 53 k LUTs, 106 k flip-flops, 140 BRAM36, no
 UltraRAM and 64-bit HP ports. The design: `src/hls/sp_unet_small_opt_direct_zynq7020/
-sp_unet_opt_zynq7020.hpp`; the chain, shared by the sizes: `sp_unet_direct_zynq7020_dataflow.hpp`;
-each size's table in its `.cpp`.
+sp_unet_opt_zynq7020.hpp`; the chain and its sizes
+table: its `.cpp`.
 
 On this chip the DSPs set the pace (the reads need 30 720 cycles a patch through one port, far
 below), and the LUTs and flip-flops are what is short. So:
@@ -533,3 +532,6 @@ the aegean pixels (small / medium / large).
   cycles a patch (the convs' 76 176, +0.13 %: the 2-deep FIFOs lose next to nothing), wall clock
   3.622 s; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as the ZCU104 kernel's.
   In `speed_zedboard.md`.
+- 2026-10-31: the DATAFLOW chain moved from the shared `*_dataflow.hpp` into each kernel's `.cpp`,
+  after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every kernel bit-exact in
+  `main.py native`; csynth not yet rerun.

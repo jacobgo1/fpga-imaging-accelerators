@@ -44,8 +44,8 @@ All optimized kernels give the same answers bit for bit: `classify_fixed` in
 (`tb/spectralpointwise1d_opt/spectralpointwise1d_opt_check.hpp`: a plain-loop integer
 reference and the float golden network) and by `tests/test_spectralpointwise1d.py` on the
 aegean pixels. The design: `src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp`; a
-lane's layers: `spectralpointwise1d_opt_lanes.hpp`; the four-lane chain (ZCU104, 7030):
-`spectralpointwise1d_opt_dataflow.hpp`; the 7020's two lanes: its `.cpp`. Notebooks:
+lane's layers: `spectralpointwise1d_opt_lanes.hpp`; the lanes' chain: each kernel's `.cpp`
+(four lanes on the ZCU104 and the 7030, two on the 7020). Notebooks:
 the shared ones, `software/pynq/shared/classify_golden.ipynb` and `classify.ipynb`; on the OPU PetaLinux (ZedBoard, 7030): the generic `classify.c`.
 
 ## Optimizations used
@@ -162,3 +162,6 @@ much above T means DDR is the limit.
   needs at 214 MHz. Wall clock 13.0-13.1 ms. The 2026-10-30 run (16.52 ms, 112.6 ms wall clock) went
   in strips, the cube not fitting in CMA, and the ARM's copies took DDR from the kernel. Golden
   speed-up now ~6 800×. Reading only the kept words would close most of the 5 %.
+- 2026-10-31: the DATAFLOW chain moved from the shared `spectralpointwise1d_opt_dataflow.hpp` into
+  each kernel's `.cpp`, after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every
+  kernel bit-exact in `main.py native`; csynth not yet rerun.
