@@ -289,6 +289,7 @@ class OpuPackageTests(unittest.TestCase):
         }
         for name, text in stubs.items():
             (bin_dir / name).write_text(text, newline='\n')
+            (bin_dir / name).chmod(0o755)   # Linux skips non-executables on PATH (Git Bash does not)
         load = (out / 'load.sh').read_text().replace('cd /media/sd-pl/firmware', 'cd "$PACKAGE"')
         (out / 'load_here.sh').write_text(load, newline='\n')
         state = Path(self.tmp.name) / 'fclk'

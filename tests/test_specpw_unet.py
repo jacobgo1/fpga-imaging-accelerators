@@ -150,6 +150,8 @@ def compile_and_run(source_text, tmp, stem, include_dirs, sources, args):
 class SpecPWUNetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (ROOT / 'aegean').is_dir():
+            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('specpw_unet_model', ROOT / 'tools/specpw_unet_model.py')
         cls.x, cls.labels = cls.model.aegean_image()

@@ -22,10 +22,10 @@ the ZCU104** (the 1D model is compute-bound).
 
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
-| `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start |
-| `justounetsimple_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | 24 ms measured at "200 MHz" before the 2026-10-14 fixes; newer runs not recorded here yet |
+| `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 194.4 s** for a whole capture (292.4 ms a patch), 202.3 s wall clock, 96.20 % |
+| `justounetsimple_opt` | ZCU104 | 214 MHz | **measured 18.26 ms** for a whole capture, FPGA alone (5 882 cycles a patch; memory-bound); 19.2 ms wall clock |
 | `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider) |
-| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns | built in C++; HLS estimates only |
+| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch) |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/justounetsimple_model.py`); same class as the float model on 99.96 % of the aegean pixels.
@@ -79,9 +79,9 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 
 | Board | T | clock | time |
 |---|---|---|---|
-| ZCU104 | 4 129 | 187.5 MHz | **14.7 ms** (13.7 at 200 MHz); DDR latency per row can add a few % |
+| ZCU104 | 4 129 | 187.5 MHz | **14.7 ms** (13.7 at 200 MHz) if memory kept up; **measured 18.26 ms at 214 MHz** (5 882 cycles a patch: its reads get ~9.0 GB/s, though DDR gives 13) and 17.8 ms at 250 MHz |
 | Zynq-7030 | 10 273 | 100 MHz | **68 ms**, if DDR gives the four ports 2.4 GB/s together (check on HYPSO-2) |
-| Zynq-7020 | 15 360 | 78.1 MHz | **131 ms** |
+| Zynq-7020 | 15 360 | 78.1 MHz | **131 ms**; **measured 143.8 ms at 76.189 MHz** (~16 480 cycles a patch, +7 %: DDR) |
 
 ## Boards: limits, differences and why
 
@@ -127,3 +127,16 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
   classify, check the classes against the image's labels only (labels.npy is required); no PC answers.
+- 2026-10-30: ZCU104 at 214 MHz: 5 882 cycles a patch, 27.45 us, 18.26 ms by the kernel's count
+  (18.46 ms host timer, 19.20 ms wall clock). About the same microseconds as at 250 MHz (26.8 us):
+  memory-bound, as found 2026-10-27. All ZCU104 runs side by side in `speed_zcu104.md`.
+- 2026-10-30: ZedBoard (zb05) at 76.189 MHz, the PLL's nearest to the 77.777 built for: 143.8 ms,
+  216.3 us a patch, ~16 480 cycles (model 15 360; 134 ms at this clock): the two read ports got
+  1.14 GB/s of the 1.25 needed. Wall clock 3.6 s, mostly the SD card. In `speed_zedboard.md`.
+- 2026-10-31: golden `justounetsimple` on the ZCU104: 194.4 s on the FPGA, 292.4 ms a patch (one patch a
+  start), 202.3 s wall clock; 96.20 % against the labels, IoU 0.927 / 0.880 / 0.952, the same as the
+  optimized kernel's. justounetsimple_opt is ~10 600× faster (18.26 ms). In `speed_zcu104.md`.
+- 2026-10-31: DDR is not limited to ~9 GB/s: `spectralpointwise1d_opt` got 13.0 GB/s from the same four
+  ports. So justounetsimple_opt's 5 882 cycles a patch (9.0 GB/s) is how it reads, likely its short
+  bursts (a port reads a 32-pixel piece of a row, 7.7 KB, then jumps a row), not DDR's total. Not yet
+  checked. In `speed_zcu104.md`.

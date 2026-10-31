@@ -62,6 +62,8 @@ def compile_and_run(tmp, kernel, body, inputs, out_dtype, out_shape):
 class SpectralPointwise1DTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (ROOT / 'aegean').is_dir():
+            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('spectralpointwise1d_model', ROOT / 'tools/spectralpointwise1d_model.py')
         cls.raw, cls.labels = cls.model.aegean_pixels()

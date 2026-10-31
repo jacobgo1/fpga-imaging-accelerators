@@ -53,6 +53,8 @@ def load_module(name, path):
 class JustoLiuNetOptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not (ROOT / 'aegean').is_dir():
+            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('justoliunet_model', ROOT / 'tools/justoliunet_model.py')
         cls.raw, cls.labels = cls.model.aegean_pixels()

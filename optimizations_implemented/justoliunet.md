@@ -27,9 +27,9 @@ Work per pixel, counting only outputs the pools keep (conv1 uses 102 of 105, con
 
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
-| `justoliunet` | ZCU104 (any) | 5 ns | golden baseline: float, plain loops, `n` pixels per start |
-| `justoliunet_opt` | ZCU104 | 187.5 MHz (PS PLL nearest 200) | **measured 62.9 ms** per 598 × 1092 capture |
-| `justoliunet_opt_zynq7020` | ZedBoard (`--board zedboard`) | 78.1 MHz | built in C++, bit-exact; cycle model only |
+| `justoliunet` | ZCU104 (any) | 5 ns | golden baseline: float, plain loops, `n` pixels per start; **measured 1 041.7 s** for a whole capture (1.595 ms a pixel), 1 066.9 s wall clock, 97.04 % |
+| `justoliunet_opt` | ZCU104 | 214 MHz | **measured 54.86 ms** per 598 × 1092 capture, FPGA alone (62.9 ms at 187.5 MHz); 128 ms wall clock |
+| `justoliunet_opt_zynq7020` | ZedBoard (`--board zedboard`) | 78.1 MHz (PLL: 76.189 MHz) | **measured 925.7 ms** on the ZedBoard, FPGA alone (108.0 cycles/pixel) |
 | `justoliunet_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | built in C++, bit-exact; cycle model only |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
@@ -99,8 +99,8 @@ Zynq-7000s (packed DSPs: OCP / 2 × ICP × 6):
 
 Utilization of a layer's multipliers: u = MACs / (T × multipliers).
 ZCU104: conv3 100 %, conv1 94 %, conv4 89 %, conv2 85 %. 7030: conv3 97 %, conv4 97 %,
-conv1 69 %, conv2 62 % (conv2 has no step count between 51 and 96: all channels at once, or half). DSP and LUT totals are estimates
-until a utilization report is recorded here.
+conv1 69 %, conv2 62 % (conv2 has no step count between 51 and 96: all channels at once, or half). Routed totals (2026-10-30): ZCU104 1 313 DSPs,
+91.7 k LUTs; ZedBoard 216 DSPs, 32.7 k LUTs; per block in `speed_zcu104.md` / `speed_zedboard.md`.
 
 ## Inference time
 
@@ -110,8 +110,10 @@ time = (pixels × T + fill) / clock, fill a few hundred cycles. For a 598 × 109
 | Board | T | clock | time |
 |---|---|---|---|
 | ZCU104 | 18 | 187.5 MHz | 62.7 ms predicted, **62.9 ms measured** (18.0 cycles/pixel) |
+| ZCU104 | 18 | 214 MHz | 54.9 ms predicted, **54.86 ms measured** (18.00 cycles/pixel) |
 | Zynq-7030 | 74 | 100 MHz | **0.48 s** (cycle model) |
 | ZedBoard | 108 | 78.1 MHz | **0.90 s** (cycle model) |
+| ZedBoard | 108 | 76.189 MHz | 925.7 ms predicted, **925.7 ms measured** (108.0 cycles/pixel) |
 
 Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` register ÷ pixels).
 
@@ -125,7 +127,7 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
 | HP port | 128 bit: 15 words a pixel | 64 bit: 30 words a pixel | 64 bit: 30 words a pixel |
 | Why the engines differ | room for wide layers and whole maps in registers | folded and streamed as the 7020, but wider; conv1 whole-map at 2 positions (its 112 bands are small) to get under 102 | too few DSPs for wide layers (fold instead), too few LUTs for whole-map FIFOs (stream positions instead) |
 | Memory a limit? | only below ~9.4 cycles/pixel (2 ports) | no (one port: 37.5 cycles/pixel) | no (one port: 37.5 cycles/pixel) |
-| Clock | 187.5 MHz: PS PLL's nearest to 5 ns | 10 ns | 12.8 ns (try 10 ns) |
+| Clock | 214 MHz (was 187.5 MHz) | 10 ns | 12.8 ns (try 10 ns) |
 
 ## Changes
 
@@ -136,8 +138,18 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
 - 2026-10-19: `justoliunet_opt_zynq7030` (the ZedBoard design, wider): conv1 at 2 positions a
   cycle (`pool_adjacent`), conv2 12×6, conv3 18×3, conv4 4×6: 74 cycles/pixel, 0.48 s (paper
   design: 81, 0.53 s).
+- 2026-10-30: ZCU104 at 214 MHz: 18.00 cycles a pixel, 54.86 ms by the kernel's count, the same
+  cycles as at 187.5 MHz (logic-bound). Host timer 84.6 ms (strips of 128 rows), wall clock 127.6 ms:
+  the ARM's copies and Python are more than the FPGA. `justoliunet_bn_opt` the same (54.86 ms, wall
+  115.3 ms). All ZCU104 runs side by side in `speed_zcu104.md`.
+- 2026-10-30: ZedBoard (zb05) at 76.189 MHz (the PLL's nearest to the 77.777 built for):
+  `justoliunet_opt_zynq7020` and `_bn_opt_zynq7020` both 925.7 ms, 108.0 cycles a pixel, the cycle
+  model exactly. Wall clock 3.4 s / 5.9 s, mostly the SD card. In `speed_zedboard.md`.
 - Open ideas (not implemented): faster clock; ZCU104 rebalance to 16 cycles; hard-wired
   weights (ZCU104); BRAM multipliers (Zynq-7000); fast FIR; see `docs/justoliunet_opt_design.md`.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
   classify, check the classes against the image's labels only (labels.npy is required); no PC answers.
+- 2026-10-31: golden `justoliunet` on the ZCU104: 1 041.7 s on the FPGA (1.595 ms a pixel), 1 066.9 s wall
+  clock; 97.04 % against the labels, IoU 0.927 / 0.905 / 0.975 (the optimized kernel: 97.00 %).
+  justoliunet_opt is ~19 000× faster on the FPGA (54.86 ms). In `speed_zcu104.md`.

@@ -68,6 +68,11 @@ patching.py               Cuts an image into 32 x 32 patches and stitches result
                           the same way the kernels do.
 ```
 
+The labelled aegean pixels are in `aegean/` at the top of the repo (`pixels.txt`, `labels.npy`,
+`reference_logits.npy`). It is not in git: copy it in when needed. Without it, these scripts and
+the tests that use it (test_justoliunet, test_justoliunet_opt, test_spectralpointwise1d,
+test_specpw_unet) skip.
+
 ## Images: a HYPSO capture -> a folder for the board notebook
 
 ```text

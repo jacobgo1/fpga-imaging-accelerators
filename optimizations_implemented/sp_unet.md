@@ -37,16 +37,16 @@ MACs per patch, 92 % of it its first conv.
 
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
-| `sp_unet_small` | ZCU104 | 5 ns | golden baseline: float, int8 weights, n patches per start; C++ and testbench pass, not yet synthesized |
-| `sp_unet_medium` | ZCU104 | 5 ns | the same |
-| `sp_unet_large` | ZCU104 | 5 ns | the same |
+| `sp_unet_small` | ZCU104 | 5 ns | golden baseline: float, int8 weights, n patches per start; **measured 416.5 s** for a whole capture (626.4 ms a patch), 97.48 % |
+| `sp_unet_medium` | ZCU104 | 5 ns | the same; **measured 1 239.3 s** for a whole capture (1 863.6 ms a patch), 97.33 % |
+| `sp_unet_large` | ZCU104 | 5 ns | the same; **measured 2 164.5 s** for a whole capture (3 254.9 ms a patch), 97.55 % |
 | `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
 | `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
 | `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
-| `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 856 cycles a patch (model 9 839) |
-| `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~109 ms (34 960 cycles a patch) |
-| `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; ran at the predicted ~218 ms (69 900 cycles a patch) |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (78.1 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665 ms** on the ZedBoard (≈ 78 100 cycles a patch; predicted ~694) |
+| `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 858 cycles a patch (model 9 839), 97.48 % |
+| `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; measured 108.64 ms (35 006 cycles a patch), 97.32 % |
+| `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; measured 217.25 ms (70 004 cycles a patch), 97.55 % |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
 
@@ -230,8 +230,8 @@ and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100
 | Kernel | Predicted cycles a patch | Predicted, 665 patches at 214 MHz | Measured |
 |---|---|---|---|
 | `sp_unet_small_opt_direct` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms) |
-| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **as predicted** (2026-10-28) |
-| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **as predicted** (2026-10-28) |
+| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **35 006 cycles, 108.64 ms** (2026-10-30; 97.32 % against the labels) |
+| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **70 004 cycles, 217.25 ms** (2026-10-30; 97.55 % against the labels) |
 
 Why these are predictions: they come from a model of the design, made before the kernel ran,
 not from a run.
@@ -333,7 +333,7 @@ multipliers (the window trails the input by a row and two pixels).
 
 | Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
 |---|---|---|---|
-| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | ~694 ms; **measured 665 ms** (≈ 78 100 cycles a patch, +2.6 %) | ~542 ms |
+| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | ~694 ms; **measured 665.7 ms** at 76.189 MHz (76 270 cycles a patch: the convs' 76 176, +0.13 %) | ~542 ms |
 | `sp_unet_medium_opt_direct_zynq7020` | 228 528 (+ ~7 %) | **~2.1 s** | ~1.6 s |
 | `sp_unet_large_opt_direct_zynq7020` | 420 864 (+ ~7 %) | **~3.8 s** | ~3.0 s |
 
@@ -511,3 +511,25 @@ the aegean pixels (small / medium / large).
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
   classify, check the classes against the image's labels only (labels.npy is required); no PC answers.
+- 2026-10-30: the ZedBoard's PLL makes 76.189 MHz, not 78.1 (`load.sh` prints it; seen on zb05). If the
+  2026-10-28 run had that clock, its 665 ms is ≈ 76 100 cycles a patch: the convs' own 76 176, nothing
+  lost to the 2-deep FIFOs. In `speed_zedboard.md`.
+- 2026-10-30: `sp_unet_large_opt_direct` on the ZCU104 at 214 MHz: 70 004 cycles a patch (69 900
+  predicted), 217.25 ms, wall clock 218.4 ms; 97.55 % against the labels, IoU cloud / land / sea
+  0.945 / 0.923 / 0.973. In `speed_zcu104.md`.
+- 2026-10-30: `sp_unet_small_opt_direct` and `sp_unet_medium_opt_direct` run again at 214 MHz: 9 858 /
+  35 006 cycles a patch, 30.59 / 108.64 ms, wall clock 32.1 / 109.8 ms; 97.48 / 97.32 % against the
+  labels. In `speed_zcu104.md`.
+- 2026-10-31: golden `sp_unet_large` on the ZCU104: 2 164.5 s on the FPGA (3 254.9 ms a patch, one patch a
+  start), 2 172.4 s wall clock; 97.55 % against the labels, IoU 0.945 / 0.923 / 0.973, the same as
+  `sp_unet_large_opt_direct`'s, which is ~10 000× faster (217.25 ms). In `speed_zcu104.md`.
+- 2026-10-31: golden `sp_unet_medium` on the ZCU104: 1 239.3 s on the FPGA (1 863.6 ms a patch), 1 247.3 s
+  wall clock; 97.33 % against the labels, IoU 0.939 / 0.919 / 0.970 (`sp_unet_medium_opt_direct`: 97.32 %,
+  ~11 400× faster at 108.64 ms). In `speed_zcu104.md`.
+- 2026-10-31: golden `sp_unet_small` on the ZCU104: 416.5 s on the FPGA (626.4 ms a patch), 424.5 s wall
+  clock; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as `sp_unet_small_opt_direct`'s,
+  which is ~13 600× faster (30.59 ms). In `speed_zcu104.md`.
+- 2026-10-31: `sp_unet_small_opt_direct_zynq7020` again on zb05, 76.189 MHz (`load.sh`): 665.7 ms, 76 270
+  cycles a patch (the convs' 76 176, +0.13 %: the 2-deep FIFOs lose next to nothing), wall clock
+  3.622 s; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as the ZCU104 kernel's.
+  In `speed_zedboard.md`.

@@ -34,10 +34,10 @@ point 97.24 %; the fixed point gives the same class as fp32 on 99.71 % of them.
 
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
-| `spectralpointwise1d` | ZCU104 (any) | 5 ns | golden baseline: float, int8 weights, plain loops, `n` preprocessed pixels per start; C++ passes, not yet synthesized |
-| `spectralpointwise1d_opt` | ZCU104 | 187.5 MHz (PS PLL nearest 200) | whole raw capture per start, bit-exact in C++; cycle model only, not yet synthesized |
-| `spectralpointwise1d_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | the same |
-| `spectralpointwise1d_opt_zynq7020` | ZedBoard (`--board zedboard`) or PYNQ-Z2 (`--board zynq7020`) | 78.1 MHz | the same |
+| `spectralpointwise1d` | ZCU104 (any) | 5 ns | golden baseline: float, int8 weights, plain loops, `n` preprocessed pixels per start; **measured 82.18 s** for a whole capture (0.126 ms a pixel), 97.32 % |
+| `spectralpointwise1d_opt` | ZCU104 | 214 MHz | whole raw capture per start, bit-exact in C++; at 214 MHz **measured 12.05-12.17 ms**, 3.95-3.99 cycles a pixel (near DDR's limit), 97.32 % |
+| `spectralpointwise1d_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | whole raw capture per start, bit-exact in C++; cycle model only, not yet run |
+| `spectralpointwise1d_opt_zynq7020` | ZedBoard (`--board zedboard`) or PYNQ-Z2 (`--board zynq7020`) | 12.8 ns (PLL: 76.189 MHz) | whole raw capture per start, bit-exact in C++; **measured 135.0 ms** on the ZedBoard, 15.75 cycles a pixel (DDR), 97.32 % |
 
 All optimized kernels give the same answers bit for bit: `classify_fixed` in
 `tools/spectralpointwise1d_model.py`, checked by the shared testbench
@@ -103,9 +103,9 @@ time = (pixels × T + fill) / clock, fill a few hundred cycles. For a 598 × 109
 
 | Board | T | clock | DDR reads at T | time (predicted) | measured |
 |---|---|---|---|---|---|
-| ZCU104 | 3.75 | 187.5 MHz | 12.0 GB/s of 4 × 3.0 | **13.1 ms** | – |
+| ZCU104 | 3.75 | 187.5 MHz | 12.0 GB/s of 4 × 3.0 | **13.1 ms** (11.4 ms at 214 MHz) | **12.05-12.17 ms** at 214 MHz: 3.95-3.99 cycles a pixel, DDR gave 13.0 GB/s of the 13.7 T needs there |
 | Zynq-7030 | 7.5 | 100 MHz | 3.2 GB/s of 4 × 0.8 | **49 ms** | – |
-| ZedBoard (7020) | 15 | 78.1 MHz | 1.25 GB/s of 2 × 0.62 | **125 ms** | – |
+| ZedBoard (7020) | 15 | 78.1 MHz | 1.25 GB/s of 2 × 0.62 | **125 ms** (128.6 ms at 76.189 MHz) | **135.0 ms** at 76.189 MHz: 15.75 cycles a pixel, DDR gave 1.16 GB/s |
 | golden `spectralpointwise1d` (ZCU104) | – | 5 ns | – | from csynth's latency | – |
 
 The predictions assume DDR gives the readers what T needs. If it does not, the kernel runs
@@ -145,3 +145,20 @@ much above T means DDR is the limit.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
   classify, check the classes against the image's labels only (labels.npy is required); no PC answers.
+- 2026-10-30: `spectralpointwise1d_opt` on the ZCU104 at 214 MHz: 16.52 ms by its own count, 5.42
+  cycles a pixel against T = 3.75: DDR-bound, the four ports got 9.5 GB/s, not the 13.7 T needs at 214 MHz. Host
+  timer 80.3 ms (copies of the strips), wall clock 112.6 ms; 97.32 % against the labels, IoU cloud /
+  land / sea 0.939 / 0.915 / 0.972. The "read only the kept words" idea is now worth trying.
+- 2026-10-31: golden `spectralpointwise1d` on the ZCU104: 82.18 s on the FPGA (0.126 ms a pixel), 89.55 s
+  wall clock; 97.32 % against the labels, IoU 0.939 / 0.915 / 0.972, the same as the optimized kernel's.
+  spectralpointwise1d_opt is ~5 000× faster on the FPGA (16.52 ms), ~800× on the wall clock (112.6 ms).
+  In `speed_zcu104.md`.
+- 2026-10-31: `spectralpointwise1d_opt_zynq7020` on the ZedBoard (zb05) at 76.189 MHz: 135.0 ms, 15.75
+  cycles a pixel against T = 15 (+5 %: the two ports got 1.16 GB/s of the 1.25 T needs), wall clock
+  1.852 s; 97.32 % against the labels, IoU 0.939 / 0.915 / 0.972, as the ZCU104 kernel. In
+  `speed_zedboard.md`.
+- 2026-10-31: `spectralpointwise1d_opt` again on the ZCU104, in one start: 12.05 and 12.17 ms by its own
+  count, 3.95-3.99 cycles a pixel (T = 3.75, +5-6 %): DDR gave the four ports 13.0 GB/s of the 13.7 T
+  needs at 214 MHz. Wall clock 13.0-13.1 ms. The 2026-10-30 run (16.52 ms, 112.6 ms wall clock) went
+  in strips, the cube not fitting in CMA, and the ARM's copies took DDR from the kernel. Golden
+  speed-up now ~6 800×. Reading only the kept words would close most of the 5 %.

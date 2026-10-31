@@ -30,10 +30,10 @@ Total: ~4 972 MACs per pixel (5.09 M per patch), ~21 MACs per byte read.
 
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
-| `waveletcnn` | ZCU104 | 5 ns | golden baseline: float, one patch per start |
-| `waveletcnn_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | built in C++, bit-exact; cycle model below |
+| `waveletcnn` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 128.67 s** for a whole capture (193.5 ms a patch), 97.23 % |
+| `waveletcnn_opt` | ZCU104 | 214 MHz | bit-exact; **measured 25.43 ms**, 8 195 cycles a patch (T 8 192), 97.22 % |
 | `waveletcnn_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle model below |
-| `waveletcnn_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns | built in C++, bit-exact; cycle model below |
+| `waveletcnn_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | bit-exact; **measured 259.4 ms** on the ZedBoard, 29 721 cycles a patch (T 29 696), 97.22 % |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/waveletcnn_model.py`); same class as the quantized float model on 99.66 %
@@ -81,11 +81,11 @@ Each stage runs at II = 1:
 
 `time = patches × T / clock`; a 598 × 1092 capture is 19 × 35 = 665 patches.
 
-| Board | T | clock | time |
-|---|---|---|---|
-| ZCU104 | 8 192 | 187.5 MHz | **29.1 ms** (27.2 ms at 200 MHz) |
-| Zynq-7030 | 15 360 | 100 MHz | **102 ms** |
-| Zynq-7020 | 29 696 | 78.1 MHz | **253 ms** |
+| Board | T | clock | time | measured |
+|---|---|---|---|---|
+| ZCU104 | 8 192 | 187.5 MHz | **29.1 ms** (25.5 ms at 214 MHz) | **25.43 ms** at 214 MHz: 8 195 cycles a patch |
+| Zynq-7030 | 15 360 | 100 MHz | **102 ms** | – |
+| Zynq-7020 | 29 696 | 78.1 MHz | **253 ms** (259.2 ms at 76.189 MHz) | **259.4 ms** at 76.189 MHz: 29 721 cycles a patch |
 
 ## Boards: limits, differences and why
 
@@ -111,3 +111,12 @@ Each stage runs at II = 1:
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
   classify, check the classes against the image's labels only (labels.npy is required); no PC answers.
+- 2026-10-30: `waveletcnn_opt` on the ZCU104 at 214 MHz: 8 195 cycles a patch (T 8 192), 25.43 ms by
+  its own count, wall clock 26.5 ms; 97.22 % against the labels, IoU cloud / land / sea 0.933 / 0.911 /
+  0.975. In `speed_zcu104.md`.
+- 2026-10-31: golden `waveletcnn` on the ZCU104: 128.67 s on the FPGA (193.5 ms a patch), 136.55 s wall
+  clock; 97.23 % against the labels, IoU 0.933 / 0.911 / 0.975 (`waveletcnn_opt`: 97.22 %, ~5 100× faster
+  at 25.43 ms). In `speed_zcu104.md`.
+- 2026-10-31: `waveletcnn_opt_zynq7020` on the ZedBoard (zb05) at 76.189 MHz: 29 721 cycles a patch (T 29 696),
+  259.4 ms, wall clock 2.974 s; 97.22 % against the labels, IoU 0.933 / 0.911 / 0.975, as the ZCU104
+  kernel. In `speed_zedboard.md`.
