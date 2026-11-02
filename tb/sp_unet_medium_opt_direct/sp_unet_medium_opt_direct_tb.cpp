@@ -1,5 +1,5 @@
 // sp_unet_medium_opt_direct_tb.cpp  --  testbench for the direct SpecPW-UNet, medium:
-// the same checks as the Winograd kernels' (sp_unet_small_opt/sp_unet_opt_check.hpp).
+// the checks are in sp_unet_small_opt_direct/sp_unet_opt_check.hpp, shared by the sizes.
 #include "sp_unet_medium_opt_direct.hpp"
 // The golden kernel: the float reference, and the weights as namespace weights (floats).
 #include "../../src/hls/sp_unet_medium/sp_unet_medium.cpp"
@@ -17,7 +17,7 @@ static void run_golden(const float *din, float *dout, int n) {
     sp_unet_medium(din, dout, n);
 }
 
-#include "../sp_unet_small_opt/sp_unet_opt_check.hpp"
+#include "../sp_unet_small_opt_direct/sp_unet_opt_check.hpp"
 
 int main()
 {

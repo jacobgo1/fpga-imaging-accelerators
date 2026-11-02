@@ -44,3 +44,6 @@ value).
 - 2026-10-31: the DATAFLOW chain moved from the shared `justoliunet_opt*_dataflow.hpp` into each
   kernel's `.cpp`, after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every
   kernel bit-exact in `main.py native`; csynth not yet rerun.
+- 2026-11-01: `justoliunet_bn_opt` on the ZCU104 at 250 MHz, one start: 47.02 ms by the kernel's count
+  (18.00 cycles a pixel), host timer 47.22 ms, wall clock 48.10 ms; 96.46 %, IoU 0.912 / 0.900 / 0.965,
+  the same as at 214 MHz. The FPGA's speed-up over the golden kernel is now ~22 000× (`speed_zcu104.md`).

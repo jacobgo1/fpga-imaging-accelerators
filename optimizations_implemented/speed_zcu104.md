@@ -24,9 +24,6 @@ What the three times are:
 | `sp_unet_small_opt_direct` | 9 858 a patch | **30.59 ms** (46.00 us a patch) | 30.84 ms | 32.13 ms | 21.3 M |
 | `sp_unet_medium_opt_direct` | 35 006 a patch | **108.64 ms** (163.4 us a patch) | 108.86 ms | 109.75 ms | 6.0 M |
 | `sp_unet_large_opt_direct` | 70 004 a patch | **217.25 ms** (326.7 us a patch) | 217.48 ms | 218.38 ms | 3.0 M |
-| `sp_unet_small_opt` (Winograd) | | not yet run | | | |
-| `sp_unet_medium_opt` (Winograd) | | not yet run | | | |
-| `sp_unet_large_opt` (Winograd) | | not yet run | | | |
 | `spectralpointwise1d_opt` | 3.95-3.99 a pixel | **12.05-12.17 ms** (0.019 us a pixel) | 12.33-12.40 ms | 12.99-13.10 ms | 53.6 M |
 | `waveletcnn_opt` | 8 195 a patch | **25.43 ms** (38.25 us a patch) | 25.66 ms | 26.52 ms | 25.7 M |
 
@@ -58,7 +55,8 @@ What the runs show:
   over the kernel's count, shows it): the wall clock is
   2.1-2.3 × the FPGA's own count, the host timer's extra ~29 ms the copies of the strips, the rest
   (~31-43 ms) Python around them. In one start, as spectralpointwise1d_opt's runs show, the wall
-  clock should be ~1 ms over the FPGA's: ~56 ms. To rerun with the other notebooks shut down.
+  clock should be ~1 ms over the FPGA's: ~56 ms. The 250 MHz runs, in one start, show it: 1.1 ms over
+  (below).
 - **justounetsimple_opt is held by its reads:** 5 882 cycles a patch, against conv1's 4 129. Its time
   in microseconds hardly depends on the clock: 27.45 us a patch at 214 MHz, 26.8 us (6 707 cycles)
   at 250 MHz on 2026-10-27. Its four ports get ~9.0 GB/s (245 760 bytes a patch ÷ 27.45 us), ~9.2
@@ -90,14 +88,14 @@ the optimizations buy. FPGA time is the host timer over every start.
 
 | Kernel | FPGA, host timer | Wall clock | Optimized kernel's FPGA / wall clock | Speed-up, FPGA / wall clock |
 |---|---|---|---|---|
-| `justounetsimple` | **194.4 s** (292.4 ms a patch, ~62.6 M cycles at 214 MHz) | 202.3 s | 18.26 ms / 19.20 ms | **~10 600×** / ~10 500× |
-| `justoliunet` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 066.9 s | 54.86 ms / 127.6 ms | **~19 000×** / ~8 400× |
-| `justoliunet_bn` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 049.1 s | 54.86 ms / 115.3 ms | **~19 000×** / ~9 100× |
-| `sp_unet_small` | **416.5 s** (626.4 ms a patch, ~134 M cycles at 214 MHz) | 424.5 s | 30.59 ms / 32.13 ms | **~13 600×** / ~13 200× |
-| `sp_unet_medium` | **1 239.3 s** (1 863.6 ms a patch, ~399 M cycles at 214 MHz) | 1 247.3 s | 108.64 ms / 109.75 ms | **~11 400×** / ~11 400× |
-| `sp_unet_large` | **2 164.5 s** (3 254.9 ms a patch, ~697 M cycles at 214 MHz) | 2 172.4 s | 217.25 ms / 218.38 ms | **~10 000×** / ~9 900× |
-| `spectralpointwise1d` | **82.18 s** (0.126 ms a pixel, ~26 900 cycles at 214 MHz) | 89.55 s | 12.17 ms / 13.10 ms | **~6 800×** / ~6 800× |
-| `waveletcnn` | **128.67 s** (193.5 ms a patch, ~41.4 M cycles at 214 MHz) | 136.55 s | 25.43 ms / 26.52 ms | **~5 100×** / ~5 100× |
+| `justounetsimple` | **194.4 s** (292.4 ms a patch, ~62.6 M cycles at 214 MHz) | 202.3 s | 17.87 ms / 18.84 ms (250 MHz) | **~10 900×** / ~10 700× |
+| `justoliunet` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 066.9 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~22 000× |
+| `justoliunet_bn` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 049.1 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~21 800× |
+| `sp_unet_small` | **416.5 s** (626.4 ms a patch, ~134 M cycles at 214 MHz) | 424.5 s | 26.23 ms / 27.28 ms (250 MHz) | **~15 900×** / ~15 600× |
+| `sp_unet_medium` | **1 239.3 s** (1 863.6 ms a patch, ~399 M cycles at 214 MHz) | 1 247.3 s | 93.12 ms / 94.22 ms (250 MHz) | **~13 300×** / ~13 200× |
+| `sp_unet_large` | **2 164.5 s** (3 254.9 ms a patch, ~697 M cycles at 214 MHz) | 2 172.4 s | 186.22 ms / 187.33 ms (250 MHz) | **~11 600×** / ~11 600× |
+| `spectralpointwise1d` | **82.18 s** (0.126 ms a pixel, ~26 900 cycles at 214 MHz) | 89.55 s | 12.02 ms / 12.95 ms (250 MHz) | **~6 800×** / ~6 900× |
+| `waveletcnn` | **128.67 s** (193.5 ms a patch, ~41.4 M cycles at 214 MHz) | 136.55 s | 21.91 ms / 23.04 ms (250 MHz) | **~5 900×** / ~5 900× |
 
 The ARM's part (the wall clock less the FPGA's) is the float z-score (and patch cutting) in numpy,
 which the optimized kernels do in hardware:
@@ -108,8 +106,8 @@ which the optimized kernels do in hardware:
 - 25.2 s for justoliunet (one start): the same work as justoliunet_bn, so the extra ~18 s is not
   explained; a rerun would tell.
 
-justoliunet's speed-up on the wall clock is half its FPGA's because its optimized runs went in
-strips (above); spectralpointwise1d's, in one start, is the same on both.
+The rows marked 250 MHz use those runs, in one start. justoliunet's 214 MHz
+runs went in strips, which halved its speed-up on the wall clock.
 
 ## Accuracy (the board's classes against the image's labels)
 
@@ -172,21 +170,46 @@ Where it goes:
 
 ## 250 MHz
 
-To be filled in as the bitstreams close timing. Expected from the cycles at 214 MHz:
+Every kernel closed timing at 250 MHz. Expected from the cycles at 214 MHz:
 
 | Kernel | Expected | Why | Measured |
 |---|---|---|---|
-| `justounetsimple_opt` | ~17.8 ms | memory-bound: about the same microseconds a patch; 17.8 ms measured 2026-10-27 | |
-| `justoliunet_opt` | 47.0 ms | logic-bound: 18 cycles a pixel, × 214 / 250 | |
-| `justoliunet_bn_opt` | 47.0 ms | the same | |
-| `sp_unet_small_opt_direct` | 26.2 ms | logic-bound: 9 858 cycles a patch (reads 6.2 GB/s, well under DDR's 13) | |
-| `sp_unet_medium_opt_direct` | 93.1 ms | logic-bound: 35 006 cycles a patch | |
-| `sp_unet_large_opt_direct` | 186.2 ms | logic-bound: 70 004 cycles a patch | |
-| `spectralpointwise1d_opt` | 10.5-12 ms | 10.5 ms if DDR gives the 16.0 GB/s T needs at 250 MHz; it gave 13.0 at 214, so likely ~12 | |
-| `waveletcnn_opt` | 21.8 ms | logic-bound: 8 195 cycles a patch (reads 7.5 GB/s, under DDR's 13) | |
+| `justounetsimple_opt` | ~17.8 ms | memory-bound: about the same microseconds a patch; 17.8 ms measured 2026-10-27 | **17.87 ms** (6 718 a patch, 26.87 us), host timer 18.10 ms, wall clock 18.84 ms, one start; 96.20 % |
+| `justoliunet_opt` | 47.0 ms | logic-bound: 18 cycles a pixel, × 214 / 250 | **47.02 ms** (18.00 a pixel), host timer 47.19 ms, wall clock 48.10 ms, one start; 97.00 % |
+| `justoliunet_bn_opt` | 47.0 ms | the same | **47.02 ms** (18.00 a pixel), host timer 47.22 ms, wall clock 48.10 ms, one start; 96.46 % |
+| `sp_unet_small_opt_direct` | 26.2 ms | logic-bound: 9 858 cycles a patch (reads 6.2 GB/s, well under DDR's 13) | **26.23 ms** (9 859 a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms, one start; 97.48 % |
+| `sp_unet_medium_opt_direct` | 93.1 ms | logic-bound: 35 006 cycles a patch | **93.12 ms** (35 006 a patch, 140.0 us), host timer 93.37 ms, wall clock 94.22 ms, one start; 97.32 % |
+| `sp_unet_large_opt_direct` | 186.2 ms | logic-bound: 70 004 cycles a patch | **186.22 ms** (70 007 a patch, 280.0 us), host timer 186.45 ms, wall clock 187.33 ms, one start; 97.55 % |
+| `spectralpointwise1d_opt` | 10.5-12 ms | 10.5 ms if DDR gives the 16.0 GB/s T needs at 250 MHz; it gave 13.0 at 214, so likely ~12 | **12.02-12.21 ms** (4.60-4.68 a pixel), host timer 12.23-12.43 ms, wall clock 12.95-13.16 ms, one start, two runs; 97.32 % |
+| `waveletcnn_opt` | 21.8 ms | logic-bound: 8 195 cycles a patch (reads 7.5 GB/s, under DDR's 13) | **21.91 ms** (8 238 a patch, 32.95 us), host timer 22.15 ms, wall clock 23.04 ms, one start; 97.22 % |
 
 A logic-bound kernel must show the same cycle count as at 214 MHz; a memory-bound one shows more
 cycles and about the same time.
+
+- **justoliunet_opt / _bn_opt at 250 MHz:** 18.00 cycles a pixel, as at 187.5 and 214 MHz, so 47.02 ms,
+  the predicted 47.0, both. In one start the host timer is 0.2 ms over the kernel's count and the
+  wall clock 1.1 ms over: 48.1 ms, against 127.6 / 115.3 ms in strips at 214 MHz. The ~56 ms guessed
+  for one start at 214 MHz holds; the ARM's 60-70 ms then was the strips, and the 12 ms between the
+  two wall clocks is gone. Same classes as at 214 MHz: 97.00 % and 96.46 %.
+- **justounetsimple_opt at 250 MHz:** 6 718 cycles a patch, 26.87 us, against 5 882 cycles and
+  27.45 us at 214 MHz: more cycles, about the same time, as a memory-bound kernel should. Its ports
+  get ~9.1 GB/s (245 760 bytes a patch ÷ 26.87 us), as before; the clock buys 2 %. The same classes:
+  96.20 %.
+- **The sp_unet direct kernels at 250 MHz:** 9 859 / 35 006 / 70 007 cycles a patch (small / medium /
+  large), the same as at 214 MHz to a few cycles, so 26.23 / 93.12 / 186.22 ms, the predicted 26.2 /
+  93.1 / 186.2: logic-bound. The wall clock is ~1.1 ms over the kernel's count. The same classes:
+  97.48 / 97.32 / 97.55 %.
+- **spectralpointwise1d_opt at 250 MHz:** 4.60-4.68 cycles a pixel (two runs) against 3.95-3.99 at
+  214 MHz, so 12.02-12.21 ms, no faster than 12.05-12.17: memory-bound, as expected. DDR gives the
+  four ports 12.8-13.0 GB/s (156.7 MB ÷ 12.02-12.21 ms), the 13.0 of 214 MHz, of the 16.0 T needs now. So ~13 GB/s
+  is what this board's DDR gives four HP ports; only reading less (the kept words) would help.
+  The same classes: 97.32 %.
+- **waveletcnn_opt at 250 MHz:** 8 238 cycles a patch, 43 (0.5 %) more than at 214 MHz, so 21.91 ms
+  against the predicted 21.8: logic-bound, with a few cycles of waiting, likely on its reads (~7.5
+  GB/s now, still well under DDR's 13). The same classes: 97.22 %.
+- **Fastest whole path at 250 MHz:** spectralpointwise1d_opt (12.95 ms), justounetsimple_opt
+  (18.84 ms), waveletcnn_opt (23.04 ms), sp_unet_small_opt_direct (27.28 ms), justoliunet_opt /
+  _bn_opt (48.1 ms). Each wall clock is 0.9-1.1 ms over the kernel's count.
 
 ## Changes
 
@@ -220,3 +243,23 @@ cycles and about the same time.
   strips, the cube not fitting in CMA, and the ARM's copies had slowed the kernel. So DDR is not
   limited to ~9 GB/s: justounetsimple_opt's 9.0 is its own reads. The justoliunet runs went in strips
   too; to be rerun. Golden speed-up of spectralpointwise1d now ~6 800×.
+- 2026-11-01: `justoliunet_bn_opt` at 250 MHz, one start: 47.02 ms (18.00 cycles a pixel), host timer
+  47.22 ms, wall clock 48.10 ms; 96.46 %, the same classes as at 214 MHz.
+- 2026-11-01: `justoliunet_opt` at 250 MHz, one start: 47.02 ms (18.00 cycles a pixel), host timer
+  47.19 ms, wall clock 48.10 ms; 97.00 %. The justoliunet golden speed-ups now from the 250 MHz runs:
+  ~22 000× on the FPGA and on the wall clock.
+- 2026-11-01: `justounetsimple_opt` at 250 MHz, one start: 17.87 ms (6 718 cycles a patch, 26.87 us),
+  host timer 18.10 ms, wall clock 18.84 ms; 96.20 %. Still memory-bound (~9.1 GB/s). Golden
+  speed-up now from this run: ~10 900× on the FPGA, ~10 700× on the wall clock.
+- 2026-11-01: `sp_unet_large_opt_direct` at 250 MHz, one start: 186.22 ms (70 007 cycles a patch),
+  host timer 186.45 ms, wall clock 187.33 ms; 97.55 %. Golden speed-up now ~11 600×.
+- 2026-11-01: `sp_unet_medium_opt_direct` at 250 MHz, one start: 93.12 ms (35 006 cycles a patch),
+  host timer 93.37 ms, wall clock 94.22 ms; 97.32 %. Golden speed-up now ~13 300×.
+- 2026-11-01: `sp_unet_small_opt_direct` at 250 MHz, one start: 26.23 ms (9 859 cycles a patch),
+  host timer 26.44 ms, wall clock 27.28 ms; 97.48 %. Golden speed-up now ~15 900×.
+- 2026-11-01: `spectralpointwise1d_opt` at 250 MHz, one start: 12.21 ms (4.68 cycles a pixel), host
+  timer 12.43 ms, wall clock 13.16 ms; 97.32 %. Memory-bound: DDR 12.8 GB/s, as at 214 MHz. A second
+  run: 12.02 ms (4.60 cycles a pixel, 13.0 GB/s), wall clock 12.95 ms; the speed-up row uses it.
+- 2026-11-01: `waveletcnn_opt` at 250 MHz, one start: 21.91 ms (8 238 cycles a patch), host timer
+  22.15 ms, wall clock 23.04 ms; 97.22 %. Golden speed-up now ~5 900×. Every ZCU104 kernel now has a
+  250 MHz run.

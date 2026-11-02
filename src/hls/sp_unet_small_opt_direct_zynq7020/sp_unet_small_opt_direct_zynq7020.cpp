@@ -28,7 +28,7 @@ typedef lines_layer_size<24, 1, 1, true> DOUBLE4_CONV1;             // 24 ->  8 
 typedef lines_layer_size< 8, 1, 1, true> DOUBLE4_CONV2;             // 8 ->  8  9 x  1 x  8 =   72 a pixel  x 1058 =  76 176    8
 }
 
-#include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
+#include "../sp_unet_small_opt_direct/sp_unet_opt_common.hpp"
 #include "../../optimized/shared/read_rows.hpp"
 #include "../../optimized/shared/pixel_buffer.hpp"
 #include "../../optimized/zynq7020/pointwise_wide.hpp"
@@ -106,10 +106,10 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
     pointwise_wide<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
                    CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias,
                    sizes::CONVSP1_PASSES>(zscores, convsp1_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, 1, true,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
               CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
               sizes::CONVSP2_ON_DSPS, sizes::CONVSP2_IN_PER_CYCLE>(convsp1_out, convsp2_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, 1, true,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
               CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
               sizes::CONVSP3_ON_DSPS, sizes::CONVSP3_IN_PER_CYCLE>(convsp2_out, stem_out, height, width);
 
@@ -151,7 +151,7 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
     conv3x3_lines<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
                   LINES_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
         double4_relu1, double4_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, 1, false,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
               FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias,
               sizes::FINAL_ON_DSPS, sizes::FINAL_IN_PER_CYCLE>(double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);

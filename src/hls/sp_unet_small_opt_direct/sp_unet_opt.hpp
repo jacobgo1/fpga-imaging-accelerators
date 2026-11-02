@@ -5,12 +5,11 @@
 #include "../../common/hls_vector_shim.hpp"
 #include "../../common/hls_burst_maxi_shim.hpp"
 
-// The optimized SpecPW-UNet (small, medium and large) on a whole raw capture,
-// for the ZCU104. The 3x3 convs are integer Winograd F(2x2, 3x3) and the
-// UpBlocks are computed from the low-res maps (wino_conv3x3.hpp); the maps
-// between them travel in 2x2-block order. The skip connection waits in a FIFO
-// in UltraRAM. Every process is sized for the same time a patch, in each
-// kernel's .cpp. Bit for bit classify_fixed in tools/specpw_unet_model.py.
+// The optimized SpecPW-UNet (small, medium and large) on a whole raw capture.
+// Every 3x3 conv done directly (conv3x3_grouped), the maps in raster order, the
+// pooling and upsampling in justounetsimple_opt's ReLU modules; the skip
+// connection waits in a FIFO. Every process is sized for the same time a patch,
+// in each kernel's .cpp. Bit for bit classify_fixed in tools/specpw_unet_model.py.
 // Design and numbers: optimizations_implemented/sp_unet.md.
 
 constexpr int PATCH_SIZE = 32;

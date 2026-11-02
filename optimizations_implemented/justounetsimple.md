@@ -79,7 +79,7 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 
 | Board | T | clock | time |
 |---|---|---|---|
-| ZCU104 | 4 129 | 187.5 MHz | **14.7 ms** (13.7 at 200 MHz) if memory kept up; **measured 18.26 ms at 214 MHz** (5 882 cycles a patch: its reads get ~9.0 GB/s, though DDR gives 13) and 17.8 ms at 250 MHz |
+| ZCU104 | 4 129 | 187.5 MHz | **14.7 ms** (13.7 at 200 MHz) if memory kept up; **measured 18.26 ms at 214 MHz** (5 882 cycles a patch: its reads get ~9.0 GB/s, though DDR gives 13) and **17.87 ms at 250 MHz** (6 718 cycles, 26.87 us a patch) |
 | Zynq-7030 | 10 273 | 100 MHz | **68 ms**, if DDR gives the four ports 2.4 GB/s together (check on HYPSO-2) |
 | Zynq-7020 | 15 360 | 78.1 MHz | **131 ms**; **measured 143.8 ms at 76.189 MHz** (~16 480 cycles a patch, +7 %: DDR) |
 
@@ -140,3 +140,7 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
   ports. So justounetsimple_opt's 5 882 cycles a patch (9.0 GB/s) is how it reads, likely its short
   bursts (a port reads a 32-pixel piece of a row, 7.7 KB, then jumps a row), not DDR's total. Not yet
   checked. In `speed_zcu104.md`.
+- 2026-11-01: ZCU104 at 250 MHz, one start: 17.87 ms by the kernel's count (6 718 cycles, 26.87 us a
+  patch), host timer 18.10 ms, wall clock 18.84 ms; 96.20 %, IoU 0.927 / 0.880 / 0.952, as at
+  214 MHz. The 2026-10-27 run's 6 707 cycles again: still its reads (~9.1 GB/s). ~10 900× the golden
+  kernel on the FPGA.

@@ -1,5 +1,5 @@
 // sp_unet_opt_check.hpp  --  the testbench of the optimized SpecPW-UNet kernels
-// (sp_unet_small_opt, _medium_opt, _large_opt): the same checks for each size.
+// (sp_unet_SIZE_opt_direct and the Zynq-7020's): the same checks for each.
 // A testbench includes its kernel's header, then its golden kernel's .cpp
 // (src/hls/sp_unet_SIZE/: the float reference, and its weights as namespace weights,
 // held as floats with integer values), defines run_kernel(din, dout, height,
@@ -12,7 +12,7 @@
 //  - exact: the integer z-score, then specpw_unet_fixed_golden (plain loops,
 //    one multiply per product, int64 sums: the arithmetic classify_fixed in
 //    tools/specpw_unet_model.py does). Integer sums do not depend on the order
-//    they are added in, and Winograd's are exact, so the kernel must match it
+//    they are added in, so the kernel must match it
 //    bit for bit, and its class must be the first highest of these scores.
 //  - golden: the float kernel on the same int8 input, as floats. The
 //    difference is the rounding between the layers; it must stay small.

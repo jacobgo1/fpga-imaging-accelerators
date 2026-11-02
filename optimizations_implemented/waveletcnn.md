@@ -31,7 +31,7 @@ Total: ~4 972 MACs per pixel (5.09 M per patch), ~21 MACs per byte read.
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
 | `waveletcnn` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 128.67 s** for a whole capture (193.5 ms a patch), 97.23 % |
-| `waveletcnn_opt` | ZCU104 | 214 MHz | bit-exact; **measured 25.43 ms**, 8 195 cycles a patch (T 8 192), 97.22 % |
+| `waveletcnn_opt` | ZCU104 | 250 MHz | bit-exact; **measured 21.91 ms**, 8 238 cycles a patch (T 8 192), 97.22 %; 25.43 ms (8 195 cycles) at 214 MHz |
 | `waveletcnn_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle model below |
 | `waveletcnn_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | bit-exact; **measured 259.4 ms** on the ZedBoard, 29 721 cycles a patch (T 29 696), 97.22 % |
 
@@ -83,7 +83,7 @@ Each stage runs at II = 1:
 
 | Board | T | clock | time | measured |
 |---|---|---|---|---|
-| ZCU104 | 8 192 | 187.5 MHz | **29.1 ms** (25.5 ms at 214 MHz) | **25.43 ms** at 214 MHz: 8 195 cycles a patch |
+| ZCU104 | 8 192 | 187.5 MHz | **29.1 ms** (25.5 ms at 214 MHz) | **25.43 ms** at 214 MHz: 8 195 cycles a patch; **21.91 ms** at 250 MHz: 8 238 |
 | Zynq-7030 | 15 360 | 100 MHz | **102 ms** | – |
 | Zynq-7020 | 29 696 | 78.1 MHz | **253 ms** (259.2 ms at 76.189 MHz) | **259.4 ms** at 76.189 MHz: 29 721 cycles a patch |
 
@@ -120,3 +120,7 @@ Each stage runs at II = 1:
 - 2026-10-31: `waveletcnn_opt_zynq7020` on the ZedBoard (zb05) at 76.189 MHz: 29 721 cycles a patch (T 29 696),
   259.4 ms, wall clock 2.974 s; 97.22 % against the labels, IoU 0.933 / 0.911 / 0.975, as the ZCU104
   kernel. In `speed_zedboard.md`.
+- 2026-11-01: `waveletcnn_opt` on the ZCU104 at 250 MHz, one start: 21.91 ms by the kernel's count
+  (8 238 cycles a patch, 32.95 us), host timer 22.15 ms, wall clock 23.04 ms; 97.22 %, IoU 0.933 /
+  0.911 / 0.975, as at 214 MHz. 0.5 % over the predicted 21.8 ms (43 cycles more a patch than at
+  214 MHz). ~5 900× the golden kernel. In `speed_zcu104.md`.

@@ -35,7 +35,7 @@ point 97.24 %; the fixed point gives the same class as fp32 on 99.71 % of them.
 | Kernel | Board | Clock | Status |
 |---|---|---|---|
 | `spectralpointwise1d` | ZCU104 (any) | 5 ns | golden baseline: float, int8 weights, plain loops, `n` preprocessed pixels per start; **measured 82.18 s** for a whole capture (0.126 ms a pixel), 97.32 % |
-| `spectralpointwise1d_opt` | ZCU104 | 214 MHz | whole raw capture per start, bit-exact in C++; at 214 MHz **measured 12.05-12.17 ms**, 3.95-3.99 cycles a pixel (near DDR's limit), 97.32 % |
+| `spectralpointwise1d_opt` | ZCU104 | 250 MHz | whole raw capture per start, bit-exact in C++; **measured 12.02-12.21 ms** at 250 MHz (4.60-4.68 cycles a pixel) and 12.05-12.17 ms at 214 MHz (3.95-3.99): DDR's limit, 97.32 % |
 | `spectralpointwise1d_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | whole raw capture per start, bit-exact in C++; cycle model only, not yet run |
 | `spectralpointwise1d_opt_zynq7020` | ZedBoard (`--board zedboard`) or PYNQ-Z2 (`--board zynq7020`) | 12.8 ns (PLL: 76.189 MHz) | whole raw capture per start, bit-exact in C++; **measured 135.0 ms** on the ZedBoard, 15.75 cycles a pixel (DDR), 97.32 % |
 
@@ -103,7 +103,7 @@ time = (pixels × T + fill) / clock, fill a few hundred cycles. For a 598 × 109
 
 | Board | T | clock | DDR reads at T | time (predicted) | measured |
 |---|---|---|---|---|---|
-| ZCU104 | 3.75 | 187.5 MHz | 12.0 GB/s of 4 × 3.0 | **13.1 ms** (11.4 ms at 214 MHz) | **12.05-12.17 ms** at 214 MHz: 3.95-3.99 cycles a pixel, DDR gave 13.0 GB/s of the 13.7 T needs there |
+| ZCU104 | 3.75 | 187.5 MHz | 12.0 GB/s of 4 × 3.0 | **13.1 ms** (11.4 ms at 214 MHz) | **12.05-12.17 ms** at 214 MHz: 3.95-3.99 cycles a pixel, DDR gave 13.0 GB/s of the 13.7 T needs there; **12.02-12.21 ms** at 250 MHz: 4.60-4.68 cycles a pixel, 12.8-13.0 GB/s |
 | Zynq-7030 | 7.5 | 100 MHz | 3.2 GB/s of 4 × 0.8 | **49 ms** | – |
 | ZedBoard (7020) | 15 | 78.1 MHz | 1.25 GB/s of 2 × 0.62 | **125 ms** (128.6 ms at 76.189 MHz) | **135.0 ms** at 76.189 MHz: 15.75 cycles a pixel, DDR gave 1.16 GB/s |
 | golden `spectralpointwise1d` (ZCU104) | – | 5 ns | – | from csynth's latency | – |
@@ -165,3 +165,8 @@ much above T means DDR is the limit.
 - 2026-10-31: the DATAFLOW chain moved from the shared `spectralpointwise1d_opt_dataflow.hpp` into
   each kernel's `.cpp`, after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every
   kernel bit-exact in `main.py native`; csynth not yet rerun.
+- 2026-11-01: `spectralpointwise1d_opt` on the ZCU104 at 250 MHz, one start: 12.21 ms by the kernel's
+  count (4.68 cycles a pixel), host timer 12.43 ms, wall clock 13.16 ms; 97.32 %, IoU 0.939 / 0.915 /
+  0.972, as at 214 MHz. No faster than at 214 MHz: DDR gave 12.8 GB/s, about the same 13. The
+  clock does not help this kernel; reading only the kept words would. A second run: 12.02 ms
+  (4.60 cycles a pixel, 13.0 GB/s), host timer 12.23 ms, wall clock 12.95 ms.

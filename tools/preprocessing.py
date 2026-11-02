@@ -7,7 +7,7 @@ prep_constants      the same as integers, (dn * A + B) >> prep_frac, as the opti
                     kernels do it in hardware
 preprocess_fixed    that integer z-score, bit for bit
 
-The 2D kernels (justounetsimple_opt, waveletcnn_opt, sp_unet_*_opt) take it as int8 with
+The 2D kernels (justounetsimple_opt, waveletcnn_opt, sp_unet_*_opt_direct) take it as int8 with
 IN_FRAC fraction bits; `python tools/preprocessing.py` writes their constants into
 src/optimized/shared/zscore_int8.hpp. The 1D kernels use a 12-bit format of their own
 (tools/justoliunet_model.py), from the same prep_constants.

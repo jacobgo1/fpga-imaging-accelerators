@@ -24,7 +24,7 @@ typedef layer_size<24, 1, true> DOUBLE4_CONV1;  // 24 -> 8    1 x 8 = 8      x 1
 typedef layer_size< 8, 1, true> DOUBLE4_CONV2;  // 8 -> 8     1 x 8 = 8      x 1 057 = 8 456       72
 }
 
-#include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
+#include "../sp_unet_small_opt_direct/sp_unet_opt_common.hpp"
 #include "../../optimized/shared/read_rows.hpp"
 #include "../../optimized/shared/pixel_buffer.hpp"
 #include "../../optimized/zcu104/pointwise_wide.hpp"
@@ -157,10 +157,10 @@ void sp_unet_small_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
     pointwise_wide<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
                    CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias>(
         zscores, convsp1_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, 1, true,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
               CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
               sizes::CONVSP2_3_ON_DSPS>(convsp1_out, convsp2_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, 1, true,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
               CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
               sizes::CONVSP2_3_ON_DSPS>(convsp2_out, stem_out, height, width);
 
@@ -217,7 +217,7 @@ void sp_unet_small_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
         double4_relu1, double4_conv2_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4_CONV2_FRACS::SHIFT, DOUBLE4>(
         double4_conv2_out, double4_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, 1, false,
+    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
               FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(
         double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);

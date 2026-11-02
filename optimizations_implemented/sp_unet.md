@@ -40,12 +40,9 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small` | ZCU104 | 5 ns | golden baseline: float, int8 weights, n patches per start; **measured 416.5 s** for a whole capture (626.4 ms a patch), 97.48 % |
 | `sp_unet_medium` | ZCU104 | 5 ns | the same; **measured 1 239.3 s** for a whole capture (1 863.6 ms a patch), 97.33 % |
 | `sp_unet_large` | ZCU104 | 5 ns | the same; **measured 2 164.5 s** for a whole capture (3 254.9 ms a patch), 97.55 % |
-| `sp_unet_small_opt` | ZCU104 | 5 ns (PS PLL: 187.5 MHz) | whole raw capture per start, bit-exact in C++ (testbench, `classify_fixed` on aegean pixels); cycle model below, not yet synthesized |
-| `sp_unet_medium_opt` | ZCU104 | 5 ns | the same |
-| `sp_unet_large_opt` | ZCU104 | 5 ns | the same |
-| `sp_unet_small_opt_direct` | ZCU104 | 214 MHz | the same kernel without Winograd (direct convs, simpler); **measured 30.6 ms** for a whole capture, FPGA alone: 9 858 cycles a patch (model 9 839), 97.48 % |
-| `sp_unet_medium_opt_direct` | ZCU104 | 214 MHz | the same; measured 108.64 ms (35 006 cycles a patch), 97.32 % |
-| `sp_unet_large_opt_direct` | ZCU104 | 214 MHz | the same; measured 217.25 ms (70 004 cycles a patch), 97.55 % |
+| `sp_unet_small_opt_direct` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
+| `sp_unet_medium_opt_direct` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
+| `sp_unet_large_opt_direct` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
 | `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
@@ -53,11 +50,11 @@ MACs per patch, 92 % of it its first conv.
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
 `src/golden/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
-(`tb/sp_unet_small_opt/sp_unet_opt_check.hpp`, shared by the three sizes). Same class as the
+(`tb/sp_unet_small_opt_direct/sp_unet_opt_check.hpp`, shared by every optimized kernel). Same class as the
 float golden kernel on the testbench's 2 000 random pixels, scores within 0.01. On the aegean
 pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes (below).
 
-The design: `src/hls/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain and each
+The design: `src/hls/sp_unet_small_opt_direct/sp_unet_opt.hpp`; the DATAFLOW chain and each
 size's table of layer widths (PI x PO, DSP or LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
 (`software/pynq/shared/classify.ipynb`), and on the ZedBoard `classify`, both checked
 against the image's labels.
@@ -90,119 +87,39 @@ take about half of it. To be replaced by the csynth reports' utilization.
 
 ```
 DDR ─► read_rows_ahead x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
-     └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, pixels in 2x2-block order
-     └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3 (+ 4 pixels into a block)
-     └ double1: wino 3x3, wino 3x3 ──► pool + skip ──► skip FIFO (UltraRAM, 512 blocks) ─────┐
-     └ double2: wino, wino (16 x 16) ─► pool (block -> pixel)                                 │
-     └ up1: wino up (8 x 8 -> 16 x 16 blocks) ─► double3: wino, wino ─► blocks -> rows       │
-     └ up2: wino up (16 x 16 -> 32 x 32 blocks) ─► cat ◄─────────────────────────────────────┘
-     └ double4: wino, wino ─► blocks -> rows ─► final 1x1 ─► store (HPC0, 3 scores + class)
+     └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, raster order
+     └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3
+     └ double1: conv ─► relu_act ─► conv ─► relu_pool_skip ──► skip FIFO (UltraRAM, a patch) ──┐
+     └ double2: conv ─► relu_act ─► conv ─► relu_pool_up (pool to 8 x 8, upsample to 16 x 16)  │
+     └ up1: conv ─► relu_act ─► double3: conv ─► relu_act ─► conv ─► relu_up (to 32 x 32)      │
+     └ up2: conv ─► relu_act ─► concat_pixels ◄──────────────────────────────────────────────┘
+     └ double4: conv ─► relu_act ─► conv ─► relu_act ─► final 1x1 ─► store (HPC0, 3 scores + class)
 ```
 
-## Optimizations used
+Every 3x3 conv is `conv3x3_grouped` (PI inputs x PO outputs a cycle, 9 multipliers each).
 
-| Technique | small_opt | medium_opt | large_opt |
-|---|---|---|---|
-| One start for the whole capture, loop tiling into 32 × 32 patches, edges repeated in hardware | ✓ | ✓ | ✓ |
-| Preprocessing in hardware: band drop + integer z-score (int8, 5 fraction bits), its multipliers in LUTs | ✓ | ✓ | ✓ |
-| Fixed point: int8 weights, int16 activations (10 fraction bits), int32 sums, power-of-two scales as shifts | ✓ | ✓ | ✓ |
-| DATAFLOW, one process per layer, all maps on chip, every process sized for the same T | ✓ | ✓ | ✓ |
-| 3x3 convs as integer Winograd F(2x2, 3x3): 16 multiplies per 2x2 block and channel pair, not 36, exact (U ×4, Y = 4Y >> 2) | ✓ | ✓ | ✓ |
-| UpBlock (nearest ×2 + 3x3) from the low-res map: the upsampled tile's equal rows zero a row and column of V, 9 multiplies, not 36 | ✓ | ✓ | ✓ |
-| Maps in 2x2-block order: max-pool is a block, Winograd's 2x2 outputs need no reordering | ✓ | ✓ | ✓ |
-| Window across row and patch boundaries (centre a block row + 2 behind the input): no per-patch bubble | ✓ | ✓ | ✓ |
-| Window as 4 rotating column slots, 1 write + 1 read each at fixed places (no run-time bank choice) | ✓ | ✓ | ✓ |
-| Stem without a patch buffer: 4-row strip ping-pong (`pixel_buffer`, block order) | ✓ | ✓ | ✓ |
-| convsp1 on the int8 bands, two multiplies per DSP48E2 (`pointwise_wide`, 18-bit spacing, groups of 8) | 32 bands/cycle | 16 | 8 |
-| Skip connection in an UltraRAM FIFO (512 blocks; needs up to 248) | ✓ | ✓ | ✓ |
-| Transformed weights in one wide memory a layer: LUTRAM when ≤ 64 steps deep, BRAM deeper | ✓ | ✓ | ✓ |
-| DSPs kept at 1 200-1 500 (for the clock): small layers' multipliers in LUTs (convsp2/3, final, z-score) | ✓ | ✓, T = 12 288 instead of 9 216 | ✓, + double1a, double3b, double4b in LUTs |
-| 4 read ports, read bursts requested a row ahead; score writes with acknowledgements collected later | ✓ | ✓ | ✓ |
-| Cycle counter register | ✓ | ✓ | ✓ |
+The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs.
 
-## Latency per stage (cycles per patch, predicted)
+## The optimized kernels (`sp_unet_SIZE_opt_direct`)
 
-Every process is a pipelined loop at II = 1, one patch after another without gaps.
-- Winograd layer: blocks (256 at 32 × 32, 64 at 16 × 16) × IN/PI × OUT/PO; UpBlock: low-res
-  pixels (64 for up1, 256 for up2) × IN/PI × OUT/PO.
-- convsp1: 1 024 × ceil(110 / P1); convsp2/3, final: 1 024 × OUT/PO.
-- pixel_buffer: 8 strips × max(480 words in, 4 × 32 × ceil(110 / P1) out).
+Built only from techniques the other models already use. A Winograd version
+(`sp_unet_SIZE_opt`: F(2x2, 3x3), 2.3x fewer multiplies, the maps in 2x2-block order,
+predicted 14.5 / 43.6 / 58.2 ms) was written first; only small worked, and it was removed
+2026-10-31 (in git before that date).
 
-| Stage | small (PI × PO) | medium | large |
-|---|---|---|---|
-| read (per port) | 3 840 | 3 840 | 3 840 |
-| pixel_buffer | **4 096** | 7 168 | 14 336 |
-| convsp1 (packed) | **4 096** (P1 32) | 7 168 (P1 16) | 14 336 (P1 8) |
-| convsp2 / convsp3 | **4 096** / **4 096** | 8 192 / **12 288** | **16 384** / **16 384** |
-| double1 a / b | **4 096** (3×3) / **4 096** (3×3) | **12 288** (2×3) / **12 288** (4×3) | **16 384** (2×4, LUTs) / **16 384** (4×4) |
-| double2 a / b | 3 072 (2×3) / **4 096** (3×3) | **12 288** (2×3) / **12 288** (4×3) | **16 384** (2×4) / **16 384** (4×4) |
-| up1 | **4 096** (3×3) | **12 288** (4×3) | **16 384** (4×4) |
-| double3 a / b | 3 072 (3×2) / 3 072 (3×1) | **12 288** (3×2) / **12 288** (3×1) | **16 384** (4×2) / **16 384** (2×2, LUTs) |
-| up2 | **4 096** (3×3) | **12 288** (4×3) | **16 384** (4×4) |
-| double4 a / b | **4 096** (6×2) / **4 096** (2×2) | **12 288** (4×3) / **12 288** (3×1) | **16 384** (4×4) / **16 384** (2×2, LUTs) |
-| final, pools, reorders, concat, store | ≤ 3 072 | ≤ 3 072 | ≤ 3 072 |
-| **T** | **4 096** (DDR reads: 3 840) | **12 288** | **16 384** |
-
-## Multipliers and memory (predicted)
-
-| | small_opt | medium_opt | large_opt |
-|---|---|---|---|
-| Multiply-adds per patch, direct | 13.8 M | 40.5 M | 70.5 M |
-| Multiplies per patch done (Winograd, up trick) | 7.4 M (1.9× fewer) | 17.8 M (2.3×) | 30.1 M (2.3×) |
-| DSPs: Winograd + convsp1 | 1 090 + 384 = **1 474 of 1 728** (85 %) | 1 176 + 192 = **1 368** (79 %) | 1 312 + 128 = **1 440** (83 %) |
-| Multipliers in LUTs | 148 (convsp2/3, final, z-score) | 108 (the same) | 352 (+ double1a, double3b, double4b: 256 Winograd) |
-| Skip FIFO (UltraRAM, 72 bit each) | 11 URAM (768 bit wide) | 22 (1 536) | 29 (2 048) |
-| Weights in BRAM (layers > 64 steps) | none | ~92 BRAM36 (double2, up1, double3) | ~122 BRAM36 |
-
-The csynth reports replace these: check the DSP count against this table (more means a
-multiply was not mapped as intended), the Bind Op Report (`dsp` vs `fabric` per layer as in
-the tables), `Final II = 1` for every `conv` loop, and that no FIFO of a block stream went to
-BRAM (they are 768-4 096 bits wide: `impl=srl`).
-
-## Inference time (predicted)
-
-time = (patches + 1) × T / clock; a 598 × 1092 capture is 19 × 35 = 665 patches.
-
-| Kernel | T | clock | time |
-|---|---|---|---|
-| `sp_unet_small_opt` | 4 096 | 187.5 MHz | **14.5 ms** (memory-bound: the four read ports need 3 840) |
-| `sp_unet_medium_opt` | 12 288 | 187.5 MHz | **43.6 ms** (T = 9 216, 32.7 ms, needs ~1 760 DSPs) |
-| `sp_unet_large_opt` | 16 384 | 187.5 MHz | **58.2 ms** |
-
-## Boards: limits, differences and why
-
-| | small_opt | medium_opt | large_opt |
-|---|---|---|---|
-| Limit | DDR reads (11.2 GB/s at T), then the stem | the DSP budget (kept ≤ 1 500 for the clock) | the DSP budget, and LUTs for 256 Winograd multipliers |
-| Faster would need | more read bandwidth (5 ports) | ~1 760 DSPs for T = 9 216 | ~1 700 DSPs to have all of T = 16 384 on DSPs; the next step down, T = 12 288, does not divide the 64-channel layers |
-| If the clock still misses | small layers back to DSPs frees LUTs | — | double1a back on DSPs (1 568) if the LUTs are the problem |
-
-The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs. Zynq-7000 versions
-(7030, 7020) are not written yet: they would use the same modules with smaller PI × PO and,
-on the 7020, LUT multipliers.
-
-## The direct kernels (`sp_unet_SIZE_opt_direct`): no Winograd
-
-The same kernels, inputs, outputs and answers (bit for bit, the same testbench checks and
-notebook), built only from techniques the other models already use, for a simpler design
-to check and explain. The price: 2.3x more multiplies, so 2.4-4.3x slower for about the
-same DSPs.
-
-| | Winograd (`_opt`) | Direct (`_opt_direct`) |
-|---|---|---|
-| 3x3 convs | `wino_conv3x3`, 16 multiplies per 2x2 block and channel pair | `conv3x3_grouped`: 9 per pixel, PI inputs x PO outputs a cycle (`conv3x3_serial` with PO outputs a step) |
-| UpBlocks | `wino_up_conv3x3` from the low-res map, 9 per block | `relu_pool_up` / `relu_up` upsample, then a plain 3x3 conv (36 per 2x2 block) |
-| Map order | 2x2 blocks | raster, one pixel a vector |
-| ReLU + rounding | inside each conv | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
-| Skip FIFO | 512 blocks, UltraRAM | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
-| Window | across patches, no bubble | per patch, W + 1 steps of bubble (in the cycle counts below) |
-| FIFOs between the processes | 2 deep (not yet measured) | 16 deep, in LUTs (SRL): the layers run at the same rate with no time to spare (below) |
-| convsp2 / convsp3 multipliers | LUTs | DSPs (`STEM_DSP`), for the LUTs the deeper FIFOs take |
-| A conv's weights | one wide memory (a word a step) | one wide memory a layer too: block RAM when > 64 steps deep, LUTRAM when shallow (was one memory per PI × PO × tap) |
-
-Shared with the Winograd kernels: the readers, `pixel_buffer` (raster order), the packed
-convsp1, convsp2/3 and final (`pointwise`), `store_scores`, the cycle counter, the z-score in
-LUTs.
+| | How |
+|---|---|
+| 3x3 convs | `conv3x3_grouped`: 9 per pixel, PI inputs x PO outputs a cycle |
+| UpBlocks | `relu_pool_up` / `relu_up` upsample, then a plain 3x3 conv |
+| Map order | raster, one pixel a vector |
+| ReLU + rounding | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
+| Skip FIFO | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
+| Window | per patch, W + 1 steps of bubble (in the cycle counts below) |
+| FIFOs between the processes | 16 deep, in LUTs (SRL): the layers run at the same rate with no time to spare (below) |
+| convsp1 | int8 bands, two multiplies per DSP48E2 (`pointwise_wide`, 18-bit spacing) |
+| convsp2 / convsp3 multipliers | DSPs (`STEM_DSP`), for the LUTs the deeper FIFOs take |
+| A conv's weights | one wide memory a layer: block RAM when > 64 steps deep, LUTRAM when shallow |
+| Preprocessing | band drop and integer z-score in `pixel_buffer`, its multipliers in LUTs |
 
 | Layer (PI x PO) | small | medium | large |
 |---|---|---|---|
@@ -218,7 +135,6 @@ LUTs.
 | predicted, 665 patches at 187.5 MHz | 34.9 ms | 124 ms | 248 ms |
 | predicted, 665 patches at 214 MHz | 30.6 ms (9 839 cycles a patch) | 109 ms (34 960) | 218 ms (69 900) |
 | **measured, FPGA alone, 214 MHz** | **30.6 ms** (9 856 cycles a patch; 41 ms / 11 503 with 2-deep FIFOs) | **as predicted** | **as predicted** |
-| Winograd kernel, for comparison | 14.5 ms, 1 474 DSPs | 43.6 ms, 1 368 | 58.2 ms, 1 440 |
 
 A conv layer takes (H x W + W + 1) x IN/PI x OUT/PO cycles a patch, with 9 x PI x PO
 multipliers. Large has every channel count a power of two, so its only table between 1 136
@@ -228,9 +144,9 @@ and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100
 
 | Kernel | Predicted cycles a patch | Predicted, 665 patches at 214 MHz | Measured |
 |---|---|---|---|
-| `sp_unet_small_opt_direct` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms) |
-| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **35 006 cycles, 108.64 ms** (2026-10-30; 97.32 % against the labels) |
-| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **70 004 cycles, 217.25 ms** (2026-10-30; 97.55 % against the labels) |
+| `sp_unet_small_opt_direct` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms); at 250 MHz 9 859 cycles, 26.23 ms (2026-11-01) |
+| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **35 006 cycles, 108.64 ms** (2026-10-30; 97.32 % against the labels); at 250 MHz 35 006 cycles, 93.12 ms (2026-11-01) |
+| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **70 004 cycles, 217.25 ms** (2026-10-30; 97.55 % against the labels); at 250 MHz 70 007 cycles, 186.22 ms (2026-11-01) |
 
 Why these are predictions: they come from a model of the design, made before the kernel ran,
 not from a run.
@@ -381,8 +297,8 @@ made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 
 - **Block RAM** is the next to watch on large (~115 of 140): the weights are stored twice (the
   ROM and the copy each conv reads), and the skip FIFO is 2 048 deep. Generated weight memories
   (once) or a 1 024-deep skip FIFO would free ~35 and ~15.
-- **Speed**: the Winograd design would need 2.3x fewer multiplies, but more LUTs, which this chip
-  has least of; not tried here.
+- **Speed**: Winograd would need 2.3x fewer multiplies, but more LUTs, which this chip has least of;
+  not tried here.
 
 On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) the build packs
 `K_opu.zip` with the generic `classify` program (`software/opu/justounetsimple_opt/classify.c`):
@@ -535,3 +451,16 @@ the aegean pixels (small / medium / large).
 - 2026-10-31: the DATAFLOW chain moved from the shared `*_dataflow.hpp` into each kernel's `.cpp`,
   after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every kernel bit-exact in
   `main.py native`; csynth not yet rerun.
+- 2026-10-31: the Winograd kernels `sp_unet_SIZE_opt` removed (only small worked; not to be used), with
+  `wino_conv3x3`, `pool_blocks`, `blocks_to_rows`, `concat_blocks` and the block-order options of
+  `pixel_buffer` and `pointwise`. `sp_unet_opt.hpp`, `sp_unet_opt_common.hpp` and the testbench check
+  moved to `sp_unet_small_opt_direct/`. The direct kernels bit-exact in `main.py native`.
+- 2026-11-01: `sp_unet_large_opt_direct` on the ZCU104 at 250 MHz, one start: 186.22 ms by the kernel's
+  count (70 007 cycles a patch, 280.0 us), host timer 186.45 ms, wall clock 187.33 ms; 97.55 %, IoU
+  0.945 / 0.923 / 0.973, as at 214 MHz. Logic-bound: the same cycles, 186.2 ms as predicted.
+- 2026-11-01: `sp_unet_medium_opt_direct` at 250 MHz, one start: 93.12 ms by the kernel's count (35 006
+  cycles a patch, 140.0 us), host timer 93.37 ms, wall clock 94.22 ms; 97.32 %, IoU 0.939 / 0.919 /
+  0.970, as at 214 MHz. The same cycles, 93.1 ms as predicted.
+- 2026-11-01: `sp_unet_small_opt_direct` at 250 MHz, one start: 26.23 ms by the kernel's count (9 859
+  cycles a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms; 97.48 %, IoU 0.944 / 0.914 /
+  0.976, as at 214 MHz. The same cycles, 26.2 ms as predicted: all three sizes logic-bound.

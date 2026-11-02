@@ -8,7 +8,7 @@ here against the labelled aegean pixels. Against it, compiled with plain g++:
    real 32 x 32 patches;
  - the integer model's plain-loop C++ (src/golden/specpw_unet_fixed_golden.hpp), bit for
    bit against classify_fixed's arithmetic, so it can be an optimized kernel's reference.
-Then the optimized kernels sp_unet_SIZE_opt (Winograd, block order, integer fixed point),
+Then the optimized kernels sp_unet_SIZE_opt_direct (integer fixed point),
 compiled with plain g++, bit for bit against classify_fixed on a real raw crop that is not
 whole patches. The board notebooks, shared by every model, are tests/test_notebooks.py's.
 """
@@ -39,7 +39,6 @@ PATCH = 32
 # two classes in the first patch, all three in the second
 CORNERS = ((0, 0), (40, 104))
 AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
-OPT_DESIGN = ROOT / 'src/hls/sp_unet_small_opt/sp_unet_opt.hpp'
 DINS, OPT_DOUT, HEIGHT, WIDTH, CYCLES = (0x10, 0x1c, 0x28, 0x34), 0x40, 0x4c, 0x54, 0x5c
 
 
@@ -279,7 +278,7 @@ class SpecPWUNetTests(unittest.TestCase):
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_optimized_kernels_match_classify_fixed_bit_for_bit(self):
-        """The whole raw-cube kernels, Winograd (_opt), direct (_opt_direct) and the Zynq-7020's, on a real crop of
+        """The whole raw-cube kernels, direct (_opt_direct) and the Zynq-7020's, on a real crop of
         45 x 70 pixels (2 x 3 patches, the edge ones partly outside): what classify_fixed and
         the class say, every value."""
         m = self.model
@@ -287,9 +286,9 @@ class SpecPWUNetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
-            for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES
-                               for kind in ('', '_direct', '_direct_zynq7020')
-                               if kind != '_direct_zynq7020' or size == 'small']:   # the 7020 fits small only
+            for name, size in [(f'{m.name(size)}_opt_direct{kind}', size) for size in m.SIZES
+                               for kind in ('', '_zynq7020')
+                               if kind == '' or size == 'small']:   # the 7020 fits small only
                 with self.subTest(kernel=name):
                     source_dir = ROOT / 'src/hls' / name
                     ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports

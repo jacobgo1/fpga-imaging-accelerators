@@ -111,6 +111,7 @@ time = (pixels × T + fill) / clock, fill a few hundred cycles. For a 598 × 109
 |---|---|---|---|
 | ZCU104 | 18 | 187.5 MHz | 62.7 ms predicted, **62.9 ms measured** (18.0 cycles/pixel) |
 | ZCU104 | 18 | 214 MHz | 54.9 ms predicted, **54.86 ms measured** (18.00 cycles/pixel) |
+| ZCU104 | 18 | 250 MHz | 47.0 ms predicted, **47.02 ms measured** (18.00 cycles/pixel) |
 | Zynq-7030 | 74 | 100 MHz | **0.48 s** (cycle model) |
 | ZedBoard | 108 | 78.1 MHz | **0.90 s** (cycle model) |
 | ZedBoard | 108 | 76.189 MHz | 925.7 ms predicted, **925.7 ms measured** (108.0 cycles/pixel) |
@@ -156,3 +157,8 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
 - 2026-10-31: the DATAFLOW chain moved from the shared `justoliunet_opt*_dataflow.hpp` into each
   kernel's `.cpp`, after its INTERFACE pragmas, as in justounetsimple_opt. The same code: every
   kernel bit-exact in `main.py native`; csynth not yet rerun.
+- 2026-11-01: `justoliunet_bn_opt` at 250 MHz: 47.02 ms, 18.00 cycles a pixel, as predicted; in one
+  start the wall clock is 48.1 ms (`speed_zcu104.md`).
+- 2026-11-01: `justoliunet_opt` at 250 MHz: the same, 47.02 ms, 18.00 cycles a pixel; host timer
+  47.19 ms, wall clock 48.10 ms in one start; 97.00 %, IoU 0.926 / 0.904 / 0.975, as at 214 MHz.
+  Against the golden kernel ~22 000× on the FPGA and on the wall clock.
