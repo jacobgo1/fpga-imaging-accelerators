@@ -49,12 +49,12 @@ MACs per patch, 92 % of it its first conv.
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
-`src/golden/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
+`tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
 (`tb/sp_unet_small_opt_direct/sp_unet_opt_check.hpp`, shared by every optimized kernel). Same class as the
 float golden kernel on the testbench's 2 000 random pixels, scores within 0.01. On the aegean
 pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes (below).
 
-The design: `src/hls/sp_unet_small_opt_direct/sp_unet_opt.hpp`; the DATAFLOW chain and each
+The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain and each
 size's table of layer widths (PI x PO, DSP or LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
 (`software/pynq/shared/classify.ipynb`), and on the ZedBoard `classify`, both checked
 against the image's labels.
@@ -201,7 +201,7 @@ changed nothing.
 The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the same
 arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
 chip with 220 DSP48E1 (these use at most 205), 53 k LUTs, 106 k flip-flops, 140 BRAM36, no
-UltraRAM and 64-bit HP ports. The design: `src/hls/sp_unet_small_opt_direct_zynq7020/
+UltraRAM and 64-bit HP ports. The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/
 sp_unet_opt_zynq7020.hpp`; the chain and its sizes
 table: its `.cpp`.
 

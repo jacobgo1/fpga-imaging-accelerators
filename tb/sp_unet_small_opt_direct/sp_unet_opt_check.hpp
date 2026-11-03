@@ -1,7 +1,7 @@
 // sp_unet_opt_check.hpp  --  the testbench of the optimized SpecPW-UNet kernels
 // (sp_unet_SIZE_opt_direct and the Zynq-7020's): the same checks for each.
 // A testbench includes its kernel's header, then its golden kernel's .cpp
-// (src/hls/sp_unet_SIZE/: the float reference, and its weights as namespace weights,
+// (src/models/SpecPW-UNet/SIZE/sp_unet_SIZE_golden/: the float reference, and its weights as namespace weights,
 // held as floats with integer values), defines run_kernel(din, dout, height,
 // width) and run_golden(din, dout, n), then includes this for check_kernel().
 //
@@ -19,7 +19,7 @@
 // The z-scores are spread over -4 .. 4, so some inputs saturate at +-127. The
 // dropped bands (raw 0-7 and 118-119) hold 65535: they must not count.
 #include "../../src/optimized/shared/zscore_int8.hpp"
-#include "../../src/golden/specpw_unet_fixed_golden.hpp"
+#include "specpw_unet_fixed_golden.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

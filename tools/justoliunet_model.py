@@ -30,7 +30,7 @@ The optimized kernels' integer formats (chosen on the 10 275 labelled aegean pix
   scores     int32, OUT_FRAC = 16 fraction bits, then the class, as justounetsimple_opt.
 
     python tools/justoliunet_model.py          # both models on the aegean pixels: fp32, int8, fixed
-    python tools/justoliunet_model.py formats  # write src/hls/justoliunet_opt/justoliunet_opt_formats.hpp
+    python tools/justoliunet_model.py formats  # write src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp
 """
 import sys
 from pathlib import Path
@@ -53,7 +53,7 @@ ACT_MAX = 255                                    # activations: uint8
 ACT_FRACS = {'justoliunet': (4, 4, 2, 3),        # fraction bits after blocks 1-4: one more
              'justoliunet_bn': (4, 4, 2, 2)}     # than the largest value needs, the best on aegean
 OUT_FRAC = 16                                    # scores: score * 2^16
-FORMATS_HEADER = ROOT / 'src/hls/justoliunet_opt/justoliunet_opt_formats.hpp'
+FORMATS_HEADER = ROOT / 'src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp'
 
 
 def checkpoint(model):
@@ -164,7 +164,7 @@ def classify_fixed(raw, model, q=None, prep=None):
 
 
 def formats_header():
-    """src/hls/justoliunet_opt/justoliunet_opt_formats.hpp: the formats above, for the
+    """src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp: the formats above, for the
     optimized kernels."""
     a, b = prep_constants()
     def ints(v):

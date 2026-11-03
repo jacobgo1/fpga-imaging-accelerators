@@ -7,15 +7,15 @@
 // 1. Bit for bit against a plain-loop integer reference written here, apart from
 //    the kernel's modules: the z-score, the three layers with their shifts, the
 //    ReLUs and saturation, the class.
-// 2. Close to the float golden network (spectralpointwise1d_golden.hpp, the int8
+// 2. Close to the float golden network (the golden kernel spectralpointwise1d, the int8
 //    weights with their scales, float activations) on the same pixels.
 // The image is 9 x 7 = 63 pixels: every lane gets blocks, the last one short;
 // then 1 x 17, where some lanes get a block of one pixel or none at all. The
 // dropped raw bands hold 65535: a wrong band selection shows.
-#include "../../src/golden/spectralpointwise1d_golden.hpp"
+#include "../../src/models/1D-SpectralPointwise/spectralpointwise1d_golden/spectralpointwise1d.hpp"
 #include "../../weights/quantized/spectralpointwise1d/spectralpointwise1d_int8.hpp"
-#include "../../src/hls/justoliunet_opt/justoliunet_opt_formats.hpp"
-#include "../../src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp"
+#include "../../src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp"
+#include "../../src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>

@@ -7,13 +7,13 @@
 // 1. Bit for bit against a plain-loop integer reference written here, apart from
 //    the kernel's engines: the z-score, the four conv blocks with their shifts,
 //    the pools, the channel-major flatten, the dense layer, the class.
-// 2. Close to the float golden network (justoliunet_golden.hpp, the int8 weights
+// 2. Close to the float golden network (the golden kernel justoliunet, the int8 weights
 //    with their scales, float activations) on the same pixels.
 // The image is 9 x 7 = 63 pixels: three blocks of 16 and a last one of 15, so
 // both readers and a short last burst; then 1 x 17, so reader 1 gets a block of
 // one pixel. The dropped raw bands hold 65535: a wrong band selection shows.
-#include "../../src/golden/justoliunet_golden.hpp"
-#include "../../src/hls/justoliunet_opt/justoliunet_opt_formats.hpp"
+#include "../../src/models/1D-Justo-LiuNet/justoliunet_golden/justoliunet.hpp"
+#include "../../src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>

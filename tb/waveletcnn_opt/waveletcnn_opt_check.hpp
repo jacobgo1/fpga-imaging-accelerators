@@ -11,11 +11,11 @@
 //    conv_block, and the 1x1 seg_head. Every board version must match it bit
 //    for bit, and its class must be the first highest of these scores.
 //  - the integer z-score within one unit of the float one (saturated alike).
-//  - golden: the float kernel (src/hls/waveletcnn/) on the same int8 input, as
+//  - golden: the float kernel (src/models/WaveletCNN/waveletcnn_golden/) on the same int8 input, as
 //    floats. The difference is the rounding between the layers; it must stay
 //    small.
 #include "../../src/optimized/shared/zscore_int8.hpp"
-#include "../../src/hls/waveletcnn/waveletcnn.cpp"
+#include "../../src/models/WaveletCNN/waveletcnn_golden/waveletcnn.cpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>

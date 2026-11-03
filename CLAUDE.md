@@ -35,8 +35,11 @@ weights are extracted from them on demand.
 ```text
 main.py              the build: python3 main.py STAGE --kernel K [--board B]
 fpga.sh              short commands for the server (Tab completes kernels, runs, boards)
-src/hls/K/           one folder per kernel; tb/K/ its self-checking testbench
-src/golden/          plain-loop reference layers and models (what is computed)
+src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cpp, named
+                     after the kernel), the golden kernel holding the quantized network;
+                     tb/K/ its self-checking testbench, with the reference it checks against
+                     (tb/golden/: float layers only those references use)
+src/golden/          plain-loop layers the golden kernels are built from (what is computed)
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file, all in shared/, for every board; zcu104/,
                      zynq7020/ and zynq7030/ hold only chip.hpp, the chip's facts the
@@ -66,7 +69,7 @@ folded, spectral streaming, a pixel every 108 cycles, the same answers bit for b
 program from software/opu/) and Zynq-7030 versions `justoliunet_opt_zynq7030` /
 `justoliunet_bn_opt_zynq7030` (`--board zynq7030`: the same, wider, a pixel every 74
 cycles); the design is in
-src/hls/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
+src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
 tools/justoliunet_model.py;
 the performance model, the predictions for the 7020/7030 and the ideas still to try,
 such as hard-wired weights, are in docs/justoliunet_opt_design.md),
@@ -79,11 +82,11 @@ answers, they share the testbench's checks),
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
 from src/golden/'s spectral stem, conv block, up block and concat modules; numpy model and the bit-exact integer model
 classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
-src/golden/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
+tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
 `_large_opt_direct` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; direct 3x3 convs
 (conv3x3_tiled, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
 modules; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 452 / 1 297 / 1 184 DSPs; small
-measured 26.2 ms at 250 MHz; the design in src/hls/sp_unet_small_opt_direct/sp_unet_opt.hpp,
+measured 26.2 ms at 250 MHz; the design in src/models/SpecPW-UNet/Small/sp_unet_small_opt/sp_unet_opt.hpp,
 the chain and each size's table of PI x PO per layer in its .cpp; one testbench check,
 tb/sp_unet_small_opt_direct/sp_unet_opt_check.hpp; a Winograd version was removed
 2026-10-31, see sp_unet.md),
@@ -92,14 +95,14 @@ fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`
 memories (conv3x3_tiled_ram), a tap or a window column a step, their ReLU inside, one 64-bit read
 port, 2-deep FIFOs between the processes; T = 76 176 cycles a patch, measured 665 ms on the
 ZedBoard; the chain in
-src/hls/sp_unet_small_opt_direct_zynq7020/), `spectralpointwise1d` (golden baseline of
+src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
 and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
 `spectralpointwise1d_opt_zynq7020` (`--board zynq7030` / `zedboard`): DDR-bound, so the whole
 network is copied once per read port (a lane: 4, 4 and 2), convsp1 fused with the z-score word
 by word; a pixel every 3.75 / 7.5 / 15 cycles, the same answers bit for bit; the design in
-src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check for all),
+src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check for all),
 `waveletcnn` (golden baseline of WaveletCNN: a 1D db4 DWT along the bands,
 a 1x1 projection, a 3x3 conv block and a 1x1 head) and `waveletcnn_opt`, `_zynq7030`,
 `_zynq7020` (the raw cube in, bit for bit classify_fixed in tools/waveletcnn_model.py; see

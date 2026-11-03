@@ -27,19 +27,19 @@ def cli(*args):
 
 
 class KernelTests(unittest.TestCase):
-    def test_files_are_found_by_folder_name(self):
+    def test_files_are_found_by_kernel_name(self):
         kernel = flow.find_kernel('justounetsimple')
         self.assertEqual(kernel['top'], 'justounetsimple')
-        self.assertEqual(kernel['sources'], [ROOT / 'src/hls/justounetsimple/justounetsimple.cpp'])
+        self.assertEqual(kernel['sources'], [ROOT / 'src/models/2D-Justo-UNet-Simple/justounetsimple_golden/justounetsimple.cpp'])
         self.assertEqual(kernel['testbench'], [ROOT / 'tb/justounetsimple/justounetsimple_tb.cpp'])
-        self.assertIn(ROOT / 'src/hls/justounetsimple', kernel['include_dirs'])
+        self.assertIn(ROOT / 'src/models/2D-Justo-UNet-Simple/justounetsimple_golden', kernel['include_dirs'])
         self.assertIsNone(kernel['directives'])
 
     def test_directives_come_from_config_kernel_tcl(self):
         saved = flow.ROOT
         with tempfile.TemporaryDirectory() as tmp:
             flow.ROOT = pathlib.Path(tmp)
-            for path in ('src/hls/k/k.cpp', 'tb/k/k_tb.cpp', 'config/k.tcl'):
+            for path in ('src/models/m/k_golden/k.cpp', 'tb/k/k_tb.cpp', 'config/k.tcl'):
                 (flow.ROOT / path).parent.mkdir(parents=True, exist_ok=True)
                 (flow.ROOT / path).write_text('')
             try:
@@ -58,7 +58,7 @@ class KernelTests(unittest.TestCase):
 
     def test_unknown_or_escaping_kernel_is_rejected(self):
         for name in ('no_such_kernel', '../hls', ''):
-            with self.subTest(name=name), self.assertRaisesRegex(SystemExit, 'src/hls/'):
+            with self.subTest(name=name), self.assertRaisesRegex(SystemExit, 'src/models/'):
                 flow.find_kernel(name)
 
     def test_kernels_command_lists_them(self):
@@ -131,7 +131,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(tcl.getvar('cfg(part)'), 'xczu7ev-ffvc1156-2-e')
             self.assertEqual(float(tcl.getvar('cfg(clock_ns)')), 5.0)
             sources = tcl.splitlist(tcl.getvar('cfg(sources)'))
-            self.assertEqual(list(sources), [(ROOT / 'src/hls/justounetsimple/justounetsimple.cpp').as_posix()])
+            self.assertEqual(list(sources), [(ROOT / 'src/models/2D-Justo-UNet-Simple/justounetsimple_golden/justounetsimple.cpp').as_posix()])
             self.assertEqual(tcl.getvar('cfg(board)'), 'zcu104')
             self.assertEqual(tcl.getvar('cfg(board_script)'), (ROOT / 'boards/zcu104/system.tcl').as_posix())
             self.assertEqual(int(tcl.getvar('cfg(jobs)')), flow.job_count())

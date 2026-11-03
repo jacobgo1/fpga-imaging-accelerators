@@ -5,7 +5,7 @@
 
 Each stage includes the ones above it:
 
-    native     compile src/hls/KERNEL/ + tb/KERNEL/ with g++ and run the testbench
+    native     compile KERNEL's folder in src/models/ + tb/KERNEL/ with g++ and run the testbench
     csim       the same testbench, inside Vitis HLS                     (scripts/hls.tcl)
     csynth     ... then C++ -> Verilog
     cosim      ... then simulate that Verilog with the testbench
@@ -50,15 +50,20 @@ STAGES = ('native', 'csim', 'csynth', 'cosim', 'ip', 'bitstream')
 
 # ------------------------------------------------------------------ 1. The kernel's files
 
+def kernel_dirs():
+    """Every kernel's folder, by kernel name: a folder in src/models/MODEL/ holding NAME.cpp."""
+    return {cpp.stem: cpp.parent for cpp in sorted((ROOT / 'src' / 'models').rglob('*.cpp'))}
+
+
 def find_kernel(name):
-    """The C++ for a kernel, found by folder name: src/hls/NAME/ and tb/NAME/."""
-    source_dir, testbench_dir = ROOT / 'src' / 'hls' / name, ROOT / 'tb' / name
-    if not re.fullmatch(r'\w+', name) or not source_dir.is_dir():
-        raise SystemExit(f'No kernel {name!r}: expected a folder src/hls/{name}/ ("main.py kernels" lists them)')
+    """The C++ for a kernel: the folder in src/models/ with NAME.cpp, and tb/NAME/."""
+    source_dir, testbench_dir = kernel_dirs().get(name), ROOT / 'tb' / name
+    if not re.fullmatch(r'\w+', name) or source_dir is None:
+        raise SystemExit(f'No kernel {name!r}: expected a file src/models/MODEL/.../{name}.cpp ("main.py kernels" lists them)')
     directives = ROOT / 'config' / f'{name}.tcl'
     kernel = {
         'name': name,
-        # The top function is named after the folder, unless config/project.json says otherwise.
+        # The top function is named after the kernel, unless config/project.json says otherwise.
         'top': CONFIG['kernels'].get(name, {}).get('top', name),
         'sources': sorted(source_dir.glob('*.cpp')),
         'testbench': sorted(testbench_dir.glob('*.cpp')),
@@ -66,8 +71,6 @@ def find_kernel(name):
         # Optional HLS directives (set_directive_* commands) instead of pragmas.
         'directives': directives if directives.is_file() else None,
     }
-    if not kernel['sources']:
-        raise SystemExit(f'No .cpp files in src/hls/{name}/')
     if not kernel['testbench']:
         raise SystemExit(f'No testbench: add a .cpp with a main() to tb/{name}/ that returns nonzero on failure')
     return kernel
@@ -490,11 +493,11 @@ def bitstream_runs(name):
 # ------------------------------------------------------------------ The command line
 
 def list_kernels():
-    for source_dir in sorted(p for p in (ROOT / 'src' / 'hls').iterdir() if p.is_dir()):
+    for name in sorted(kernel_dirs()):
         try:
-            kernel = find_kernel(source_dir.name)
+            kernel = find_kernel(name)
         except SystemExit as problem:
-            print(f'{source_dir.name}\n  incomplete: {problem}')
+            print(f'{name}\n  incomplete: {problem}')
             continue
         print(kernel['name'])
         print(f'  top        {kernel["top"]}')
@@ -507,7 +510,7 @@ def list_kernels():
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('stage', choices=STAGES + ('pynq', 'kernels'))
-    parser.add_argument('--kernel', help='folder name in src/hls/')
+    parser.add_argument('--kernel', help='kernel name: its .cpp in src/models/')
     parser.add_argument('--skip-cosim', action='store_true', help='ip, bitstream: leave out cosim (slow)')
     parser.add_argument('--dataflow-profile', action='store_true',
                         help='cosim: record when each DATAFLOW process works and stalls, for the '

@@ -10,7 +10,7 @@
 // means the int8 + shift arithmetic, the valid convs, the pools that drop an
 // odd last position and the channel-major flatten are right. Results differ
 // only by float rounding, so the comparison has a small tolerance.
-#include "../../src/golden/justoliunet_bn_golden.hpp"
+#include "justoliunet_bn_golden.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>

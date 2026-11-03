@@ -12,7 +12,7 @@ which does five things in order:
 
 | # | Who | What | Result |
 | --- | --- | --- | --- |
-| 1 | `main.py` | Finds `src/hls/K/*.cpp` and `tb/K/*.cpp`, makes `build/K/DATE-bitstream/` and writes `settings.tcl` there (paths, part, clock) | a run folder |
+| 1 | `main.py` | Finds the folder in `src/models/` with `K.cpp`, its `*.cpp`, and `tb/K/*.cpp`, makes `build/K/DATE-bitstream/` and writes `settings.tcl` there (paths, part, clock) | a run folder |
 | 2 | Vitis HLS runs [`scripts/hls.tcl`](../scripts/hls.tcl) | C simulation (your testbench) → C synthesis (C++ → Verilog) → `export_design` | an **IP block** in `hls/solution/impl/ip/` |
 | 3 | Vivado runs [`scripts/vivado.tcl`](../scripts/vivado.tcl) | Empty project, the IP put in its catalog, then [`boards/zcu104/system.tcl`](../boards/zcu104/system.tcl) | a **block design**: the hardware around the IP (section 2) |
 | 4 | Vivado, still `vivado.tcl` | Synthesis → place and route → timing check → `.bit` | the bitstream in `vivado/system.runs/impl_1/` |
@@ -145,7 +145,7 @@ preparing images), described in [tools/README.md](../tools/README.md).
 
 ## 5. Adding a kernel that runs on the board
 
-1. `src/hls/K/K.cpp` with the top function `K` and its `INTERFACE` pragmas
+1. `src/models/MODEL/FOLDER/K.cpp` with the top function `K` and its `INTERFACE` pragmas
    (copy them from `justounetsimple_opt.cpp`), plus `tb/K/K_tb.cpp`.
 2. `fpga_test K` until it passes.
 3. A new model: its entry in `tools/models.py` (the board's notebooks then take

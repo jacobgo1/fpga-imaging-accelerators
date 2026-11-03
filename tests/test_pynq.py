@@ -17,6 +17,8 @@ import tempfile
 import unittest
 import zipfile
 
+from kernels import kernel_dirs
+
 ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which('bash')
 HEADER = '#define XJUSTOUNETSIMPLE_CONTROL_ADDR_AP_CTRL 0x0\n'
@@ -353,10 +355,10 @@ class FpgaShellTests(unittest.TestCase):
                         'fpga_runs', 'fpga_pynq', 'fpga_zip'):
             self.assertIn(command, result.stdout)
 
-    def test_kernels_are_the_folders_in_src_hls(self):
+    def test_kernels_are_the_cpp_files_in_src_models(self):
         result = self.bash('fpga_kernels')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.split(), sorted(p.name for p in (ROOT / 'src/hls').iterdir() if p.is_dir()))
+        self.assertEqual(result.stdout.split(), sorted(kernel_dirs()))
 
     def test_tab_completes_kernel_names(self):
         for command in ('fpga_test', 'fpga_build', 'fpga_ip', 'fpga_cosim', 'fpga_runs', 'fpga_pynq'):

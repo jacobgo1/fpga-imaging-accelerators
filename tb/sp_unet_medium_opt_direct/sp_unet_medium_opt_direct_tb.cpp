@@ -2,7 +2,7 @@
 // the checks are in sp_unet_small_opt_direct/sp_unet_opt_check.hpp, shared by the sizes.
 #include "sp_unet_medium_opt_direct.hpp"
 // The golden kernel: the float reference, and the weights as namespace weights (floats).
-#include "../../src/hls/sp_unet_medium/sp_unet_medium.cpp"
+#include "../../src/models/SpecPW-UNet/Medium/sp_unet_medium_golden/sp_unet_medium.cpp"
 #include <cstdio>
 
 static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {

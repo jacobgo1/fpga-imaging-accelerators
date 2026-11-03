@@ -23,6 +23,8 @@ import types
 import unittest
 import zipfile
 
+from kernels import kernel_dir
+
 try:
     import numpy as np
 except ImportError:
@@ -46,8 +48,8 @@ def load_module(name, path):
 
 
 def compile_and_run(tmp, kernel, body, inputs, out_dtype, out_shape):
-    """Compile src/hls/KERNEL/ with a main() around body; run it on inputs; its output."""
-    source_dir = ROOT / 'src/hls' / kernel
+    """Compile KERNEL's folder with a main() around body; run it on inputs; its output."""
+    source_dir = kernel_dir(kernel)
     source = tmp / f'run_{kernel}.cpp'
     source.write_text(body)
     exe = tmp / f'run_{kernel}.exe'
@@ -89,7 +91,7 @@ class SpectralPointwise1DTests(unittest.TestCase):
         self.assertLess(abs((int8 == self.labels).mean() - (fp32 == self.labels).mean()), 0.01)
 
     def test_formats_header_is_up_to_date(self):
-        """src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp comes from the model's formats."""
+        """spectralpointwise1d_opt_formats.hpp comes from the model's formats."""
         self.assertEqual(self.model.FORMATS_HEADER.read_text(), self.model.formats_header(),
                          'run: python tools/spectralpointwise1d_model.py formats')
 

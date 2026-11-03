@@ -2,7 +2,7 @@
 // justoliunet_opt_check.hpp, shared by justoliunet_opt and justoliunet_bn_opt.
 #include "justoliunet_bn_opt.hpp"
 #include "../../weights/quantized/justoliunet_bn/justoliunet_bn_int8.hpp"
-#include "../../src/hls/justoliunet_opt/justoliunet_opt_formats.hpp"
+#include "../../src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp"
 
 namespace q = justoliunet_bn_int8;
 namespace fmt = justoliunet_bn_formats;

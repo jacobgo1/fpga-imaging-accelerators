@@ -1,6 +1,6 @@
 #pragma once
 
-// dense_golden.hpp on quantized weights, the scales applied after the sum.
+// A dense layer on quantized weights, the scales applied after the sum.
 template<typename act_t, typename weight_t, int INPUTS, int OUTPUTS>
 void dense_quant_golden(const act_t din[INPUTS],
                         const weight_t weight[OUTPUTS][INPUTS], act_t weight_scale,

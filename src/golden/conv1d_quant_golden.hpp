@@ -1,6 +1,6 @@
 #pragma once
 
-// conv1d_golden.hpp on quantized weights: the sum multiplies by q, the scales
+// A conv1d (no padding) on quantized weights: the sum multiplies by q, the scales
 // (2^-frac) are applied once, after it. weight_t is int8_t, or float holding the
 // same integers.
 template<typename act_t, typename weight_t, int LENGTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL>

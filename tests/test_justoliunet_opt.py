@@ -23,6 +23,8 @@ import types
 import unittest
 import zipfile
 
+from kernels import kernel_dir
+
 try:
     import numpy as np
 except ImportError:
@@ -70,7 +72,7 @@ class JustoLiuNetOptTests(unittest.TestCase):
         sys.path.remove(str(ROOT / 'tools'))
 
     def test_formats_header_is_up_to_date(self):
-        """src/hls/justoliunet_opt/justoliunet_opt_formats.hpp comes from the model's formats."""
+        """justoliunet_opt_formats.hpp comes from the model's formats."""
         self.assertEqual(self.model.FORMATS_HEADER.read_text(), self.model.formats_header(),
                          'run: python tools/justoliunet_model.py formats')
 
@@ -100,7 +102,7 @@ class JustoLiuNetOptTests(unittest.TestCase):
             cube.tofile(tmp / 'in.bin')
             for kernel, (model, call) in OPTIMIZED.items():
                 with self.subTest(kernel=kernel):
-                    source_dir = ROOT / 'src/hls' / kernel
+                    source_dir = kernel_dir(kernel)
                     source = tmp / f'run_{kernel}.cpp'
                     source.write_text(f"""
 #include "{kernel}.hpp"

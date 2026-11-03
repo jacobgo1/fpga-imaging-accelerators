@@ -46,12 +46,13 @@ Python 3.10+, and g++ for `native`.
 ## Add a kernel
 
 ```text
-src/hls/NAME/NAME.cpp          synthesizable C++, top function named NAME
+src/models/MODEL/FOLDER/NAME.cpp  synthesizable C++, top function named NAME
 tb/NAME/NAME_tb.cpp            main() that returns nonzero on mismatch
 ```
 
-All `.cpp` files in `src/hls/NAME/` are the kernel, and all in `tb/NAME/` are the
-testbench. Includes are searched in `src/hls/NAME/` and `src/common/`. If the
+A kernel is found by its `.cpp`: all `.cpp` files in the folder holding `NAME.cpp` are
+the kernel, and all in `tb/NAME/` are the testbench. Includes are searched in that
+folder and `src/common/`. If the
 top function has another name, add it under `kernels` in
 [config/project.json](config/project.json). HLS directives can go in
 `config/NAME.tcl` instead of pragmas (`set_directive_*` commands). To run it on the
@@ -97,12 +98,12 @@ on PATH, otherwise `vitis_hls`.
 main.py            the build: python3 main.py STAGE --kernel KERNEL
 fpga.sh            short commands for the lab server
 config/            project.json, optional HLS directives per kernel
-src/hls/KERNEL/    synthesizable C++, one folder per kernel
-src/golden/        reference layers and models: plain loops, what is computed
+src/models/        synthesizable C++: one folder per network, one per kernel in it
+src/golden/        plain-loop layers the golden kernels are built from: what is computed
 src/optimized/     streaming, fixed-point building blocks: how it is computed fast;
                    all in shared/; zcu104/, zynq7020/, zynq7030/: chip.hpp, each chip's facts
 src/common/        C++ shared between kernels (hls::stream, hls::vector, hls::burst_maxi for plain g++)
-tb/KERNEL/         self-checking testbenches
+tb/KERNEL/         self-checking testbenches, with the references they check against
 scripts/           hls.tcl (Vitis HLS), vivado.tcl (Vivado)
 boards/BOARD/      system.tcl: the block design around the kernel (zcu104, zynq7020, zynq7030)
 software/pynq/     a notebook per kernel, packed into the zip for the board

@@ -2,7 +2,7 @@
 // implementation, given the same weights as floats and BatchNorm as the identity
 // (the real BatchNorm is already folded into the weights).
 #include "justounetsimple.hpp"
-#include "../../src/golden/justounet2d_golden.hpp"
+#include "justounet2d_golden.hpp"
 #include "../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
 #include <cmath>
 #include <cstdio>

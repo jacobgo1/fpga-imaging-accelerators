@@ -23,6 +23,8 @@ import types
 import unittest
 import zipfile
 
+from kernels import kernel_dir
+
 try:
     import numpy as np
 except ImportError:
@@ -94,7 +96,7 @@ class JustoLiuNetTests(unittest.TestCase):
                 with self.subTest(model=model):
                     if not quantized(model).exists():
                         self.skipTest(f'no quantized weights for {model}')
-                    source_dir = ROOT / 'src/hls' / model
+                    source_dir = kernel_dir(model)
                     source = tmp / f'run_{model}.cpp'
                     source.write_text(f"""
 #include "{model}.hpp"

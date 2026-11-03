@@ -6,8 +6,9 @@ here against the labelled aegean pixels. Against it, compiled with plain g++:
    (spectral stem, conv block, up block, maxpool, the skip connection's concat);
  - the golden kernels sp_unet_small/medium/large (int8 weights, float activations), on
    real 32 x 32 patches;
- - the integer model's plain-loop C++ (src/golden/specpw_unet_fixed_golden.hpp), bit for
-   bit against classify_fixed's arithmetic, so it can be an optimized kernel's reference.
+ - the integer model's plain-loop C++
+   (tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp), bit for bit against
+   classify_fixed's arithmetic, so it can be an optimized kernel's reference.
 Then the optimized kernels sp_unet_SIZE_opt_direct (integer fixed point),
 compiled with plain g++, bit for bit against classify_fixed on a real raw crop that is not
 whole patches. The board notebooks, shared by every model, are tests/test_notebooks.py's.
@@ -27,6 +28,8 @@ import tempfile
 import types
 import unittest
 import zipfile
+
+from kernels import kernel_dir
 
 try:
     import numpy as np
@@ -235,7 +238,7 @@ class SpecPWUNetTests(unittest.TestCase):
                 with self.subTest(size=size):
                     layers = self.model.dequantize(self.quantized(size))
                     name = self.model.name(size)
-                    source_dir = ROOT / 'src/hls' / name
+                    source_dir = kernel_dir(name)
                     compile_and_run(KERNEL_DRIVER.format(name=name), tmp, f'run_{name}',
                                     [source_dir, ROOT / 'src/common'], [source_dir / f'{name}.cpp'],
                                     [tmp / 'in.bin', tmp / 'out.bin', len(patches)])
@@ -264,7 +267,7 @@ class SpecPWUNetTests(unittest.TestCase):
                     weights = m.quantized_path(size).with_suffix('.hpp')
                     compile_and_run(FIXED_DRIVER.format(size=size, weights=weights.as_posix(), in_frac=m.IN_FRAC,
                                                         act_frac=m.ACT_FRAC, out_frac=m.OUT_FRAC),
-                                    tmp, f'fixed_{size}', [ROOT / 'src/golden'], [],
+                                    tmp, f'fixed_{size}', [ROOT / 'tb/sp_unet_small_opt_direct'], [],
                                     [tmp / 'in.bin', tmp / 'out.bin', len(inputs), m.ACT_MAX])
                     for act_max in (m.ACT_MAX, 2047):
                         subprocess.run([str(tmp / f'fixed_{size}.exe'), str(tmp / 'in.bin'), str(tmp / 'out.bin'),
@@ -290,7 +293,7 @@ class SpecPWUNetTests(unittest.TestCase):
                                for kind in ('', '_zynq7020')
                                if kind == '' or size == 'small']:   # the 7020 fits small only
                 with self.subTest(kernel=name):
-                    source_dir = ROOT / 'src/hls' / name
+                    source_dir = kernel_dir(name)
                     ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports
                     compile_and_run(OPT_DRIVER.format(name=name, ports=ports), tmp, f'run_{name}',
                                     [source_dir, ROOT / 'src/common'], sorted(source_dir.glob('*.cpp')),

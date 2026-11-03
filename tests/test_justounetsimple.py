@@ -17,6 +17,8 @@ import types
 import unittest
 import zipfile
 
+from kernels import kernel_dir
+
 try:
     import numpy as np
 except ImportError:
@@ -25,7 +27,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 CXX = shutil.which('g++') or shutil.which('clang++')
 CC = shutil.which('gcc') or shutil.which('clang')
-OPT_SOURCE = ROOT / 'src/hls/justounetsimple_opt'
+OPT_SOURCE = kernel_dir('justounetsimple_opt')
 
 
 def load_module(name, path):
@@ -81,8 +83,8 @@ int main(int, char** argv) {
 }
 """)
         exe = self.dir / 'run_kernel.exe'
-        subprocess.run([CXX, '-std=c++14', '-O2', f'-I{ROOT / "src/hls/justounetsimple"}',
-                        str(source), str(ROOT / 'src/hls/justounetsimple/justounetsimple.cpp'),
+        subprocess.run([CXX, '-std=c++14', '-O2', f'-I{kernel_dir("justounetsimple")}',
+                        str(source), str(kernel_dir('justounetsimple') / 'justounetsimple.cpp'),
                         '-o', str(exe)], check=True)
         x = np.random.default_rng(3).uniform(-3, 3, (32, 32, 110)).astype(np.float32)
         x.tofile(self.dir / 'in.bin')
@@ -106,7 +108,7 @@ int main(int, char** argv) {
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
             with self.subTest(kernel=name):
-                source_dir = ROOT / 'src/hls' / name
+                source_dir = kernel_dir(name)
                 source = self.dir / f'run_{name}.cpp'
                 source.write_text(f"""
 #include "{name}.hpp"
@@ -196,7 +198,7 @@ uint32_t reg_read(struct board *, unsigned offset) {
 }
 }
 """)
-        source_dir = ROOT / 'src/hls' / name
+        source_dir = kernel_dir(name)
         program = ROOT / 'software/opu/justounetsimple_opt/classify.c'
         exe = self.dir / 'classify.exe'
         subprocess.run([CC, '-std=c99', '-O2', '-Wall', '-Werror', '-DFAKE_BOARD', f'-I{self.dir}', '-c',

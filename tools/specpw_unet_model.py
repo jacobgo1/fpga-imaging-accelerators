@@ -8,7 +8,7 @@ forward        BatchNorm as trained (not folded): a preprocessed (H, W, 110) ima
 flat_weights   every tensor in state_dict order as one float32 vector: the layout of
                specpw_unet_params_golden, so a testbench can read it in one go.
 
-The golden kernels (src/hls/sp_unet_SIZE/), int8 weights and float activations:
+The golden kernels (src/models/SpecPW-UNet/SIZE/sp_unet_SIZE_golden/), int8 weights and float activations:
 load_quantized weights/quantized/sp_unet_SIZE/sp_unet_SIZE_int8.npz -> {layer: (q weight,
                weight frac, q bias, bias frac)}, BatchNorm folded in
 forward_patch  what the kernel computes for one preprocessed 32 x 32 x 110 patch, in
@@ -17,7 +17,7 @@ classify       a raw cube (H x W x 120) -> its scores, cut into 32 x 32 patches 
                notebook (the last row and column repeated)
 
 The integer arithmetic of the optimized kernels (sp_unet_SIZE_opt_direct), bit for bit (the
-C++ plain-loop version is src/golden/specpw_unet_fixed_golden.hpp, and the two agree
+C++ plain-loop version is tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp, and the two agree
 exactly, tests/test_specpw_unet.py):
 forward_patch_fixed  one int8 patch (z-score * 2^IN_FRAC) -> int32 scores * 2^OUT_FRAC
 classify_fixed       a raw cube -> int32 scores, with justounetsimple_opt's integer
@@ -54,7 +54,7 @@ LAYERS = ('convsp1', 'convsp2', 'convsp3', 'double1.block.0', 'double1.block.3',
           'double2.block.0', 'double2.block.3', 'up1.1', 'double3.block.0', 'double3.block.3',
           'up2.1', 'double4.block.0', 'double4.block.3', 'final')
 
-# The integer formats (src/golden/specpw_unet_fixed_golden.hpp takes them as arguments):
+# The integer formats (tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp takes them as arguments):
 # the input is the z-score * 2^IN_FRAC as int8, saturated at +-127 (justounetsimple_opt's
 # preprocessing); every activation int16 with ACT_FRAC fraction bits, ReLU'd and saturated
 # at 32767 (up to 32.0); the scores int32 with OUT_FRAC. On the aegean pixels the largest

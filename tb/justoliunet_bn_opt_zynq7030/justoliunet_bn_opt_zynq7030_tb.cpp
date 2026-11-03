@@ -3,7 +3,7 @@
 // reference, close to the float golden network), so the same answers.
 #include "justoliunet_bn_opt_zynq7030.hpp"
 #include "../../weights/quantized/justoliunet_bn/justoliunet_bn_int8.hpp"
-#include "../../src/hls/justoliunet_opt/justoliunet_opt_formats.hpp"
+#include "../../src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp"
 
 namespace q = justoliunet_bn_int8;
 namespace fmt = justoliunet_bn_formats;

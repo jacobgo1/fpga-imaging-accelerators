@@ -40,7 +40,7 @@ justoliunet_model.py      numpy model of the justoliunet and justoliunet_bn kern
                           optimized kernels (justoliunet_opt, justoliunet_bn_opt) bit for bit.
                           python tools/justoliunet_model.py compares them on the labelled
                           aegean pixels; ... formats writes the optimized kernels' integer
-                          formats, src/hls/justoliunet_opt/justoliunet_opt_formats.hpp.
+                          formats, src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp.
 spectralpointwise1d_model.py  numpy model of the spectralpointwise1d kernels (1D-SpectralPointwise:
                           three 1x1 convs per pixel): the trained model with its BatchNorm, the
                           int8 network the golden kernel runs, and classify_fixed, the
@@ -48,7 +48,7 @@ spectralpointwise1d_model.py  numpy model of the spectralpointwise1d kernels (1D
                           Zynq-7020 versions) bit for bit, on 1D-Justo-LiuNet's 12-bit input.
                           python tools/spectralpointwise1d_model.py compares them on the
                           labelled aegean pixels; ... formats writes the activations' formats,
-                          src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp.
+                          src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt_formats.hpp.
 waveletcnn_model.py       numpy model of the waveletcnn kernels: float forward pass (1D db4
                           DWT + 1x1 projection + 3x3 conv_block + 1x1 seg_head), and the
                           bit-exact integer version of waveletcnn_opt (classify_fixed).
@@ -56,7 +56,7 @@ specpw_unet_model.py      numpy model of SpecPW-UNet (sp_unet_small/medium/large
                           model in float (the reference of src/golden/specpw_unet_golden.hpp),
                           the int8-weight network the golden kernels run (forward_patch,
                           classify), and classify_fixed, the integer arithmetic of an optimized
-                          kernel bit for bit (also src/golden/specpw_unet_fixed_golden.hpp).
+                          kernel bit for bit (also tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp).
                           python tools/specpw_unet_model.py prints each size's accuracy on the
                           labelled aegean pixels.
 models.py                 every model in one table (its patch size, its scores' format), which

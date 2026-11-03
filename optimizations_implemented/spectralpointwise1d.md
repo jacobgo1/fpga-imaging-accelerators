@@ -43,7 +43,7 @@ All optimized kernels give the same answers bit for bit: `classify_fixed` in
 `tools/spectralpointwise1d_model.py`, checked by the shared testbench
 (`tb/spectralpointwise1d_opt/spectralpointwise1d_opt_check.hpp`: a plain-loop integer
 reference and the float golden network) and by `tests/test_spectralpointwise1d.py` on the
-aegean pixels. The design: `src/hls/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp`; a
+aegean pixels. The design: `src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp`; a
 lane's layers: `spectralpointwise1d_opt_lanes.hpp`; the lanes' chain: each kernel's `.cpp`
 (four lanes on the ZCU104 and the 7030, two on the 7020). Notebooks:
 the shared ones, `software/pynq/shared/classify_golden.ipynb` and `classify.ipynb`; on the OPU PetaLinux (ZedBoard, 7030): the generic `classify.c`.

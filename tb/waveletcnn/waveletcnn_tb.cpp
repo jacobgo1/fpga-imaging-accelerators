@@ -7,7 +7,7 @@
 // int8 + shift arithmetic and the BN-free blocks are right. Results differ
 // only by float rounding, so the comparison has a small tolerance.
 #include "waveletcnn.hpp"
-#include "../../src/golden/waveletcnn_golden.hpp"
+#include "waveletcnn_fp32_golden.hpp"
 #include "../../weights/quantized/waveletcnn/waveletcnn_int8.hpp"
 #include <cmath>
 #include <cstdio>

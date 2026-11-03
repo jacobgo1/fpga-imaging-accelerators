@@ -11,7 +11,7 @@ FPGA_PYTHON="${FPGA_PYTHON:-python3}"
 
 fpga_help() {
     cat <<'EOF'
-FPGA commands. KERNEL is a folder name in src/hls/ (e.g. justounetsimple_opt):
+FPGA commands. KERNEL is a kernel's .cpp name in src/models/ (e.g. justounetsimple_opt):
 press Tab to complete it. RUN is a folder in build/KERNEL/ and defaults to the
 newest bitstream build.
 
@@ -41,13 +41,11 @@ EOF
 
 _fpga_fail() { echo "fpga: $*" >&2; return 1; }
 
-# The kernels: one folder each in src/hls/, in byte order (a glob sorts by the locale,
-# which puts sp_unet after spectralpointwise1d on some machines).
+# The kernels: one .cpp each in src/models/MODEL/.../, named after it, in byte order
+# (sort follows the locale, which puts sp_unet after spectralpointwise1d on some machines).
 fpga_kernels() {
-    local dir LC_ALL=C
-    for dir in "$FPGA_ROOT"/src/hls/*/; do
-        [ -d "$dir" ] && basename "$dir"
-    done
+    local LC_ALL=C
+    find "$FPGA_ROOT/src/models" -name '*.cpp' -exec basename {} .cpp \; | sort
 }
 
 # Run folders are named by date, so glob order is time order.

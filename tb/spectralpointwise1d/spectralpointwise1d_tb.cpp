@@ -12,7 +12,7 @@
 //    BatchNorm of its own (as justoliunet_bn_tb.cpp).
 #include "spectralpointwise1d.hpp"
 #include "../../weights/quantized/spectralpointwise1d/spectralpointwise1d_int8.hpp"
-#include "../../src/golden/spectralpointwise1d_bn_golden.hpp"
+#include "spectralpointwise1d_bn_golden.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>

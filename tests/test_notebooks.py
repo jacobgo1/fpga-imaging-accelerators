@@ -22,6 +22,8 @@ import types
 import unittest
 import zipfile
 
+from kernels import kernel_dir, kernel_dirs
+
 try:
     import numpy as np
 except ImportError:
@@ -45,7 +47,7 @@ def load_module(name, path):
 
 def golden_has_n(model):
     """Whether the golden kernel takes n units per start (an n argument), from its C++."""
-    return ', int n)' in (ROOT / 'src/hls' / model / f'{model}.hpp').read_text(encoding='utf-8')
+    return ', int n)' in (kernel_dir(model) / f'{model}.hpp').read_text(encoding='utf-8')
 
 
 class FakeBuffer(np.ndarray if np is not None else object):
@@ -324,11 +326,11 @@ class NotebookTests(unittest.TestCase):
     # ---- the table ----
 
     def test_every_kernel_belongs_to_a_model_or_has_its_own_notebook(self):
-        for source in sorted((ROOT / 'src/hls').iterdir()):
-            with self.subTest(kernel=source.name):
-                model = self.models.model_of(source.name)
+        for name in sorted(kernel_dirs()):
+            with self.subTest(kernel=name):
+                model = self.models.model_of(name)
                 if model is None:
-                    self.assertTrue((ROOT / 'software/pynq' / source.name).is_dir(), 'no notebook for it')
+                    self.assertTrue((ROOT / 'software/pynq' / name).is_dir(), 'no notebook for it')
         self.assertEqual(self.models.model_of('sp_unet_small_opt_direct_zynq7020'), 'sp_unet_small')
         self.assertEqual(self.models.model_of('justoliunet_bn_opt'), 'justoliunet_bn')
         self.assertEqual(self.models.model_of('justoliunet_opt'), 'justoliunet')
@@ -336,7 +338,7 @@ class NotebookTests(unittest.TestCase):
     def test_the_table_matches_the_models(self):
         for model, entry in self.models.MODELS.items():
             with self.subTest(model=model):
-                self.assertTrue((ROOT / 'src/hls' / model).is_dir(), 'its golden kernel')
+                self.assertIn(model, kernel_dirs(), 'its golden kernel')
                 if model.startswith('sp_unet_'):
                     module = load_module('specpw_unet_model', ROOT / 'tools/specpw_unet_model.py')
                 elif entry['patch'] is None:
