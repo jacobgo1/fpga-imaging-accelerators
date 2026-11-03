@@ -44,7 +44,7 @@ bool next_burst(int& patch_row, int& patch_col, int& line, int& burst, int patch
 
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int WORDS_PER_PIXEL, int READ_PORTS, int PORT,
          int PIXELS_PER_BURST = 16, int BURSTS_AHEAD = 2, typename WORD_T>
-void read_rows_ahead(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int height, int width) {
+void read_patch_rows(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int height, int width) {
     constexpr int ROWS_PER_PORT = PATCH_HEIGHT / READ_PORTS;
     const int rows = patch_rows<PATCH_HEIGHT>(height), cols = patch_cols<PATCH_WIDTH>(width);
 

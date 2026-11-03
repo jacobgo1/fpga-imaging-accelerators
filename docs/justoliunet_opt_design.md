@@ -36,8 +36,8 @@ memory, this one by arithmetic. A full capture is $N = 598 \cdot 1092 = 653\,016
   so the image is one run of $H \cdot W$ pixels in memory order: no patches, halos,
   padding or reorder buffer.
 - **Memory:** two read ports (HP0, HP1) take alternate blocks of 16 pixels (240 words,
-  one AXI burst each), requested 2 blocks ahead (`read_pixels_ahead`, the
-  `read_rows_ahead` idea), so DDR latency is paid once per start. Scores go out through
+  one AXI burst each), requested 2 blocks ahead (`read_pixels`, the
+  `read_patch_rows` idea), so DDR latency is paid once per start. Scores go out through
   HP2. Same formats as `justounetsimple_opt` (raw uint16 cube in, `[H][W][4]` int32 out).
 - **Compute:** a DATAFLOW chain, one pixel per stage. Each layer gets just enough
   multipliers to finish a pixel in ≤ 18 cycles. Inputs sit in shift registers (every
@@ -121,9 +121,9 @@ read-ahead bursts) and the same formats, so the same answers bit for bit. What h
 
 - **Folding.** Each layer takes one output position at a time and spreads it over steps:
   $\mathit{OCP}$ output channels and $\mathit{ICP}$ input channels a cycle, all 6 taps, the
-  input-channel chunks summed in an accumulator (`conv1d_stream.hpp`).
+  input-channel chunks summed in an accumulator (`conv1d_positions.hpp`).
 - **Spectral streaming.** From conv1 on, a layer's input arrives one position at a time
-  and the layer keeps a window of the last 6 (a 1D line buffer, as `conv3x3_stream` keeps
+  and the layer keeps a window of the last 6 (a 1D line buffer, as `conv3x3_all_in_patch` keeps
   two image lines). Whole feature maps in wide FIFOs and registers, as on the ZCU104,
   would have cost ~15 k of the 7020's 53 k LUTs (estimate); positions cost ~2 k.
 - **Packing on the DSP48E1** (25 × 18 bits): shift 16, so with uint8 every product is
@@ -150,14 +150,14 @@ filled 5 positions back to back). **$t = 653\,016 \cdot 108 / 78.1\,\mathrm{MHz}
 Debugging note: Apple clang 15 at `-O2` (its SLP vectorizer) miscompiled a group choice
 written as `for gg: if (gg == g) out[gg * OCP + j] = ...` (the testbench failed; `-O1`,
 `-O3` and `-O2 -fno-slp-vectorize` passed). Written as `out[g * OCP + j]`, the same hardware
-in HLS, it is right at every level; both `conv1d_stream` and `pool_assemble` use that form.
+in HLS, it is right at every level; both `conv1d_positions` and `pool_to_map` use that form.
 
 ### The Zynq-7030 design as built
 
 `justoliunet_opt_zynq7030`, `justoliunet_bn_opt_zynq7030` (`--board zynq7030`; 100 MHz):
 the ZedBoard design, wider. A streamed layer takes in at most one position a cycle, so
-conv1's 102 outputs were the floor; here conv1 is a whole-map `conv1d_engine` at 2
-positions a cycle (`pool_adjacent` pools each pair as it comes).
+conv1's 102 outputs were the floor; here conv1 is a whole-map `conv1d_map` at 2
+positions a cycle (`pool1d_wide` pools each pair as it comes).
 
 | | conv1 | conv2 | conv3 | conv4 | dense | z-score |
 |---|---|---|---|---|---|---|

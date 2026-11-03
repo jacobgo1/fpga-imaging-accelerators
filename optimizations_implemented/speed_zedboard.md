@@ -76,6 +76,8 @@ What the runs show:
 
 ## Utilization (routed)
 
+Every kernel, from its newest build and by process: [utilization.md](utilization.md).
+
 From `reports/impl/utilization.rpt` of each bitstream (2026-10-30), the whole design (kernel plus
 the block design's interconnects, ~1.7-2.1 k LUTs). The Zynq-7020 has 53 200 LUTs, 106 400 FFs,
 140 BRAM36 and 220 DSPs.

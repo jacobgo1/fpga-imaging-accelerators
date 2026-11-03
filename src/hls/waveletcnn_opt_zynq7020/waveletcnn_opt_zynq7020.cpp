@@ -1,10 +1,10 @@
 #include "waveletcnn_opt_zynq7020.hpp"
 #include "../../optimized/shared/zscore_int8.hpp"
-#include "../../optimized/shared/read_rows.hpp"
+#include "../../optimized/shared/read_patch_rows.hpp"
 #include "../../optimized/shared/pixel_buffer.hpp"
 #include "../../optimized/shared/dwt_proj.hpp"
-#include "../../optimized/shared/conv3x3_serial.hpp"
-#include "../../optimized/shared/leaky_head.hpp"
+#include "../../optimized/shared/conv3x3_tiled.hpp"
+#include "../../optimized/shared/leaky_conv1x1.hpp"
 #include "../../optimized/shared/store_scores.hpp"
 #include "../../../weights/quantized/waveletcnn/waveletcnn_int8.hpp"
 
@@ -41,17 +41,17 @@ void waveletcnn_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<
     hls::stream<cube_word_t> cube_words[READ_PORTS];
     hls::stream<vec_t<act8_t, DWT_BANDS_PER_CYCLE>> zscores("zscores");
     hls::stream<vec_t<act_t, MID_CHANNELS>> projected("projected");
-    hls::stream<vec_t<acc_t, MID_CHANNELS>> conv_sums("conv_sums");
-    hls::stream<vec_t<acc_t, CLASSES>> scores("scores");
+    hls::stream<vec_t<sum_t, MID_CHANNELS>> conv_sums("conv_sums");
+    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
     #pragma HLS STREAM variable=cube_words depth=64
     #pragma HLS STREAM variable=zscores    depth=64
     #pragma HLS STREAM variable=projected  depth=64
     #pragma HLS STREAM variable=conv_sums  depth=32
     #pragma HLS STREAM variable=scores     depth=32
 
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
         din0, cube_words[0], height, width);
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
         din1, cube_words[1], height, width);
     pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, DWT_BANDS_PER_CYCLE,
                  READ_PORTS, DWT_CYCLES_PER_PIXEL, zscore::FRAC, zscore::IN_MAX, zscore::A, zscore::B,
@@ -64,14 +64,14 @@ void waveletcnn_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<
              weights::projection_weight, weights::projection_bias, false, true>(zscores, projected, height, width);
 
     // The 3x3 conv, 12 -> 12.
-    conv3x3_serial<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, MID_CHANNELS, CONV_IN_PER_CYCLE,
-                   CONV_SUM_FRAC_BITS - weights::conv_block_0_bias_frac, weights::conv_block_0_weight,
-                   weights::conv_block_0_bias, true>(projected, conv_sums, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, MID_CHANNELS, CONV_IN_PER_CYCLE, 1,
+                  CONV_SUM_FRAC_BITS - weights::conv_block_0_bias_frac, weights::conv_block_0_weight,
+                  weights::conv_block_0_bias, true>(projected, conv_sums, height, width);
 
     // LeakyReLU, the 1x1 head 12 -> 3, LeakyReLU: a pixel a cycle.
-    leaky_head<PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, CLASSES, CONV_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS,
-               HEAD_SUM_FRAC_BITS - weights::seg_head_0_bias_frac, HEAD_SUM_FRAC_BITS - SCORE_FRAC_BITS,
-               weights::seg_head_0_weight, weights::seg_head_0_bias, true>(conv_sums, scores, height, width);
+    leaky_conv1x1<PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, CLASSES, CONV_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS,
+                  HEAD_SUM_FRAC_BITS - weights::seg_head_0_bias_frac, HEAD_SUM_FRAC_BITS - SCORE_FRAC_BITS,
+                  weights::seg_head_0_weight, weights::seg_head_0_bias, true>(conv_sums, scores, height, width);
 
     store_scores<PATCH_SIZE, PATCH_SIZE, 0>(scores, dout, height, width);
 }

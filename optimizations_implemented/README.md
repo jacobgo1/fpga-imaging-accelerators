@@ -13,7 +13,9 @@ and utilization of each stage are calculated, the inference time, and each board
 | 1D-SpectralPointwise | [spectralpointwise1d.md](spectralpointwise1d.md) |
 
 Measured speed of every kernel on the board, by clock: [speed_zcu104.md](speed_zcu104.md),
-[speed_zedboard.md](speed_zedboard.md).
+[speed_zedboard.md](speed_zedboard.md). Routed utilization of every kernel, by board and by process:
+[utilization.md](utilization.md), from the Vivado reports in [utilization/](utilization/)
+(`python tools/utilization.py`; how to fetch them: `tools/README.md`).
 
 **Keep them current:** when a kernel's design changes, update its model's file (tables and
 a line under "Changes"); a new model gets a new file here. Measured results replace

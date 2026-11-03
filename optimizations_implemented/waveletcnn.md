@@ -51,27 +51,27 @@ for the quantized float model).
 | DATAFLOW, layers fused; feature maps never leave the chip | ✓ | ✓ | ✓ |
 | Strip ping-pong buffer (`pixel_buffer`): only `PORTS` rows × 32 pixels in BRAM (8×–16× smaller than a full patch buffer) | 4-row BRAM | 4-row BRAM | 2-row BRAM |
 | Fused 1D DWT + 1×1 projection (`dwt_proj`): 8-band sliding window accumulates `x[2m]`, `x[2m+1]`, `low[m]`, `high[m]` directly into the 12 projection channels; the 226-channel tensor is never stored | `DWT_STEPS_PER_CYCLE = 8` | `DWT_STEPS_PER_CYCLE = 4` | `DWT_STEPS_PER_CYCLE = 2` |
-| Read ports, each every n-th patch row (`read_rows_ahead`, `burst_maxi`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
-| `conv_block` (12 → 12, 3×3): line buffers + 3×3 shift-register window | `conv3x3_narrow` (`STEPS = 6`, 2 out/cycle) | `conv3x3_narrow` (`STEPS = 12`, 1 out/cycle) | `conv3x3_serial` (`P2 = 6` in × 1 out/cycle) |
-| Fused `LeakyReLU` + 1×1 `seg_head` (12 → 3) + `LeakyReLU` (`leaky_head`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
+| Read ports, each every n-th patch row (`read_patch_rows`, `burst_maxi`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
+| `conv_block` (12 → 12, 3×3): line buffers + 3×3 shift-register window | `conv3x3_all_in` (2 out/cycle) | `conv3x3_all_in` (1 out/cycle) | `conv3x3_tiled` (`P2 = 6` in × 1 out/cycle) |
+| Fused `LeakyReLU` + 1×1 `seg_head` (12 → 3) + `LeakyReLU` (`leaky_conv1x1`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | Cycle counter register | ✓ | – | – |
 
 ## Latency per stage (cycles per patch)
 
 Each stage runs at II = 1:
-- `read_rows_ahead`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
+- `read_patch_rows`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
 - `pixel_buffer` and `dwt_proj`: `ceil(58 / DWT_STEPS_PER_CYCLE)` steps/pixel × 1 024 pixels.
 - `conv_block`: `STEPS` cycles/pixel × (1 024 + 33) pixels.
-- `leaky_head` and `store_scores`: 1 024 cycles/patch.
+- `leaky_conv1x1` and `store_scores`: 1 024 cycles/patch.
 
 | Stage | ZCU104 (`DWT_STEPS_PER_CYCLE = 8`) | Zynq-7030 (`DWT_STEPS_PER_CYCLE = 4`) | Zynq-7020 (`DWT_STEPS_PER_CYCLE = 2`) |
 |---|---|---|---|
 | read (per port) | 3 840 | 7 680 | 15 360 |
 | `pixel_buffer` | **8 192** | **15 360** | **29 696** |
 | `dwt_proj` | **8 192** | **15 360** | **29 696** |
-| `conv_block` (3×3, 12→12) | 6 342 (`STEPS = 6`) | 12 684 (`STEPS = 12`) | 25 368 (`P2 = 6`) |
-| `leaky_head` (1×1, 12→3) | 1 024 | 1 024 | 1 024 |
+| `conv_block` (3×3, 12→12) | 6 342 (2 out/cycle) | 12 684 (1 out/cycle) | 25 368 (`P2 = 6`) |
+| `leaky_conv1x1` (1×1, 12→3) | 1 024 | 1 024 | 1 024 |
 | `store_scores` | 1 024 | 1 024 | 1 024 |
 | **T** | **8 192** (`dwt_proj`) | **15 360** (`dwt_proj`) | **29 696** (`dwt_proj`) |
 | DSPs | 668 of 1 728 (z-score 32, proj 384, conv 216, head 36) | 336 of 400 (proj 192, conv 108, head 36) | 186 of 220 (proj 96, conv 54, head 36) |
@@ -95,9 +95,20 @@ Each stage runs at II = 1:
 | DSPs / LUTs | 1 728 / 230 k | 400 / 79 k | 220 / 53 k |
 | `dwt_proj` width | 8 subband steps/cycle (16 bands, 384 DSPs) | 4 subband steps/cycle (8 bands, 192 DSPs) | 2 subband steps/cycle (4 bands, 96 DSPs) |
 | `conv_block` (12→12) | 2 out ch/cycle (216 DSPs) | 1 out ch/cycle (108 DSPs) | 6 in × 1 out ch/cycle (54 DSPs) |
-| `leaky_head` (12→3) | 36 DSPs | 36 DSPs | 36 DSPs |
+| `leaky_conv1x1` (12→3) | 36 DSPs | 36 DSPs | 36 DSPs |
 | Strip buffer | 4-row ping-pong in BRAM | 4-row ping-pong in BRAM | 2-row ping-pong in BRAM |
 | Ports | 4 read + 1 write, 128 bit | 4 read + 1 write sharing HP3, 64 bit | 2 read + 1 write, 64 bit |
+
+## Utilization
+
+<!-- utilization.py: waveletcnn -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
 
 ## Changes
 
@@ -124,3 +135,20 @@ Each stage runs at II = 1:
   (8 238 cycles a patch, 32.95 us), host timer 22.15 ms, wall clock 23.04 ms; 97.22 %, IoU 0.933 /
   0.911 / 0.975, as at 214 MHz. 0.5 % over the predicted 21.8 ms (43 cycles more a patch than at
   214 MHz). ~5 900× the golden kernel. In `speed_zcu104.md`.
+- 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
+  process in `utilization.md`). `waveletcnn_opt` 661 DSPs against the 668 predicted (z-score 32, proj
+  352 of 384, conv 227 of 216, head 50 of 36: the Bind Op Report would say which moved);
+  `waveletcnn_opt_zynq7020` 196 against 186 (proj 92, conv 54, head 50).
+- 2026-11-03: shared modules merged (the answers bit for bit the same): `conv3x3_serial` is now
+  `conv3x3_grouped` with one output channel a cycle; the line-buffer and window shift is one helper
+  (`window3x3.hpp`); `conv3x3_wide` / `pointwise_wide` and the board copies of `patch_buffer` gave way
+  to each chip's `chip.hpp` (DSP packing, UltraRAM), passed to `conv3x3_packed_layer`,
+  `pointwise_packed` and `patch_buffer`. The csynth DSP counts and II should not change: not yet built.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.

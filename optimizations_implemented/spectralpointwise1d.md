@@ -131,6 +131,17 @@ much above T means DDR is the limit.
 | Why it differs | room for everything; only the ports limit | the 4 lanes' convsp1 take 384 of the 400 DSPs | two lanes' DSPs fit (200 of 220); more lanes would not, nor would the ports |
 | Clock | 187.5 MHz: PS PLL's nearest to 5 ns | 10 ns | 12.8 ns (try 10 ns) |
 
+## Utilization
+
+<!-- utilization.py: spectralpointwise1d -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
+
 ## Changes
 
 - 2026-10-28: golden kernel `spectralpointwise1d`; optimized kernels `spectralpointwise1d_opt`
@@ -170,3 +181,15 @@ much above T means DDR is the limit.
   0.972, as at 214 MHz. No faster than at 214 MHz: DDR gave 12.8 GB/s, about the same 13. The
   clock does not help this kernel; reading only the kept words would. A second run: 12.02 ms
   (4.60 cycles a pixel, 13.0 GB/s), host timer 12.23 ms, wall clock 12.95 ms.
+- 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
+  process in `utilization.md`). `spectralpointwise1d_opt` 1 004 DSPs against ~896 predicted
+  (`zscore_pointwise` 856 for four lanes, `pointwise1d` 148); `spectralpointwise1d_opt_zynq7020` 194
+  against ~200.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.

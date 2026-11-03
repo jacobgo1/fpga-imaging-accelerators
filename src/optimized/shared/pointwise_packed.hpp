@@ -1,16 +1,16 @@
 #pragma once
 
-#include "conv3x3_packed.hpp"
+#include "conv3x3_2mul.hpp"
 #include "patch_grid.hpp"
 
 // A 1x1 conv on int8 inputs (the z-scored bands), two multiplies per DSP as in
-// conv3x3_packed.hpp, then ReLU and SHIFT bits rounded off. A pixel's bands come
+// conv3x3_2mul.hpp, then ReLU and ROUND_BITS bits rounded off. A pixel's bands come
 // in chunks of IN_PER_CYCLE, the last padded with zeros; its activations leave
 // after the last chunk. OUTPUT_PASSES > 1 splits the channel pairs over that many
 // passes per chunk, for a chip with few DSPs. PACK_SHIFT and GROUP: the board's packing.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
-         int BIAS_SHIFT, int SHIFT,
-         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const wgt_t (&BIAS)[OUT_CHANNELS],
+         int BIAS_SHIFT, int ROUND_BITS,
+         const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS],
          int PACK_SHIFT, int GROUP, int OUTPUT_PASSES = 1>
 void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec_t<act_t, OUT_CHANNELS> >& out,
                       int height, int width) {
@@ -21,24 +21,24 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
     packed_weight_t<PACK_SHIFT> packed[PAIRS_PER_PASS][CHUNKS * OUTPUT_PASSES][IN_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=1
     #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=3
-    acc_t bias[OUT_CHANNELS];
+    sum_t bias[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=bias type=complete
     load_w: for (int j = 0; j < OUT_CHANNELS / 2; j++)
         for (int in_ch = 0; in_ch < PADDED_IN; in_ch++) {
             #pragma HLS PIPELINE II=1
             const int source = in_ch < IN_CHANNELS ? in_ch : IN_CHANNELS - 1;   // never read past WEIGHT
-            const wgt_t high = in_ch < IN_CHANNELS ? WEIGHT[2 * j + 1][source][0][0] : (wgt_t)0;
-            const wgt_t low = in_ch < IN_CHANNELS ? WEIGHT[2 * j][source][0][0] : (wgt_t)0;
+            const weight_t high = in_ch < IN_CHANNELS ? WEIGHT[2 * j + 1][source][0][0] : (weight_t)0;
+            const weight_t low = in_ch < IN_CHANNELS ? WEIGHT[2 * j][source][0][0] : (weight_t)0;
             packed[j % PAIRS_PER_PASS][(in_ch / IN_PER_CYCLE) * OUTPUT_PASSES + j / PAIRS_PER_PASS][in_ch % IN_PER_CYCLE] =
                 (packed_weight_t<PACK_SHIFT>)high * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
                 + (packed_weight_t<PACK_SHIFT>)low;
         }
     load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
-        bias[o] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
     }
 
-    acc_t sums[OUT_CHANNELS];
+    sum_t sums[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=sums type=complete
     act_t activations[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=activations type=complete
@@ -60,7 +60,7 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
         }
         for (int p = 0; p < PAIRS_PER_PASS; p++) {
             #pragma HLS UNROLL
-            acc_t low = 0, high = 0;
+            sum_t low = 0, high = 0;
             for (int first = 0; first < IN_PER_CYCLE; first += GROUP) {
                 #pragma HLS UNROLL
                 packed_sum_t sum = 0;
@@ -70,16 +70,16 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
                     #pragma HLS BIND_OP variable=prod op=mul impl=dsp
                     sum += prod;
                 }
-                low += packed_low<PACK_SHIFT>((int64_t)sum);
-                high += packed_high<PACK_SHIFT>((int64_t)sum);
+                low += low_sum<PACK_SHIFT>((int64_t)sum);
+                high += high_sum<PACK_SHIFT>((int64_t)sum);
             }
             // One adder and one rounding a lane whatever the passes; the result is
             // written by the pass whose turn it is.
             const int j = pass * PAIRS_PER_PASS + p;
-            const acc_t low_total = (chunk == 0 ? bias[2 * j] : sums[2 * j]) + low;
-            const acc_t high_total = (chunk == 0 ? bias[2 * j + 1] : sums[2 * j + 1]) + high;
-            const act_t low_activation = requant_relu<SHIFT>(low_total);
-            const act_t high_activation = requant_relu<SHIFT>(high_total);
+            const sum_t low_total = (chunk == 0 ? bias[2 * j] : sums[2 * j]) + low;
+            const sum_t high_total = (chunk == 0 ? bias[2 * j + 1] : sums[2 * j + 1]) + high;
+            const act_t low_activation = requant_relu<ROUND_BITS>(low_total);
+            const act_t high_activation = requant_relu<ROUND_BITS>(high_total);
             for (int k = 0; k < OUTPUT_PASSES; k++) {
                 #pragma HLS UNROLL
                 if (pass == k) {

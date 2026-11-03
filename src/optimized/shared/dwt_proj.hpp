@@ -11,10 +11,10 @@
 // their contributions straight into the projection's sums. STEPS_PER_CYCLE steps
 // of m (2 x STEPS_PER_CYCLE bands) a cycle.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int BANDS, int TAPS, int MID_CHANNELS, int STEPS_PER_CYCLE,
-         int BAND_SHIFT, int BIAS_SHIFT, int OUT_SHIFT,
-         const wgt_t (&LOWPASS)[1][1][TAPS], const wgt_t (&HIGHPASS)[1][1][TAPS],
-         const wgt_t (&PROJECTION_WEIGHT)[MID_CHANNELS][BANDS + 2 * ((BANDS + TAPS - 1) / 2)][1][1],
-         const wgt_t (&PROJECTION_BIAS)[MID_CHANNELS],
+         int BAND_SHIFT, int BIAS_SHIFT, int OUT_ROUND_BITS,
+         const weight_t (&LOWPASS)[1][1][TAPS], const weight_t (&HIGHPASS)[1][1][TAPS],
+         const weight_t (&PROJECTION_WEIGHT)[MID_CHANNELS][BANDS + 2 * ((BANDS + TAPS - 1) / 2)][1][1],
+         const weight_t (&PROJECTION_BIAS)[MID_CHANNELS],
          bool DWT_DSP, bool PROJECTION_DSP>
 void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<vec_t<act_t, MID_CHANNELS> >& out,
               int height, int width) {
@@ -23,7 +23,7 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
     constexpr int BANDS_PER_CYCLE = 2 * STEPS_PER_CYCLE;
     constexpr int STEPS = (SUBBAND + STEPS_PER_CYCLE - 1) / STEPS_PER_CYCLE;
 
-    wgt_t lowpass[TAPS], highpass[TAPS];
+    weight_t lowpass[TAPS], highpass[TAPS];
     #pragma HLS ARRAY_PARTITION variable=lowpass type=complete
     #pragma HLS ARRAY_PARTITION variable=highpass type=complete
     load_h: for (int k = 0; k < TAPS; k++) {
@@ -33,8 +33,8 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
     }
 
     // Projection weights of band 2m, band 2m + 1, low[m] and high[m].
-    wgt_t even_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS], odd_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS];
-    wgt_t low_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS], high_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS];
+    weight_t even_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS], odd_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS];
+    weight_t low_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS], high_weight[STEPS][STEPS_PER_CYCLE][MID_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=even_weight type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=even_weight type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=odd_weight type=complete dim=2
@@ -43,7 +43,7 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
     #pragma HLS ARRAY_PARTITION variable=low_weight type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=high_weight type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=high_weight type=complete dim=3
-    acc_t bias[MID_CHANNELS];
+    sum_t bias[MID_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=bias type=complete
 
     load_w: for (int s = 0; s < STEPS; s++) {
@@ -55,21 +55,21 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
                 const int odd = 2 * m + 1 < BANDS ? 2 * m + 1 : 0;
                 const int low = m < SUBBAND ? BANDS + m : 0;
                 const int high = m < SUBBAND ? BANDS + SUBBAND + m : 0;
-                even_weight[s][u][o] = 2 * m < BANDS ? PROJECTION_WEIGHT[o][even][0][0] : (wgt_t)0;
-                odd_weight[s][u][o] = 2 * m + 1 < BANDS ? PROJECTION_WEIGHT[o][odd][0][0] : (wgt_t)0;
-                low_weight[s][u][o] = m < SUBBAND ? PROJECTION_WEIGHT[o][low][0][0] : (wgt_t)0;
-                high_weight[s][u][o] = m < SUBBAND ? PROJECTION_WEIGHT[o][high][0][0] : (wgt_t)0;
+                even_weight[s][u][o] = 2 * m < BANDS ? PROJECTION_WEIGHT[o][even][0][0] : (weight_t)0;
+                odd_weight[s][u][o] = 2 * m + 1 < BANDS ? PROJECTION_WEIGHT[o][odd][0][0] : (weight_t)0;
+                low_weight[s][u][o] = m < SUBBAND ? PROJECTION_WEIGHT[o][low][0][0] : (weight_t)0;
+                high_weight[s][u][o] = m < SUBBAND ? PROJECTION_WEIGHT[o][high][0][0] : (weight_t)0;
             }
         }
     }
     load_b: for (int o = 0; o < MID_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
-        bias[o] = (acc_t)PROJECTION_BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o] = (sum_t)PROJECTION_BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
     }
 
     act8_t previous[PAD];   // the last bands of the previous step
     #pragma HLS ARRAY_PARTITION variable=previous type=complete
-    acc_t sums[MID_CHANNELS];
+    sum_t sums[MID_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=sums type=complete
 
     const int pixels = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * PATCH_HEIGHT * PATCH_WIDTH;
@@ -111,19 +111,19 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
         vec_t<act_t, MID_CHANNELS> projected;
         for (int o = 0; o < MID_CHANNELS; o++) {
             #pragma HLS UNROLL
-            acc_t delta = 0;
+            sum_t delta = 0;
             for (int u = 0; u < STEPS_PER_CYCLE; u++) {
                 #pragma HLS UNROLL
-                const acc_t from_bands = ((acc_t)mul<PROJECTION_DSP, int16_t>(window[2 * u + PAD], even_weight[s][u][o])
-                                        + (acc_t)mul<PROJECTION_DSP, int16_t>(window[2 * u + PAD + 1], odd_weight[s][u][o]))
+                const sum_t from_bands = ((sum_t)mul<PROJECTION_DSP, int16_t>(window[2 * u + PAD], even_weight[s][u][o])
+                                        + (sum_t)mul<PROJECTION_DSP, int16_t>(window[2 * u + PAD + 1], odd_weight[s][u][o]))
                                        << BAND_SHIFT;
-                const acc_t from_wavelet = mul<PROJECTION_DSP, acc_t>(low[u], low_weight[s][u][o])
-                                         + mul<PROJECTION_DSP, acc_t>(high[u], high_weight[s][u][o]);
+                const sum_t from_wavelet = mul<PROJECTION_DSP, sum_t>(low[u], low_weight[s][u][o])
+                                         + mul<PROJECTION_DSP, sum_t>(high[u], high_weight[s][u][o]);
                 delta += from_bands + from_wavelet;
             }
-            const acc_t total = (s == 0 ? bias[o] : sums[o]) + delta;
+            const sum_t total = (s == 0 ? bias[o] : sums[o]) + delta;
             sums[o] = total;
-            projected.v[o] = requant_act<OUT_SHIFT>(total);
+            projected.v[o] = requant_signed<OUT_ROUND_BITS>(total);
         }
 
         if (s == STEPS - 1) {

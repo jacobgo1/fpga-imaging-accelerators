@@ -19,18 +19,18 @@ void spectralpointwise1d_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::bu
     hls::stream<cube_word_t> cube_words[LANES];
     hls::stream<vec_t<uact_t, 24>> convsp1_out[LANES];
     hls::stream<vec_t<uact_t, 12>> convsp2_out[LANES];
-    hls::stream<vec_t<acc_t, CLASSES>> scores[LANES];
+    hls::stream<vec_t<sum_t, CLASSES>> scores[LANES];
     hls::stream<bool> all_written("all_written");
     // The store takes the lanes in turn, a block each: each lane's scores need
     // room for the blocks it finishes meanwhile.
     #pragma HLS STREAM variable=cube_words depth=64
     #pragma HLS STREAM variable=scores     depth=32
 
-    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 0>(din0, cube_words[0], height, width);
+    read_pixels<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 0>(din0, cube_words[0], height, width);
     lane_convsp1<0>(cube_words[0], convsp1_out[0], height, width);
     lane_convsp2<0>(convsp1_out[0], convsp2_out[0], height, width);
     lane_convsp3<0>(convsp2_out[0], scores[0], height, width);
-    read_pixels_ahead<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 1>(din1, cube_words[1], height, width);
+    read_pixels<WORDS_PER_PIXEL, BLOCK_PIXELS, LANES, 1>(din1, cube_words[1], height, width);
     lane_convsp1<1>(cube_words[1], convsp1_out[1], height, width);
     lane_convsp2<1>(convsp1_out[1], convsp2_out[1], height, width);
     lane_convsp3<1>(convsp2_out[1], scores[1], height, width);

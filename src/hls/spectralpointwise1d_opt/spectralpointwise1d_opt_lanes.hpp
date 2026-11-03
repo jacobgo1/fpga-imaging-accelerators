@@ -44,7 +44,7 @@ void lane_convsp2(hls::stream<vec_t<uact_t, 24> >& in, hls::stream<vec_t<uact_t,
 
 // The head: the scores.
 template<int LANE>
-void lane_convsp3(hls::stream<vec_t<uact_t, 12> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out,
+void lane_convsp3(hls::stream<vec_t<uact_t, 12> >& in, hls::stream<vec_t<sum_t, CLASSES> >& out,
                   int height, int width) {
     #pragma HLS INLINE
     pointwise1d<12, CLASSES, CONVSP3_OUT_PER_CYCLE, false, CONVSP3_SUM_FRAC_BITS - weights::convsp3_bias_frac,

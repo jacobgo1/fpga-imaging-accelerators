@@ -71,8 +71,9 @@ ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
 `--board zynq7020`; its zip carries `justounetsimple_opt`'s notebook, which
 finds the kernel and its ports from the files next to it.
 
-The modules that differ between the boards are in `src/optimized/zcu104/`,
-`zynq7020/` and `zynq7030/`, the rest in `src/optimized/shared/`. The golden
+Every module is in `src/optimized/shared/`; what differs between the chips (the
+DSP packing, UltraRAM or not) is in `src/optimized/zcu104/chip.hpp`, `zynq7020/` and
+`zynq7030/`, and each kernel passes it to the modules. The golden
 `justounetsimple` is small enough that they should fit any of the
 chips as they are (not yet built for the Zynq-7000s).
 

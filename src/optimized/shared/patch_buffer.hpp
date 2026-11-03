@@ -5,8 +5,8 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// The z-score and the ping-pong buffer between the readers and the first layer;
-// zcu104/ keeps it in UltraRAM, zynq7020/ in block RAM.
+// The z-score and the ping-pong buffer between the readers and the first layer,
+// in UltraRAM or block RAM (URAM: the board's HAS_URAM, in its chip.hpp).
 //
 // Reader r sends rows r, r + READ_PORTS, ... of each patch, WORDS_PER_PIXEL words
 // a pixel. Words before FIRST_KEPT_WORD are dropped; kept band k becomes
@@ -15,7 +15,7 @@
 // each chunk in raster order; bands past the last kept one are zero.
 // While one patch fills one buffer, the previous one is sent from the other.
 template<int ZSCORE_SHIFT, int ZSCORE_MAX, bool DSP>
-act8_t z_score(uint16_t raw, int32_t scale, int32_t offset) {
+act8_t zscore_8(uint16_t raw, int32_t scale, int32_t offset) {
     #pragma HLS INLINE
     const int64_t z = (mul<DSP, int64_t>(raw, scale) + offset) >> ZSCORE_SHIFT;
     return (act8_t)(z > ZSCORE_MAX ? ZSCORE_MAX : z < -ZSCORE_MAX ? -ZSCORE_MAX : z);
@@ -26,7 +26,7 @@ template<int PATCH_HEIGHT, int PATCH_WIDTH, int WORDS_PER_PIXEL, int FIRST_KEPT_
          const int32_t (&ZSCORE_SCALE)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
          const int32_t (&ZSCORE_OFFSET)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
          bool DSP, typename WORD_T>
-void patch_buffer_run(
+void patch_buffer_body(
     vec_t<act8_t, BANDS_PER_WORD> bank[READ_PORTS][BANDS_PER_CYCLE / BANDS_PER_WORD]
         [2 * (((WORDS_PER_PIXEL - FIRST_KEPT_WORD) + (BANDS_PER_CYCLE / BANDS_PER_WORD) - 1)
               / (BANDS_PER_CYCLE / BANDS_PER_WORD)) * (PATCH_HEIGHT / READ_PORTS) * PATCH_WIDTH],
@@ -79,7 +79,7 @@ void patch_buffer_run(
                 word_t zscores;
                 for (int b = 0; b < BANDS_PER_WORD; b++) {
                     #pragma HLS UNROLL
-                    zscores.v[b] = z_score<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
+                    zscores.v[b] = zscore_8<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
                         words[port][b], scale[kept_word][b], offset[kept_word][b]);
                 }
                 // Each bank is written at one fixed place: a bank chosen at run
@@ -119,5 +119,41 @@ void patch_buffer_run(
             }
         }
         filling_second = 1 - filling_second;
+    }
+}
+
+// One bank per read port and word of a chunk, so a cycle's writes and its read
+// never meet; the two buffers are the address's halves. impl takes only a
+// literal word: one branch each.
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int WORDS_PER_PIXEL, int FIRST_KEPT_WORD, int BANDS_PER_WORD,
+         int BANDS_PER_CYCLE, int READ_PORTS, int ZSCORE_SHIFT, int ZSCORE_MAX,
+         const int32_t (&ZSCORE_SCALE)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
+         const int32_t (&ZSCORE_OFFSET)[(WORDS_PER_PIXEL - FIRST_KEPT_WORD) * BANDS_PER_WORD],
+         bool DSP, bool URAM, typename WORD_T>
+void patch_buffer(hls::stream<WORD_T> raw[READ_PORTS], hls::stream<vec_t<act8_t, BANDS_PER_CYCLE> >& out,
+                  int height, int width) {
+    constexpr int KEPT_WORDS = WORDS_PER_PIXEL - FIRST_KEPT_WORD;
+    constexpr int WORDS_PER_CHUNK = BANDS_PER_CYCLE / BANDS_PER_WORD;
+    constexpr int CHUNKS = (KEPT_WORDS + WORDS_PER_CHUNK - 1) / WORDS_PER_CHUNK;
+    constexpr int BUFFER_SIZE = CHUNKS * (PATCH_HEIGHT / READ_PORTS) * PATCH_WIDTH;
+
+    if (URAM) {
+        vec_t<act8_t, BANDS_PER_WORD> bank[READ_PORTS][WORDS_PER_CHUNK][2 * BUFFER_SIZE];
+        #pragma HLS ARRAY_PARTITION variable=bank type=complete dim=1
+        #pragma HLS ARRAY_PARTITION variable=bank type=complete dim=2
+        #pragma HLS AGGREGATE variable=bank compact=bit
+        #pragma HLS BIND_STORAGE variable=bank type=ram_2p impl=uram
+        patch_buffer_body<PATCH_HEIGHT, PATCH_WIDTH, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, BANDS_PER_CYCLE,
+                          READ_PORTS, ZSCORE_SHIFT, ZSCORE_MAX, ZSCORE_SCALE, ZSCORE_OFFSET, DSP>(
+            bank, raw, out, height, width);
+    } else {
+        vec_t<act8_t, BANDS_PER_WORD> bank[READ_PORTS][WORDS_PER_CHUNK][2 * BUFFER_SIZE];
+        #pragma HLS ARRAY_PARTITION variable=bank type=complete dim=1
+        #pragma HLS ARRAY_PARTITION variable=bank type=complete dim=2
+        #pragma HLS AGGREGATE variable=bank compact=bit
+        #pragma HLS BIND_STORAGE variable=bank type=ram_2p impl=bram
+        patch_buffer_body<PATCH_HEIGHT, PATCH_WIDTH, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, BANDS_PER_CYCLE,
+                          READ_PORTS, ZSCORE_SHIFT, ZSCORE_MAX, ZSCORE_SCALE, ZSCORE_OFFSET, DSP>(
+            bank, raw, out, height, width);
     }
 }

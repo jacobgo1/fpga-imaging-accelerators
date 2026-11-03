@@ -43,7 +43,7 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_direct` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
 | `sp_unet_medium_opt_direct` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
 | `sp_unet_large_opt_direct` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs; **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
+| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
 
@@ -86,7 +86,7 @@ take about half of it. To be replaced by the csynth reports' utilization.
 ## Flow of the optimized kernels
 
 ```
-DDR ─► read_rows_ahead x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
+DDR ─► read_patch_rows x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
      └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, raster order
      └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3
      └ double1: conv ─► relu_act ─► conv ─► relu_pool_skip ──► skip FIFO (UltraRAM, a patch) ──┐
@@ -96,7 +96,7 @@ DDR ─► read_rows_ahead x 4 (HP0-3, 128 bit, every 4th patch row, bursts a ro
      └ double4: conv ─► relu_act ─► conv ─► relu_act ─► final 1x1 ─► store (HPC0, 3 scores + class)
 ```
 
-Every 3x3 conv is `conv3x3_grouped` (PI inputs x PO outputs a cycle, 9 multipliers each).
+Every 3x3 conv is `conv3x3_tiled` (PI inputs x PO outputs a cycle, 9 multipliers each).
 
 The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs.
 
@@ -109,14 +109,14 @@ predicted 14.5 / 43.6 / 58.2 ms) was written first; only small worked, and it wa
 
 | | How |
 |---|---|
-| 3x3 convs | `conv3x3_grouped`: 9 per pixel, PI inputs x PO outputs a cycle |
+| 3x3 convs | `conv3x3_tiled`: 9 per pixel, PI inputs x PO outputs a cycle |
 | UpBlocks | `relu_pool_up` / `relu_up` upsample, then a plain 3x3 conv |
 | Map order | raster, one pixel a vector |
 | ReLU + rounding | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
 | Skip FIFO | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
 | Window | per patch, W + 1 steps of bubble (in the cycle counts below) |
 | FIFOs between the processes | 16 deep, in LUTs (SRL): the layers run at the same rate with no time to spare (below) |
-| convsp1 | int8 bands, two multiplies per DSP48E2 (`pointwise_wide`, 18-bit spacing) |
+| convsp1 | int8 bands, two multiplies per DSP48E2 (`pointwise_packed`, 18-bit spacing) |
 | convsp2 / convsp3 multipliers | DSPs (`STEM_DSP`), for the LUTs the deeper FIFOs take |
 | A conv's weights | one wide memory a layer: block RAM when > 64 steps deep, LUTRAM when shallow |
 | Preprocessing | band drop and integer z-score in `pixel_buffer`, its multipliers in LUTs |
@@ -211,11 +211,11 @@ below), and the LUTs and flip-flops are what is short. So:
 | | ZCU104 direct | Zynq-7020 direct |
 |---|---|---|
 | DSPs | 1 184-1 452 | **195 / 200 / 184** (small / medium / large), at most 205 |
-| A conv's 3x3 window | in registers (9 x IN activations), picked by multiplexers | **in three row memories** (`conv3x3_lines`): a step reads one column of the window at one address; no window registers |
+| A conv's 3x3 window | in registers (9 x IN activations), picked by multiplexers | **in three row memories** (`conv3x3_tiled_ram`): a step reads one column of the window at one address; no window registers |
 | A conv's step | PI x PO x the whole window (9 multipliers a unit) | PI x PO x **one tap or one column** of the window (`KT` = 1 or 3): sized in units of 1-3 DSPs, not 9 |
 | ReLU and rounding | `relu_act` / ReLU modules, 32-bit sums on the FIFOs, every channel rounded at once | **inside every conv** (`RELU_SHIFT`), rounded as each output group finishes (PO rounding units, not OUT): int16 activations on every FIFO, 7 processes fewer, the pooling only takes maxima (SHIFT 0) |
 | convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`), a pass's pairs rounded at a time |
-| convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`pointwise`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
+| convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`conv1x1`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
 | Read ports | 4 x 128 bit | **1 x 64 bit** (30 720 cycles a patch; T is 76 000 or more) |
 | FIFOs between the processes | 16 deep, shift registers | **2 deep** (16 deep: 7 % faster, but the LUTs are not there) |
 | Skip FIFO | UltraRAM | block RAM, 2 048 deep |
@@ -289,7 +289,7 @@ made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 
   57 % of them in the 10 convs, 7 % in convsp2's 24 LUT multipliers, 11 % in the three ReLU
   modules' 32-bit rounding. Cut (the same answers): every conv rounds only its PO lanes as each
   output group finishes and sends activations; the pooling modules then only take maxima; convsp2/3,
-  the final layer and the z-score on 1-4 DSPs (`pointwise`'s `PI`); convsp1 rounds a pass at a time.
+  the final layer and the z-score on 1-4 DSPs (`conv1x1`'s `PI`); convsp1 rounds a pass at a time.
 - **LUTs and flip-flops**: the windows are in memory now; what is left in LUTs are the FIFOs
   between the processes (16 deep, wider on the larger models), the reader and pixel buffer, and
   each conv's adder tree and control. If one does not fit, the FIFOs can go back to 2 deep (+7 %
@@ -316,6 +316,17 @@ On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) 
 
 Fixed point gives the same class as the int8-weight float model on 99.85 / 99.85 / 99.94 % of
 the aegean pixels (small / medium / large).
+
+## Utilization
+
+<!-- utilization.py: sp_unet_small sp_unet_medium sp_unet_large -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
 
 ## Changes
 
@@ -464,3 +475,22 @@ the aegean pixels (small / medium / large).
 - 2026-11-01: `sp_unet_small_opt_direct` at 250 MHz, one start: 26.23 ms by the kernel's count (9 859
   cycles a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms; 97.48 %, IoU 0.944 / 0.914 /
   0.976, as at 214 MHz. The same cycles, 26.2 ms as predicted: all three sizes logic-bound.
+- 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
+  process in `utilization.md`). The direct kernels take more DSPs than their tables count: 1 549 / 1 372 /
+  1 277 against 1 452 / 1 297 / 1 184, nearly all in the convs (small: `conv3x3_grouped` 1 274 against
+  1 188). `sp_unet_small_opt_direct_zynq7020` 205 against 195 (the convs 170 of 164, the z-score's 8 in
+  `pixel_buffer`), 39.1 k LUTs (73.6 %) and 69 BRAM36. The golden kernels fill the UltraRAM (88 / 96 /
+  96 of 96); large takes 262.5 of the 312 BRAM36.
+- 2026-11-03: shared modules merged (the answers bit for bit the same): `conv3x3_serial` is now
+  `conv3x3_grouped` with one output channel a cycle; the line-buffer and window shift is one helper
+  (`window3x3.hpp`); `conv3x3_wide` / `pointwise_wide` and the board copies of `patch_buffer` gave way
+  to each chip's `chip.hpp` (DSP packing, UltraRAM), passed to `conv3x3_packed_layer`,
+  `pointwise_packed` and `patch_buffer`. The csynth DSP counts and II should not change: not yet built.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.

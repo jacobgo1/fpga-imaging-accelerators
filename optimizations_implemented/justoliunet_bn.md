@@ -25,6 +25,17 @@ Only the following differ.
 Resources and speed: the same as `justoliunet` (same multipliers; the weights differ only in
 value).
 
+## Utilization
+
+<!-- utilization.py: justoliunet_bn -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
+
 ## Changes
 
 - 2026-10-14: golden kernel; BatchNorm position verified, folded into conv1.
@@ -47,3 +58,14 @@ value).
 - 2026-11-01: `justoliunet_bn_opt` on the ZCU104 at 250 MHz, one start: 47.02 ms by the kernel's count
   (18.00 cycles a pixel), host timer 47.22 ms, wall clock 48.10 ms; 96.46 %, IoU 0.912 / 0.900 / 0.965,
   the same as at 214 MHz. The FPGA's speed-up over the golden kernel is now ~22 000× (`speed_zcu104.md`).
+- 2026-11-02: routed utilization of its kernels in "Utilization" (from `tools/utilization.py`; by process
+  in `utilization.md`): `justoliunet_bn_opt` 1 302 DSPs and 94.7 k LUTs (justoliunet_opt 1 313 and
+  89.6 k: only the weights differ); the 7020's 216 DSPs, 31.5 k LUTs.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.

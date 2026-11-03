@@ -23,7 +23,7 @@ constexpr int BANDS_PER_WORD = 8;
 constexpr int DWT_STEPS_PER_CYCLE = 8;
 constexpr int DWT_BANDS_PER_CYCLE = 2 * DWT_STEPS_PER_CYCLE;
 constexpr int DWT_CYCLES_PER_PIXEL = (SUBBAND_LENGTH + DWT_STEPS_PER_CYCLE - 1) / DWT_STEPS_PER_CYCLE;
-constexpr int CONV_CYCLES_PER_PIXEL = 6;        // 2 output channels a cycle
+constexpr int CONV_OUT_PER_CYCLE = 2;           // 6 cycles a pixel
 
 constexpr int ZSCORE_FRAC_BITS = 5;             // fraction bits of the int8 z-scores
 constexpr int ACTIVATION_FRAC_BITS = 9;         // ... of the int16 activations

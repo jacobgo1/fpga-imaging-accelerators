@@ -5,8 +5,8 @@
 
 // relu_pool that also sends every activation to skip: a U-Net encoder block's
 // output goes both to the next block and to the skip connection. Activations
-// a conv already ReLU'd pass as they are (SHIFT 0, see relu_in).
-template<int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+// a conv already ReLU'd pass as they are (see to_act).
+template<int MAP_HEIGHT, int MAP_WIDTH, int ROUND_BITS, int CHANNELS, typename IN_T>
 void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& skip,
                           hls::stream<vec_t<act_t, CHANNELS> >& out) {
     act_t even_row[MAP_WIDTH / 2][CHANNELS];
@@ -21,7 +21,7 @@ void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<v
             vec_t<act_t, CHANNELS> activations, pooled;
             for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                activations.v[ch] = relu_in<SHIFT>(value.v[ch]);
+                activations.v[ch] = to_act<ROUND_BITS>(value.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = activations.v[ch];
                 } else {
@@ -35,12 +35,12 @@ void relu_pool_skip_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<v
         }
 }
 
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int ROUND_BITS, int CHANNELS, typename IN_T>
 void relu_pool_skip(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& skip,
                     hls::stream<vec_t<act_t, CHANNELS> >& out, int height, int width) {
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        relu_pool_skip_patch<MAP_HEIGHT, MAP_WIDTH, SHIFT>(in, skip, out);
+        relu_pool_skip_patch<MAP_HEIGHT, MAP_WIDTH, ROUND_BITS>(in, skip, out);
     }
 }

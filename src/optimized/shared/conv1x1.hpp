@@ -5,37 +5,37 @@
 
 // A 1x1 conv on int16 activations: IN_PER_CYCLE input channels times OUT_PER_CYCLE
 // output channels a cycle, so a layer with time to spare uses fewer multipliers.
-// RELU: outputs ReLU'd and rounded off SHIFT bits to activations; otherwise the
+// RELU: outputs ReLU'd and rounded off ROUND_BITS bits to activations; otherwise the
 // sums, for the scores.
-template<bool RELU, int SHIFT> struct pointwise_out {
+template<bool RELU, int ROUND_BITS> struct conv1x1_out {
     typedef act_t type;
-    static type of(acc_t sum) {
+    static type of(sum_t sum) {
         #pragma HLS INLINE
-        return requant_relu<SHIFT>(sum);
+        return requant_relu<ROUND_BITS>(sum);
     }
 };
-template<int SHIFT> struct pointwise_out<false, SHIFT> {
-    typedef acc_t type;
-    static type of(acc_t sum) {
+template<int ROUND_BITS> struct conv1x1_out<false, ROUND_BITS> {
+    typedef sum_t type;
+    static type of(sum_t sum) {
         #pragma HLS INLINE
         return sum;
     }
 };
 
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
-         bool RELU, int BIAS_SHIFT, int SHIFT,
-         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const wgt_t (&BIAS)[OUT_CHANNELS], bool DSP,
+         bool RELU, int BIAS_SHIFT, int ROUND_BITS,
+         const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
          int IN_PER_CYCLE = IN_CHANNELS>
-void pointwise(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
-               hls::stream<vec_t<typename pointwise_out<RELU, SHIFT>::type, OUT_CHANNELS> >& out,
-               int height, int width) {
-    typedef typename pointwise_out<RELU, SHIFT>::type out_t;
+void conv1x1(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
+             hls::stream<vec_t<typename conv1x1_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out,
+             int height, int width) {
+    typedef typename conv1x1_out<RELU, ROUND_BITS>::type out_t;
     constexpr int OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE, IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE;
     constexpr int STEPS = OUT_GROUPS * IN_GROUPS;   // per pixel: output group outer, input group inner
-    wgt_t weight[STEPS][OUT_PER_CYCLE][IN_PER_CYCLE];
+    weight_t weight[STEPS][OUT_PER_CYCLE][IN_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
-    acc_t bias[OUT_GROUPS][OUT_PER_CYCLE];
+    sum_t bias[OUT_GROUPS][OUT_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=bias type=complete dim=2
     load: for (int o = 0; o < OUT_CHANNELS; o++) {
         for (int i = 0; i < IN_CHANNELS; i++) {
@@ -43,12 +43,12 @@ void pointwise(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
             weight[(o / OUT_PER_CYCLE) * IN_GROUPS + i / IN_PER_CYCLE][o % OUT_PER_CYCLE][i % IN_PER_CYCLE] =
                 WEIGHT[o][i][0][0];
         }
-        bias[o / OUT_PER_CYCLE][o % OUT_PER_CYCLE] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
+        bias[o / OUT_PER_CYCLE][o % OUT_PER_CYCLE] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
     }
 
     act_t pixel[IN_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=pixel type=complete
-    acc_t running[OUT_PER_CYCLE];
+    sum_t running[OUT_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=running type=complete
     out_t outputs[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=outputs type=complete
@@ -69,13 +69,13 @@ void pointwise(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
         const int step = out_group * IN_GROUPS + in_group;
         for (int j = 0; j < OUT_PER_CYCLE; j++) {
             #pragma HLS UNROLL
-            acc_t sum = in_group == 0 ? bias[out_group][j] : running[j];
+            sum_t sum = in_group == 0 ? bias[out_group][j] : running[j];
             for (int i = 0; i < IN_PER_CYCLE; i++) {
                 #pragma HLS UNROLL
-                sum += mul<DSP, acc_t>(pixel[(IN_GROUPS == 1 ? 0 : in_group * IN_PER_CYCLE) + i], weight[step][j][i]);
+                sum += mul<DSP, sum_t>(pixel[(IN_GROUPS == 1 ? 0 : in_group * IN_PER_CYCLE) + i], weight[step][j][i]);
             }
             running[j] = sum;
-            const out_t result = pointwise_out<RELU, SHIFT>::of(sum);
+            const out_t result = conv1x1_out<RELU, ROUND_BITS>::of(sum);
             // Written at fixed places, the run-time choice in which statement runs.
             for (int og = 0; og < OUT_GROUPS; og++) {
                 #pragma HLS UNROLL

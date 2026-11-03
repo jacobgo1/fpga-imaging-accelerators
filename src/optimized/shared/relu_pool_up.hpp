@@ -3,10 +3,10 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// ReLU, round off SHIFT bits, 2x2 max pool, upsample by 2: every 2x2 block
+// ReLU, round off ROUND_BITS bits, 2x2 max pool, upsample by 2: every 2x2 block
 // becomes its maximum, same size. Each pair of rows is taken in, then sent.
-// Activations a conv already ReLU'd pass as they are (SHIFT 0, see relu_in).
-template<int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+// Activations a conv already ReLU'd pass as they are (see to_act).
+template<int MAP_HEIGHT, int MAP_WIDTH, int ROUND_BITS, int CHANNELS, typename IN_T>
 void relu_pool_up_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out) {
     act_t block_max[MAP_WIDTH / 2][CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=block_max type=complete dim=2
@@ -20,7 +20,7 @@ void relu_pool_up_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec
             const vec_t<IN_T, CHANNELS> value = in.read();
             for (int ch = 0; ch < CHANNELS; ch++) {
                 #pragma HLS UNROLL
-                const act_t a = relu_in<SHIFT>(value.v[ch]);
+                const act_t a = to_act<ROUND_BITS>(value.v[ch]);
                 if (x % 2 == 0) {
                     left[ch] = a;
                 } else {
@@ -41,12 +41,12 @@ void relu_pool_up_patch(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec
     }
 }
 
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int SHIFT, int CHANNELS, typename IN_T>
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int ROUND_BITS, int CHANNELS, typename IN_T>
 void relu_pool_up(hls::stream<vec_t<IN_T, CHANNELS> >& in, hls::stream<vec_t<act_t, CHANNELS> >& out,
                   int height, int width) {
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        relu_pool_up_patch<MAP_HEIGHT, MAP_WIDTH, SHIFT>(in, out);
+        relu_pool_up_patch<MAP_HEIGHT, MAP_WIDTH, ROUND_BITS>(in, out);
     }
 }

@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include "../../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
-#include "conv3x3_packed.hpp"
-#include "conv1d_engine.hpp"
+#include "conv3x3_2mul.hpp"
+#include "conv1d_map.hpp"
 
 // The layers of a per-pixel (1D) network for the small chips: the input arrives
 // one spectral position at a time, the layer keeps a window of the last KERNEL
@@ -14,8 +14,8 @@
 
 // MaxPool1d(2) on a stream of positions: LENGTH in, LENGTH / 2 out.
 template<int LENGTH, int CHANNELS>
-void pool_pairs(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<uact_t, CHANNELS> >& out,
-                int height, int width) {
+void pool1d(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<uact_t, CHANNELS> >& out,
+            int height, int width) {
     const uint32_t pixels = pixel_count(height, width);
     vec_t<uact_t, CHANNELS> even;
     #pragma HLS ARRAY_PARTITION variable=even.v type=complete
@@ -38,11 +38,11 @@ void pool_pairs(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<uac
     }
 }
 
-// MaxPool1d(2) on positions arriving two at a time (conv1d_engine with two
+// MaxPool1d(2) on positions arriving two at a time (conv1d_map with two
 // positions and every channel a step).
 template<int STEPS, int CHANNELS>
-void pool_adjacent(hls::stream<vec_t<uact_t, 2 * CHANNELS> >& in, hls::stream<vec_t<uact_t, CHANNELS> >& out,
-                   int height, int width) {
+void pool1d_wide(hls::stream<vec_t<uact_t, 2 * CHANNELS> >& in, hls::stream<vec_t<uact_t, CHANNELS> >& out,
+                 int height, int width) {
     const uint32_t pixels = pixel_count(height, width);
     position: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
@@ -65,14 +65,14 @@ void pool_adjacent(hls::stream<vec_t<uact_t, 2 * CHANNELS> >& in, hls::stream<ve
 // window; the last output position's free steps read the next pixel's first
 // positions ahead, so its fill steps are hidden.
 //
-// PACKED: two output channels per DSP as in conv3x3_packed.hpp. uint8 products
+// PACKED: two output channels per DSP as in conv3x3_2mul.hpp. uint8 products
 // are at most 32 640: groups of 1 on the 7-series (PACK_SHIFT 16), 4 on the ZCU104 (18).
 template<int IN_LENGTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL, int OUT_LENGTH, int OUT_PER_CYCLE,
-         int IN_PER_CYCLE, int BIAS_SHIFT, int SHIFT, int ACT_MAX,
-         const wgt_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][KERNEL], const wgt_t (&BIAS)[OUT_CHANNELS],
+         int IN_PER_CYCLE, int BIAS_SHIFT, int ROUND_BITS, int ACT_MAX,
+         const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][KERNEL], const weight_t (&BIAS)[OUT_CHANNELS],
          bool PACKED, bool DSP, int PACK_SHIFT = 16, int GROUP = 1>
-void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec_t<uact_t, OUT_CHANNELS> >& out,
-                   int height, int width) {
+void conv1d_positions(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec_t<uact_t, OUT_CHANNELS> >& out,
+                      int height, int width) {
     constexpr int GROUPS = OUT_CHANNELS / OUT_PER_CYCLE, CHUNKS = IN_CHANNELS / IN_PER_CYCLE;
     constexpr int TAPS = IN_PER_CYCLE * KERNEL;
     constexpr int FILL = KERNEL - 1, TRAILING = IN_LENGTH - OUT_LENGTH - KERNEL + 1;
@@ -82,9 +82,9 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
     constexpr int FILL_NEXT = FILL - READ_AHEAD;      // fill steps left, every pixel after the first
     constexpr int STEPS_PER_PIXEL = FILL_NEXT + COMPUTE_STEPS + TRAILING;
 
-    wgt_t weight[GROUPS * CHUNKS][OUT_PER_CYCLE][TAPS];
+    weight_t weight[GROUPS * CHUNKS][OUT_PER_CYCLE][TAPS];
     packed_weight_t<PACK_SHIFT> packed[GROUPS * CHUNKS][OUT_PER_CYCLE / 2 > 0 ? OUT_PER_CYCLE / 2 : 1][TAPS];
-    acc_t bias[GROUPS][OUT_PER_CYCLE];
+    sum_t bias[GROUPS][OUT_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
     #pragma HLS ARRAY_PARTITION variable=packed type=complete dim=2
@@ -101,13 +101,13 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
                         packed[g * CHUNKS + c][j / 2][tap] =
                             (packed_weight_t<PACK_SHIFT>)WEIGHT[o][i][k] * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
                             + (packed_weight_t<PACK_SHIFT>)WEIGHT[o - 1][i][k];
-                    if (c == 0 && tap == 0) bias[g][j] = (acc_t)BIAS[o] * ((acc_t)1 << BIAS_SHIFT);
+                    if (c == 0 && tap == 0) bias[g][j] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
                 }
 
     const uint32_t pixels = pixel_count(height, width);
     uact_t window[KERNEL][IN_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=window type=complete dim=0
-    acc_t sums[OUT_PER_CYCLE];
+    sum_t sums[OUT_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=sums type=complete
     uact_t position_out[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=position_out type=complete
@@ -171,7 +171,7 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
             if (PACKED) {
                 for (int pair = 0; pair < OUT_PER_CYCLE / 2; pair++) {
                     #pragma HLS UNROLL
-                    acc_t low = 0, high = 0;
+                    sum_t low = 0, high = 0;
                     for (int first = 0; first < TAPS; first += GROUP) {
                         #pragma HLS UNROLL
                         packed_sum_t sum = 0;
@@ -181,8 +181,8 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
                             #pragma HLS BIND_OP variable=prod op=mul impl=dsp
                             sum += prod;
                         }
-                        low += packed_low<PACK_SHIFT>((int64_t)sum);
-                        high += packed_high<PACK_SHIFT>((int64_t)sum);
+                        low += low_sum<PACK_SHIFT>((int64_t)sum);
+                        high += high_sum<PACK_SHIFT>((int64_t)sum);
                     }
                     sums[2 * pair] = (chunk == 0 ? bias[group][2 * pair] : sums[2 * pair]) + low;
                     sums[2 * pair + 1] = (chunk == 0 ? bias[group][2 * pair + 1] : sums[2 * pair + 1]) + high;
@@ -190,10 +190,10 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
             } else {
                 for (int j = 0; j < OUT_PER_CYCLE; j++) {
                     #pragma HLS UNROLL
-                    acc_t part = 0;
+                    sum_t part = 0;
                     for (int tap = 0; tap < TAPS; tap++) {
                         #pragma HLS UNROLL
-                        part += mul<DSP, acc_t>(window_chunk[tap % KERNEL][tap / KERNEL], weight[weight_step][j][tap]);
+                        part += mul<DSP, sum_t>(window_chunk[tap % KERNEL][tap / KERNEL], weight[weight_step][j][tap]);
                     }
                     sums[j] = (chunk == 0 ? bias[group][j] : sums[j]) + part;
                 }
@@ -203,7 +203,7 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
                 // at -O2 (its SLP vectorizer) got that form wrong.
                 for (int j = 0; j < OUT_PER_CYCLE; j++) {
                     #pragma HLS UNROLL
-                    position_out[group * OUT_PER_CYCLE + j] = requant_relu8<SHIFT, ACT_MAX>(sums[j]);
+                    position_out[group * OUT_PER_CYCLE + j] = requant_relu8<ROUND_BITS, ACT_MAX>(sums[j]);
                 }
                 if (group == GROUPS - 1) {
                     if (position % 2 == 0) {
@@ -234,13 +234,13 @@ void conv1d_stream(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec
 
 // Flatten (channel-major, as torch.flatten) and the dense layer on positions
 // arriving one at a time, FEATURES_PER_CYCLE channels a cycle. Out: the scores,
-// shifted left by OUT_SHIFT, as dense_scores.
+// shifted left by OUT_SHIFT, as dense_map.
 template<int LENGTH, int CHANNELS, int CLASSES, int FEATURES_PER_CYCLE, int BIAS_SHIFT, int OUT_SHIFT,
-         const wgt_t (&WEIGHT)[CLASSES][LENGTH * CHANNELS], const wgt_t (&BIAS)[CLASSES], bool DSP>
-void dense_stream(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<acc_t, CLASSES> >& out,
-                  int height, int width) {
+         const weight_t (&WEIGHT)[CLASSES][LENGTH * CHANNELS], const weight_t (&BIAS)[CLASSES], bool DSP>
+void dense_positions(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<sum_t, CLASSES> >& out,
+                     int height, int width) {
     constexpr int STEPS_PER_POSITION = CHANNELS / FEATURES_PER_CYCLE, STEPS = LENGTH * STEPS_PER_POSITION;
-    wgt_t weight[STEPS][CLASSES][FEATURES_PER_CYCLE];
+    weight_t weight[STEPS][CLASSES][FEATURES_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
     #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=3
     load_w: for (int s = 0; s < STEPS; s++)
@@ -254,7 +254,7 @@ void dense_stream(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<a
     const uint32_t pixels = pixel_count(height, width);
     uact_t channels[CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=channels type=complete
-    acc_t sums[CLASSES];
+    sum_t sums[CLASSES];
     #pragma HLS ARRAY_PARTITION variable=sums type=complete
     int s = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
@@ -274,18 +274,18 @@ void dense_stream(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_t<a
         }
         for (int c = 0; c < CLASSES; c++) {
             #pragma HLS UNROLL
-            acc_t part = 0;
+            sum_t part = 0;
             for (int i = 0; i < FEATURES_PER_CYCLE; i++) {
                 #pragma HLS UNROLL
-                part += mul<DSP, acc_t>(channels[i], weight[s][c][i]);
+                part += mul<DSP, sum_t>(channels[i], weight[s][c][i]);
             }
-            sums[c] = (s == 0 ? (acc_t)BIAS[c] * ((acc_t)1 << BIAS_SHIFT) : sums[c]) + part;
+            sums[c] = (s == 0 ? (sum_t)BIAS[c] * ((sum_t)1 << BIAS_SHIFT) : sums[c]) + part;
         }
         if (s == STEPS - 1) {
-            vec_t<acc_t, CLASSES> scores;
+            vec_t<sum_t, CLASSES> scores;
             for (int c = 0; c < CLASSES; c++) {
                 #pragma HLS UNROLL
-                scores.v[c] = sums[c] * ((acc_t)1 << OUT_SHIFT);
+                scores.v[c] = sums[c] * ((sum_t)1 << OUT_SHIFT);
             }
             out.write(scores);
             s = 0;

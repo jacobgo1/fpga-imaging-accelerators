@@ -130,7 +130,7 @@ def _leaky_int(v):
     return np.where(v >= 0, v, _round_shift(v * LEAK_NUM, LEAK_FRAC))
 
 
-def _requant_act(s, shift):
+def _requant_signed(s, shift):
     """Round off shift bits, saturate to int16 [-32768, 32767]."""
     return np.clip(_round_shift(s, shift), -32768, 32767)
 
@@ -153,7 +153,7 @@ def forward_patch_fixed(xq, qlayers):
     cat = np.concatenate([xq.astype(np.int64) << fh0, lo, hi], axis=-1)
 
     s_proj = dwt_frac + fpw
-    proj = _requant_act(cat @ pw[:, :, 0, 0].T + (pb << (s_proj - gpb)), s_proj - ACT_FRAC)
+    proj = _requant_signed(cat @ pw[:, :, 0, 0].T + (pb << (s_proj - gpb)), s_proj - ACT_FRAC)
 
     s_conv = ACT_FRAC + fcw
     act1 = _requant_leaky_relu(_conv3x3_int(proj, cw, cb, s_conv - gcb), s_conv - ACT_FRAC)

@@ -6,19 +6,19 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// Stream to DDR: each pixel's CLASSES scores (SHIFT bits rounded off), then its
+// Stream to DDR: each pixel's CLASSES scores (ROUND_BITS bits rounded off), then its
 // class, the first highest score. One burst per patch row, the pixels inside the
 // image only. Each burst's acknowledgement is collected BURSTS_IN_FLIGHT rows
 // later instead of waited for (about 200 cycles a row on the ZCU104); the last
 // ones at the end, so the kernel is done only when every word is in memory.
-template<int SHIFT, int CLASSES, typename WORD_T>
-WORD_T scores_and_class(const vec_t<acc_t, CLASSES>& sums) {
+template<int ROUND_BITS, int CLASSES, typename WORD_T>
+WORD_T scores_and_class(const vec_t<sum_t, CLASSES>& sums) {
     #pragma HLS INLINE
     WORD_T word;
     int best = 0;
     for (int c = 0; c < CLASSES; c++) {
         #pragma HLS UNROLL
-        word[c] = round_shift<SHIFT>(sums.v[c]);
+        word[c] = round_shift<ROUND_BITS>(sums.v[c]);
     }
     for (int c = 1; c < CLASSES; c++) {
         #pragma HLS UNROLL
@@ -28,8 +28,8 @@ WORD_T scores_and_class(const vec_t<acc_t, CLASSES>& sums) {
     return word;
 }
 
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int SHIFT, int CLASSES, int BURSTS_IN_FLIGHT, typename WORD_T>
-void store_rows(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width) {
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int ROUND_BITS, int CLASSES, int BURSTS_IN_FLIGHT, typename WORD_T>
+void store_rows(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width) {
     #pragma HLS INLINE
     const int rows = patch_rows<PATCH_HEIGHT>(height), cols = patch_cols<PATCH_WIDTH>(width);
     int unacknowledged = 0;
@@ -48,7 +48,7 @@ void store_rows(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T>
                 put: for (int x = 0; x < inside; x++) {
                     #pragma HLS PIPELINE II=1
                     #pragma HLS LOOP_TRIPCOUNT min=1 max=32
-                    dout.write(scores_and_class<SHIFT, CLASSES, WORD_T>(in.read()));
+                    dout.write(scores_and_class<ROUND_BITS, CLASSES, WORD_T>(in.read()));
                 }
                 drop: for (int x = inside; x < PATCH_WIDTH; x++) {
                     #pragma HLS PIPELINE II=1
@@ -64,15 +64,15 @@ void store_rows(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T>
     }
 }
 
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int SHIFT, int CLASSES, typename WORD_T, int BURSTS_IN_FLIGHT = 8>
-void store_scores(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width) {
-    store_rows<PATCH_HEIGHT, PATCH_WIDTH, SHIFT, CLASSES, BURSTS_IN_FLIGHT>(in, dout, height, width);
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int ROUND_BITS, int CLASSES, typename WORD_T, int BURSTS_IN_FLIGHT = 8>
+void store_scores(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width) {
+    store_rows<PATCH_HEIGHT, PATCH_WIDTH, ROUND_BITS, CLASSES, BURSTS_IN_FLIGHT>(in, dout, height, width);
 }
 
 // The same, then a word on finished once everything is in memory, for count_cycles.
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int SHIFT, int CLASSES, typename WORD_T, int BURSTS_IN_FLIGHT = 8>
-void store_scores(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width,
+template<int PATCH_HEIGHT, int PATCH_WIDTH, int ROUND_BITS, int CLASSES, typename WORD_T, int BURSTS_IN_FLIGHT = 8>
+void store_scores(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width,
                   hls::stream<bool>& finished) {
-    store_rows<PATCH_HEIGHT, PATCH_WIDTH, SHIFT, CLASSES, BURSTS_IN_FLIGHT>(in, dout, height, width);
+    store_rows<PATCH_HEIGHT, PATCH_WIDTH, ROUND_BITS, CLASSES, BURSTS_IN_FLIGHT>(in, dout, height, width);
     finished.write(true);
 }

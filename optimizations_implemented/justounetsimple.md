@@ -40,11 +40,11 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | DATAFLOW, layers fused; maps never leave the chip | ✓ | ✓ | ✓ |
 | Ping-pong patch buffer: fill patch k+1 while conv1 reads patch k | UltraRAM | BRAM | BRAM |
 | Read ports, each every n-th patch row | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
-| Read bursts requested a row ahead (`read_rows_ahead`, `burst_maxi`) | ✓ | – | – |
-| Line buffers + 3×3 shift-register window (`conv3x3_stream`) | ✓ | ✓ | ✓ |
+| Read bursts requested ahead (`read_patch_rows`, `burst_maxi`); else one burst a row from a plain pointer (`read_patch_rows_simple`) | plain pointer (on trial, 2026-11-03) | ✓ (2 in flight) | ✓ (2 in flight) |
+| Line buffers + 3×3 shift-register window (`conv3x3_all_in_patch`) | ✓ | ✓ | ✓ |
 | conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
-| conv2-4: one output channel a cycle (narrow) / one input x output a cycle (serial) | narrow, DSP | serial (2 in), DSP | serial (2 in), LUTs |
+| conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
 | ReLU fused with pooling / upsampling | ✓ | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | FIFO depths from a cycle model (`s_a` 256, `s_b` 32, `s_c` 64) | ✓ | not checked | not checked |
@@ -95,6 +95,17 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 | Ports | 4 read + 1 write, 128 bit | 4 read + 1 write sharing HP3, 64 bit (4 HP ports) | 2 + 1, 64 bit |
 | Reads needed at T (bytes a patch / T × clock) | 11.2 GB/s of 4 × 3.0 | 2.4 GB/s of 4 × 0.8 | 1.25 GB/s of 2 × 0.62 (the limit) |
 
+## Utilization
+
+<!-- utilization.py: justounetsimple -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
+
 ## Changes
 
 - 2026-10-05: golden kernel; optimized modules.
@@ -144,3 +155,25 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
   patch), host timer 18.10 ms, wall clock 18.84 ms; 96.20 %, IoU 0.927 / 0.880 / 0.952, as at
   214 MHz. The 2026-10-27 run's 6 707 cycles again: still its reads (~9.1 GB/s). ~10 900× the golden
   kernel on the FPGA.
+- 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
+  process in `utilization.md`). `justounetsimple_opt` 1 116 DSPs (conv1 864, as packed; ~1 112
+  predicted), 43.1 k LUTs; the 7020's 216 DSPs, all conv1, 84.5 BRAM36 (the patch buffer 64). The golden
+  kernel: 313 DSPs, 155.5 BRAM36 (its float maps).
+- 2026-11-03: shared modules merged (the answers bit for bit the same): `conv3x3_serial` is now
+  `conv3x3_grouped` with one output channel a cycle; the line-buffer and window shift is one helper
+  (`window3x3.hpp`); `conv3x3_wide` / `pointwise_wide` and the board copies of `patch_buffer` gave way
+  to each chip's `chip.hpp` (DSP packing, UltraRAM), passed to `conv3x3_packed_layer`,
+  `pointwise_packed` and `patch_buffer`. The csynth DSP counts and II should not change: not yet built.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.
+- 2026-11-03: ZCU104 on trial with `read_patch_rows_simple` (`src/optimized/shared/`): the same words in
+  the same order, but from a plain `m_axi` pointer, one burst a patch row that HLS infers, no requests
+  ahead; the readers' code reads like a plain loop. Each row now waits for DDR's first word, 8 rows a
+  patch a port; estimate (not measured) +5-15 %, ~19-20.5 ms against 17.87. The 7030 and 7020 keep
+  `read_patch_rows`. Not yet built: compare cycles a patch with the 2026-11-01 run (6 718 at 250 MHz).

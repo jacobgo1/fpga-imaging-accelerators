@@ -6,7 +6,7 @@
 #include "../../common/hls_burst_maxi_shim.hpp"
 
 // waveletcnn_opt for the Zynq-7020 (--board zynq7020 or zedboard): the same answers,
-// two 64-bit read ports, the 3x3 conv folded (conv3x3_serial), 186 of the 220 DSPs.
+// two 64-bit read ports, the 3x3 conv folded (conv3x3_tiled, one output channel a cycle), 186 of the 220 DSPs.
 
 constexpr int PATCH_SIZE = 32;
 constexpr int CUBE_BANDS = 120;

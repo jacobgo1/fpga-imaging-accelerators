@@ -52,8 +52,8 @@ fp32 96.61 %; same class as fp32 on 99.66 %.
 | Shift-register windows, every index a constant | ✓ | ✓ | ✓ |
 | Weights loaded once into registers/ROM (no weight traffic) | ✓ | ✓ | ✓ |
 | Burst reads requested ahead (`hls::burst_maxi`) | 2 ports, 16 pixels/burst | 1 port, 8 pixels/burst | 1 port, 8 pixels/burst |
-| Whole feature map per pixel, several positions per cycle (`conv1d_engine`) | every layer | conv1 (2 positions) | – |
-| Spectral streaming: one position at a time, 6-position line buffer (`conv1d_stream`) | – | conv2-4 | conv2-4 |
+| Whole feature map per pixel, several positions per cycle (`conv1d_map`) | every layer | conv1 (2 positions) | – |
+| Spectral streaming: one position at a time, 6-position line buffer (`conv1d_positions`) | – | conv2-4 | conv2-4 |
 | Folding over output/input channels with an accumulator | – | ✓ | ✓ |
 | Next pixel's first positions read during the last output's idle steps | – | ✓ | ✓ |
 | FIFO depths from the cycle model | – | depth 8 (93 → 74 cycles) | depth 8 (134 → 113 cycles) |
@@ -64,8 +64,8 @@ fp32 96.61 %; same class as fp32 on 99.66 %.
 One stage processes one pixel at a time; with II = 1 a loop iteration is one cycle, so
 cycles per pixel = iterations per pixel. The slowest stage sets the pace, T.
 
-- ZCU104 (`conv1d_engine`): S = ceil(P / POS) × (OC / OCP).
-- 7030 and ZedBoard (`conv1d_stream`): S = w + P × (OC / OCP) × (IC / ICP), where w
+- ZCU104 (`conv1d_map`): S = ceil(P / POS) × (OC / OCP).
+- 7030 and ZedBoard (`conv1d_positions`): S = w + P × (OC / OCP) × (IC / ICP), where w
   is what is left of the 5 window-fill steps after the read-ahead: 5 - min(5, G × C - 1),
   G = OC / OCP, C = IC / ICP (5 for the first pixel). A streamed layer takes in at most
   one position a cycle, so S ≥ its input positions: conv1's 102 outputs are why the
@@ -130,6 +130,17 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
 | Memory a limit? | only below ~9.4 cycles/pixel (2 ports) | no (one port: 37.5 cycles/pixel) | no (one port: 37.5 cycles/pixel) |
 | Clock | 214 MHz (was 187.5 MHz) | 10 ns | 12.8 ns (try 10 ns) |
 
+## Utilization
+
+<!-- utilization.py: justoliunet -->
+Routed, kernel alone (without the interconnects); by process in
+[utilization.md](utilization.md). Written by `python tools/utilization.py`.
+
+| Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
+|---|---|---|---|---|---|---|
+| (no report yet) | | | | | | |
+<!-- /utilization.py -->
+
 ## Changes
 
 - 2026-10-14: golden kernel and 1D golden modules.
@@ -162,3 +173,14 @@ Measured cycles per pixel = FPGA time × clock ÷ pixels (or the `cycles` regist
 - 2026-11-01: `justoliunet_opt` at 250 MHz: the same, 47.02 ms, 18.00 cycles a pixel; host timer
   47.19 ms, wall clock 48.10 ms in one start; 97.00 %, IoU 0.926 / 0.904 / 0.975, as at 214 MHz.
   Against the golden kernel ~22 000× on the FPGA and on the wall clock.
+- 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
+  process in `utilization.md`). `justoliunet_opt`'s 2026-10-31 build: 1 313 DSPs (~1 304 predicted),
+  89.6 k LUTs in the kernel; `justoliunet_opt_zynq7020` 216 DSPs, 31.0 k LUTs.
+- 2026-11-03: modules renamed for what they are (the answers bit for bit the same):
+  `conv3x3_grouped` -> `conv3x3_tiled`, `conv3x3_lines` -> `conv3x3_tiled_ram`, `conv3x3_packed_layer` ->
+  `conv3x3_2mul`, `conv3x3_narrow` -> `conv3x3_all_in` (its `STEPS` now `OUT_PER_CYCLE`), `pointwise` ->
+  `conv1x1`, `conv1d_engine` / `conv1d_stream` -> `conv1d_map` /
+  `conv1d_positions`, `dense_scores` / `dense_stream` -> `dense_map` / `dense_positions`,
+  `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
+  `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
+  reports to the new ones.

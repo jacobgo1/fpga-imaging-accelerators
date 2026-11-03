@@ -32,7 +32,7 @@ struct pixel_lane {
 // DDR to stream: blocks PORT, PORT + READ_PORTS, ... of BLOCK pixels, one burst a
 // block, requested BURSTS_AHEAD blocks ahead of the reading.
 template<int WORDS_PER_PIXEL, int BLOCK, int READ_PORTS, int PORT, int BURSTS_AHEAD = 2, typename WORD_T>
-void read_pixels_ahead(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int height, int width) {
+void read_pixels(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int height, int width) {
     const uint32_t pixels = pixel_count(height, width);
     const uint32_t blocks = (pixels + BLOCK - 1) / BLOCK;
     uint32_t next_request = PORT;
@@ -63,7 +63,7 @@ void read_pixels_ahead(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, in
 
 // One band's z-score in integers: (raw * scale + offset) >> ZSCORE_SHIFT, saturated.
 template<int ZSCORE_SHIFT, int ZSCORE_MAX, bool DSP>
-int16_t zscore12(uint16_t raw, int32_t scale, int64_t offset) {
+int16_t zscore_12(uint16_t raw, int32_t scale, int64_t offset) {
     #pragma HLS INLINE
     const int64_t z = (mul<DSP, int64_t>(raw, scale) + offset) >> ZSCORE_SHIFT;
     return (int16_t)(z > ZSCORE_MAX ? ZSCORE_MAX : z < -ZSCORE_MAX ? -ZSCORE_MAX : z);
@@ -117,7 +117,7 @@ void zscore_pixels(hls::stream<WORD_T> raw[READ_PORTS],
             }
             for (int b = 0; b < BANDS_PER_WORD; b++) {
                 #pragma HLS UNROLL
-                spectrum.v[KEPT_BANDS - BANDS_PER_WORD + b][0] = zscore12<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
+                spectrum.v[KEPT_BANDS - BANDS_PER_WORD + b][0] = zscore_12<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
                     word[b], scale[kept_word][b], offset[kept_word][b]);
             }
         }
@@ -136,7 +136,7 @@ void zscore_pixels(hls::stream<WORD_T> raw[READ_PORTS],
 // order, bursts of BURST pixels, acknowledgements collected BURSTS_IN_FLIGHT
 // bursts later; then a word on finished, for count_cycles.
 template<int CLASSES, typename WORD_T>
-WORD_T pixel_scores_and_class(const vec_t<acc_t, CLASSES>& scores) {
+WORD_T pixel_scores_and_class(const vec_t<sum_t, CLASSES>& scores) {
     #pragma HLS INLINE
     WORD_T word;
     int best = 0;
@@ -150,7 +150,7 @@ WORD_T pixel_scores_and_class(const vec_t<acc_t, CLASSES>& scores) {
 }
 
 template<int CLASSES, int BURST, int BURSTS_IN_FLIGHT, typename WORD_T>
-void store_pixels(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width,
+void store_pixels(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T> dout, int height, int width,
                   hls::stream<bool>& finished) {
     const uint32_t pixels = pixel_count(height, width);
     int unacknowledged = 0;
@@ -176,7 +176,7 @@ void store_pixels(hls::stream<vec_t<acc_t, CLASSES> >& in, hls::burst_maxi<WORD_
 // store_pixels for a network in LANES lanes: the lanes are taken in turn, BLOCK
 // pixels each, the order their readers read the image in.
 template<int CLASSES, int LANES, int BLOCK, int BURST, int BURSTS_IN_FLIGHT, typename WORD_T>
-void store_pixels_lanes(hls::stream<vec_t<acc_t, CLASSES> > in[LANES], hls::burst_maxi<WORD_T> dout,
+void store_pixels_lanes(hls::stream<vec_t<sum_t, CLASSES> > in[LANES], hls::burst_maxi<WORD_T> dout,
                         int height, int width, hls::stream<bool>& finished) {
     const uint32_t pixels = pixel_count(height, width);
     int unacknowledged = 0;
@@ -190,7 +190,7 @@ void store_pixels_lanes(hls::stream<vec_t<acc_t, CLASSES> > in[LANES], hls::burs
         put: for (uint32_t k = 0; k < length; k++) {
             #pragma HLS PIPELINE II=1
             #pragma HLS LOOP_TRIPCOUNT min=1 max=64
-            vec_t<acc_t, CLASSES> scores;
+            vec_t<sum_t, CLASSES> scores;
             for (int r = 0; r < LANES; r++) {
                 #pragma HLS UNROLL
                 if (lane == r) scores = in[r].read();

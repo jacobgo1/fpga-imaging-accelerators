@@ -86,3 +86,30 @@ One image folder serves every kernel: prepare it and zip it.
 python3 tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out aegean_unet
 source fpga.sh; fpga_zip aegean_unet
 ```
+
+## Utilization: Vivado's reports -> the docs
+
+```text
+utilization.py            Reads each kernel's routed utilization report (report_utilization
+                          -hierarchical) from optimizations_implemented/utilization/ and writes
+                          optimizations_implemented/utilization.md: every kernel against its chip,
+                          and where its resources go, by process. Also fills each model file's
+                          "Utilization" table (between its <!-- utilization.py --> markers).
+                          tests/test_utilization.py checks that the docs match the reports.
+```
+
+After new bitstreams: on the server, gather each kernel's newest routed report, named by kernel:
+
+```bash
+cd ~/Documents/MartinOgJacob/fpga-imaging-accelerators && rm -rf /tmp/utilization_reports && mkdir /tmp/utilization_reports && for d in build/*/; do k=$(basename "$d"); r=$(ls -d build/$k/2*/reports/impl/utilization.rpt 2>/dev/null | tail -1); if [ -n "$r" ]; then cp "$r" /tmp/utilization_reports/${k}_utilization.rpt; echo "$k <- $r" | tee -a /tmp/utilization_reports/sources.txt; fi; done
+```
+
+then on the laptop, fetch them and write the docs:
+
+```bash
+scp "fpgaws@FPGAWS:/tmp/utilization_reports/*" C:/MasterProject/fpga-imaging-accelerators/optimizations_implemented/utilization/
+```
+
+```bash
+python tools/utilization.py
+```

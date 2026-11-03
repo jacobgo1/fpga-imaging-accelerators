@@ -67,7 +67,7 @@ void pixel_buffer(hls::stream<WORD_T> raw[READ_PORTS], hls::stream<vec_t<act8_t,
                 word_t zscores;
                 for (int b = 0; b < BANDS_PER_WORD; b++) {
                     #pragma HLS UNROLL
-                    zscores.v[b] = z_score<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
+                    zscores.v[b] = zscore_8<ZSCORE_SHIFT, ZSCORE_MAX, DSP>(
                         words[port][b], scale[kept_word][b], offset[kept_word][b]);
                 }
                 for (int w = 0; w < WORDS_PER_CHUNK; w++) {

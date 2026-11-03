@@ -145,6 +145,8 @@ boards' kernels give the same answers bit for bit, as their testbenches say.
 
 ## Utilization (routed, 214 MHz builds)
 
+Every kernel, from its newest build and by process: [utilization.md](utilization.md).
+
 From `reports/impl/utilization.rpt` of each bitstream (2026-10-30), the whole design (kernel plus
 the block design's interconnects, ~1.8-2.5 k LUTs). The ZU7EV has 230 400 LUTs, 460 800 FFs,
 312 BRAM36, 96 UltraRAM and 1 728 DSPs.

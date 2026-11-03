@@ -20,8 +20,8 @@ typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
 typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
 
 // The argument names become the kernel's register names: keep them.
-void justounetsimple_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                         hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void justounetsimple_opt(const cube_word_t* din0, const cube_word_t* din1,
+                         const cube_word_t* din2, const cube_word_t* din3,
                          hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
 
 #endif

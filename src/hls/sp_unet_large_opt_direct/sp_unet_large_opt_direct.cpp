@@ -25,11 +25,12 @@ typedef layer_size< 4, 1, true> DOUBLE4_CONV2;  // 16 -> 16   4 x 16 = 64    x 1
 }
 
 #include "../sp_unet_small_opt_direct/sp_unet_opt_common.hpp"
-#include "../../optimized/shared/read_rows.hpp"
+#include "../../optimized/shared/read_patch_rows.hpp"
 #include "../../optimized/shared/pixel_buffer.hpp"
-#include "../../optimized/zcu104/pointwise_wide.hpp"
-#include "../../optimized/shared/pointwise.hpp"
-#include "../../optimized/shared/conv3x3_grouped.hpp"
+#include "../../optimized/zcu104/chip.hpp"
+#include "../../optimized/shared/pointwise_packed.hpp"
+#include "../../optimized/shared/conv1x1.hpp"
+#include "../../optimized/shared/conv3x3_tiled.hpp"
 #include "../../optimized/shared/relu_act.hpp"
 #include "../../optimized/shared/relu_pool_skip.hpp"
 #include "../../optimized/shared/relu_pool_up.hpp"
@@ -69,18 +70,18 @@ void sp_unet_large_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
     hls::stream<vec_t<act_t, STEM1>> convsp1_out("convsp1_out");
     hls::stream<vec_t<act_t, STEM2>> convsp2_out("convsp2_out");
     hls::stream<vec_t<act_t, STEM3>> stem_out("stem_out");
-    hls::stream<vec_t<acc_t, DOUBLE1>> double1_conv1_out("double1_conv1_out"), double1_conv2_out("double1_conv2_out");
+    hls::stream<vec_t<sum_t, DOUBLE1>> double1_conv1_out("double1_conv1_out"), double1_conv2_out("double1_conv2_out");
     hls::stream<vec_t<act_t, DOUBLE1>> double1_relu1("double1_relu1"), skip("skip"), pool1_out("pool1_out");
-    hls::stream<vec_t<acc_t, DOUBLE2>> double2_conv1_out("double2_conv1_out"), double2_conv2_out("double2_conv2_out");
-    hls::stream<vec_t<acc_t, DOUBLE2>> up1_conv_out("up1_conv_out");
+    hls::stream<vec_t<sum_t, DOUBLE2>> double2_conv1_out("double2_conv1_out"), double2_conv2_out("double2_conv2_out");
+    hls::stream<vec_t<sum_t, DOUBLE2>> up1_conv_out("up1_conv_out");
     hls::stream<vec_t<act_t, DOUBLE2>> double2_relu1("double2_relu1"), pool2_out("pool2_out"), up1_relu("up1_relu");
-    hls::stream<vec_t<acc_t, DOUBLE3>> double3_conv1_out("double3_conv1_out"), double3_conv2_out("double3_conv2_out");
-    hls::stream<vec_t<acc_t, DOUBLE3>> up2_conv_out("up2_conv_out");
+    hls::stream<vec_t<sum_t, DOUBLE3>> double3_conv1_out("double3_conv1_out"), double3_conv2_out("double3_conv2_out");
+    hls::stream<vec_t<sum_t, DOUBLE3>> up2_conv_out("up2_conv_out");
     hls::stream<vec_t<act_t, DOUBLE3>> double3_relu1("double3_relu1"), double3_out("double3_out"), up2_relu("up2_relu");
     hls::stream<vec_t<act_t, DOUBLE3 + DOUBLE1>> joined("joined");
-    hls::stream<vec_t<acc_t, DOUBLE4>> double4_conv1_out("double4_conv1_out"), double4_conv2_out("double4_conv2_out");
+    hls::stream<vec_t<sum_t, DOUBLE4>> double4_conv1_out("double4_conv1_out"), double4_conv2_out("double4_conv2_out");
     hls::stream<vec_t<act_t, DOUBLE4>> double4_relu1("double4_relu1"), double4_out("double4_out");
-    hls::stream<vec_t<acc_t, CLASSES>> scores("scores");
+    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
     hls::stream<bool> all_written("all_written");
 
     // pixel_buffer takes a strip's words in 480 of each 896 steps: room for a
@@ -145,80 +146,80 @@ void sp_unet_large_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
     #pragma HLS BIND_STORAGE variable=double4_conv2_out type=fifo impl=srl
     #pragma HLS BIND_STORAGE variable=double4_out       type=fifo impl=srl
 
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
-    read_rows_ahead<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
+    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
     pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD,
                  sizes::CONVSP1_BANDS_PER_CYCLE, READ_PORTS, CONVSP1_CHUNKS, zscore::FRAC, zscore::IN_MAX,
                  zscore::A, zscore::B, sizes::ZSCORE_ON_DSPS>(cube_words, zscores, height, width);
 
     // The spectral stem, 1x1 convs; convsp1 two multiplies per DSP.
-    pointwise_wide<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
-                   CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias>(
-        zscores, convsp1_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
-              CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
-              sizes::CONVSP2_3_ON_DSPS>(convsp1_out, convsp2_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
-              CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
-              sizes::CONVSP2_3_ON_DSPS>(convsp2_out, stem_out, height, width);
+    pointwise_packed<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
+                     CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias,
+                     DSP_PACK_SHIFT, DSP_PACK_GROUP>(zscores, convsp1_out, height, width);
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
+            CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
+            sizes::CONVSP2_3_ON_DSPS>(convsp1_out, convsp2_out, height, width);
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
+            CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
+            sizes::CONVSP2_3_ON_DSPS>(convsp2_out, stem_out, height, width);
 
     // The encoder: double1 at 32 x 32, whose output is also the skip; double2 at 16 x 16.
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, STEM3, DOUBLE1,
-                    CONV_LAYER(DOUBLE1_CONV1, DOUBLE1_CONV1_FRACS, double1_block_0)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, STEM3, DOUBLE1,
+                  CONV_LAYER(DOUBLE1_CONV1, DOUBLE1_CONV1_FRACS, double1_block_0)>(
         stem_out, double1_conv1_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE1_CONV1_FRACS::SHIFT, DOUBLE1>(
         double1_conv1_out, double1_relu1, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1, DOUBLE1,
-                    CONV_LAYER(DOUBLE1_CONV2, DOUBLE1_CONV2_FRACS, double1_block_3)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1, DOUBLE1,
+                  CONV_LAYER(DOUBLE1_CONV2, DOUBLE1_CONV2_FRACS, double1_block_3)>(
         double1_relu1, double1_conv2_out, height, width);
     relu_pool_skip<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1_CONV2_FRACS::SHIFT>(
         double1_conv2_out, skip, pool1_out, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE1, DOUBLE2,
-                    CONV_LAYER(DOUBLE2_CONV1, DOUBLE2_CONV1_FRACS, double2_block_0)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE1, DOUBLE2,
+                  CONV_LAYER(DOUBLE2_CONV1, DOUBLE2_CONV1_FRACS, double2_block_0)>(
         pool1_out, double2_conv1_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, HALF_PIXELS, DOUBLE2_CONV1_FRACS::SHIFT, DOUBLE2>(
         double2_conv1_out, double2_relu1, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
-                    CONV_LAYER(DOUBLE2_CONV2, DOUBLE2_CONV2_FRACS, double2_block_3)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
+                  CONV_LAYER(DOUBLE2_CONV2, DOUBLE2_CONV2_FRACS, double2_block_3)>(
         double2_relu1, double2_conv2_out, height, width);
     // Pool to 8 x 8 and upsample back: each 2x2 block becomes its maximum.
     relu_pool_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2_CONV2_FRACS::SHIFT>(
         double2_conv2_out, pool2_out, height, width);
 
     // The decoder: up1's conv at 16 x 16, double3, upsample to 32 x 32, up2's conv.
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
-                    CONV_LAYER(UP1_CONV, UP1_FRACS, up1_1)>(pool2_out, up1_conv_out, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
+                  CONV_LAYER(UP1_CONV, UP1_FRACS, up1_1)>(pool2_out, up1_conv_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, HALF_PIXELS, UP1_FRACS::SHIFT, DOUBLE2>(up1_conv_out, up1_relu, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE3,
-                    CONV_LAYER(DOUBLE3_CONV1, DOUBLE3_CONV1_FRACS, double3_block_0)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE3,
+                  CONV_LAYER(DOUBLE3_CONV1, DOUBLE3_CONV1_FRACS, double3_block_0)>(
         up1_relu, double3_conv1_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, HALF_PIXELS, DOUBLE3_CONV1_FRACS::SHIFT, DOUBLE3>(
         double3_conv1_out, double3_relu1, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
-                    CONV_LAYER(DOUBLE3_CONV2, DOUBLE3_CONV2_FRACS, double3_block_3)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
+                  CONV_LAYER(DOUBLE3_CONV2, DOUBLE3_CONV2_FRACS, double3_block_3)>(
         double3_relu1, double3_conv2_out, height, width);
     relu_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3_CONV2_FRACS::SHIFT>(
         double3_conv2_out, double3_out, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3, DOUBLE3,
-                    CONV_LAYER(UP2_CONV, UP2_FRACS, up2_1)>(double3_out, up2_conv_out, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3, DOUBLE3,
+                  CONV_LAYER(UP2_CONV, UP2_FRACS, up2_1)>(double3_out, up2_conv_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, UP2_FRACS::SHIFT, DOUBLE3>(up2_conv_out, up2_relu, height, width);
 
     // The skip joins, then double4 and the final 1x1 conv: the scores.
     concat_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE3, DOUBLE1>(up2_relu, skip, joined, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3 + DOUBLE1, DOUBLE4,
-                    CONV_LAYER(DOUBLE4_CONV1, DOUBLE4_CONV1_FRACS, double4_block_0)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3 + DOUBLE1, DOUBLE4,
+                  CONV_LAYER(DOUBLE4_CONV1, DOUBLE4_CONV1_FRACS, double4_block_0)>(
         joined, double4_conv1_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4_CONV1_FRACS::SHIFT, DOUBLE4>(
         double4_conv1_out, double4_relu1, height, width);
-    conv3x3_grouped<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
-                    CONV_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
+                  CONV_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
         double4_relu1, double4_conv2_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4_CONV2_FRACS::SHIFT, DOUBLE4>(
         double4_conv2_out, double4_out, height, width);
-    pointwise<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
-              FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
+            FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(
         double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);
 
