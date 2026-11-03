@@ -7,40 +7,20 @@ with a float network built from the same golden layers (src/golden/layers.hpp);
 this test is the independent check of those layers. The board notebook, shared by every
 model, is tests/test_notebooks.py's.
 """
-import contextlib
-import gc
-import importlib.util
-import io
-import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tempfile
-import tracemalloc
-import types
 import unittest
-import zipfile
 
-from kernels import kernel_dir
+from helpers import CXX, ROOT, load_module, run_kernel, skip_without_aegean
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
-CXX = shutil.which('g++') or shutil.which('clang++')
 MODELS = ('justoliunet', 'justoliunet_bn')
 AP_CTRL, DIN, DOUT, N_REG = 0x00, 0x10, 0x1c, 0x28
-
-
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def quantized(model):
@@ -51,8 +31,7 @@ def quantized(model):
 class JustoLiuNetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not (ROOT / 'aegean').is_dir():
-            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
+        skip_without_aegean()
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('justoliunet_model', ROOT / 'tools/justoliunet_model.py')
         kept, mean, inv_std = cls.model.read_preprocessing()
@@ -96,9 +75,7 @@ class JustoLiuNetTests(unittest.TestCase):
                 with self.subTest(model=model):
                     if not quantized(model).exists():
                         self.skipTest(f'no quantized weights for {model}')
-                    source_dir = kernel_dir(model)
-                    source = tmp / f'run_{model}.cpp'
-                    source.write_text(f"""
+                    cpp = run_kernel(tmp, model, f"""
 #include "{model}.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -112,13 +89,7 @@ int main(int, char** argv) {{
     {model}(din.data(), dout.data(), n);
     f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(float), dout.size(), f); fclose(f);
 }}
-""")
-                    exe = tmp / f'run_{model}.exe'
-                    subprocess.run([CXX, '-std=c++14', '-O2', f'-I{source_dir}', f'-I{ROOT / "src/common"}',
-                                    str(source), str(source_dir / f'{model}.cpp'), '-o', str(exe)], check=True)
-                    out = tmp / f'out_{model}.bin'
-                    subprocess.run([str(exe), str(tmp / 'in.bin'), str(out), str(len(pixels))], check=True)
-                    cpp = np.fromfile(out, dtype=np.float32).reshape(len(pixels), 3)
+""", tmp / 'in.bin', np.float32, (len(pixels), 3))
                     want = self.model.forward(pixels.astype(np.float64), self.model.load_quantized(model))
                     np.testing.assert_allclose(cpp, want, rtol=1e-4, atol=1e-4)
                     self.assertTrue((cpp.argmax(1) == want.argmax(1)).all())

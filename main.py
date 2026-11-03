@@ -254,8 +254,7 @@ def package_pynq(run, name):
         # One notebook for every model, the golden kernels' or the optimized ones'; kernel.json
         # tells it which model this is.
         golden = name == model
-        shared = ROOT / 'software' / 'pynq' / 'shared'
-        shutil.copy2(shared / ('classify_golden.ipynb' if golden else 'classify.ipynb'), out)
+        shutil.copy2(ROOT / 'software' / 'pynq' / ('classify_golden.ipynb' if golden else 'classify.ipynb'), out)
         if golden:
             shutil.copy2(ROOT / 'mu_sd.txt', out)   # the golden notebooks preprocess on the ARM
         (out / 'kernel.json').write_text(json.dumps({'kernel': name, 'model': model, **MODELS.MODELS[model]},
@@ -341,6 +340,15 @@ def opu_compiler():
     return None
 
 
+def opu_programs(name):
+    """The C programs a kernel's OPU zip gets: every optimized kernel of a model runs
+    software/opu/classify.c (its registers come in kernel_regs.h), as every one shares a
+    PYNQ notebook; any kernel may add its own in software/opu/NAME/."""
+    model = MODELS.model_of(name)
+    shared = [ROOT / 'software' / 'opu' / 'classify.c'] if model and name != model else []
+    return shared + [f for f in software_files('opu', name) if f.suffix == '.c']
+
+
 def package_opu(run, name):
     """RUN/NAME_opu/ and RUN/NAME_opu.zip: the design for the OPU system's PetaLinux, to
     copy to OPU_FIRMWARE on the board and load with its load.sh."""
@@ -366,9 +374,9 @@ def package_opu(run, name):
     (out / f'{firmware}.md5sum').write_text(f'{md5}  {OPU_FIRMWARE}/{firmware}\n', encoding='utf-8')
     shutil.copy2(header, out / header.name)
 
-    # The kernel's programs (software/opu/NAME/), built for the board: it has no compiler.
-    # Static, so they do not depend on the board's C library.
-    programs = [f for f in software_files('opu', name) if f.suffix == '.c']
+    # The kernel's programs, built for the board: it has no compiler. Static, so they do not
+    # depend on the board's C library.
+    programs = opu_programs(name)
     compiler = opu_compiler() if programs else None
     if programs:
         (out / 'kernel_regs.h').write_text(opu_registers(header.read_text(encoding='utf-8')), encoding='utf-8')

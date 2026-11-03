@@ -1,27 +1,18 @@
 """tools/quantize_weights.py: BatchNorm folding, the quantization itself, the headers."""
-import importlib.util
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from helpers import CXX, ROOT, load_module
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
 CHECKPOINTS = sorted((ROOT / 'weights').rglob('*.pt'))
-CXX = shutil.which('g++') or shutil.which('clang++')
-
-
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def checkpoint(fragment):

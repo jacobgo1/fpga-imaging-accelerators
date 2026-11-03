@@ -1,37 +1,25 @@
 """spectralpointwise1d (golden) and spectralpointwise1d_opt with its Zynq-7030 and Zynq-7020
 versions: the numpy models against the trained model, every C++ kernel against them on the
-labelled aegean pixels (the optimized ones bit for bit, the same answers on every board) and
-the OPU program. The board notebooks, shared by every model, are tests/test_notebooks.py's.
+labelled aegean pixels (the optimized ones bit for bit, the same answers on every board).
+The board notebooks, shared by every model, are tests/test_notebooks.py's.
 
 classify_fixed (tools/spectralpointwise1d_model.py) is what the optimized kernels must write,
 bit for bit; here it is checked against the trained fp32 model on real pixels, and the
 kernels, compiled with plain g++, against it. The kernels' testbenches check them against a
 plain-loop integer reference of their own and the float golden network.
 """
-import contextlib
-import gc
-import importlib.util
-import io
-import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tempfile
-import types
 import unittest
-import zipfile
 
-from kernels import kernel_dir
+from helpers import CXX, ROOT, load_module, run_kernel, skip_without_aegean
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
-CXX = shutil.which('g++') or shutil.which('clang++')
 MODEL = 'spectralpointwise1d'
 # Every optimized kernel and its call on din, dout, height, width, cycles: every port reads the cube.
 OPTIMIZED = {'spectralpointwise1d_opt': 'spectralpointwise1d_opt(d, d, d, d, dout.data(), h, w, cycles)',
@@ -40,32 +28,11 @@ OPTIMIZED = {'spectralpointwise1d_opt': 'spectralpointwise1d_opt(d, d, d, d, dou
 # Register offsets for the fake kernels, in the layout Vitis HLS gives them.
 
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def compile_and_run(tmp, kernel, body, inputs, out_dtype, out_shape):
-    """Compile KERNEL's folder with a main() around body; run it on inputs; its output."""
-    source_dir = kernel_dir(kernel)
-    source = tmp / f'run_{kernel}.cpp'
-    source.write_text(body)
-    exe = tmp / f'run_{kernel}.exe'
-    subprocess.run([CXX, '-std=c++14', '-O2', f'-I{source_dir}', f'-I{ROOT / "src/common"}',
-                    str(source), str(source_dir / f'{kernel}.cpp'), '-o', str(exe)], check=True)
-    out = tmp / f'out_{kernel}.bin'
-    subprocess.run([str(exe), str(inputs), str(out), *[str(v) for v in out_shape[:-1]]], check=True)
-    return np.fromfile(out, dtype=out_dtype).reshape(out_shape)
-
-
 @unittest.skipUnless(np is not None, 'needs numpy')
 class SpectralPointwise1DTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not (ROOT / 'aegean').is_dir():
-            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
+        skip_without_aegean()
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('spectralpointwise1d_model', ROOT / 'tools/spectralpointwise1d_model.py')
         cls.raw, cls.labels = cls.model.aegean_pixels()
@@ -119,7 +86,7 @@ class SpectralPointwise1DTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             pixels.tofile(tmp / 'in.bin')
-            cpp = compile_and_run(tmp, MODEL, f"""
+            cpp = run_kernel(tmp, MODEL, f"""
 #include "{MODEL}.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -149,7 +116,7 @@ int main(int, char** argv) {{
             for kernel, call in OPTIMIZED.items():
                 for h, w in ((3, 3425), (1, 1001)):
                     with self.subTest(kernel=kernel, image=(h, w)):
-                        cpp = compile_and_run(tmp, kernel, f"""
+                        cpp = run_kernel(tmp, kernel, f"""
 #include "{kernel}.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -169,15 +136,6 @@ int main(int, char** argv) {{
 """, tmp / 'in.bin', np.int32, (h, w, 4))
                         np.testing.assert_array_equal(cpp.reshape(-1, 4), want[:h * w])
 
-    def test_petalinux_kernels_have_the_opu_program(self):
-        """A zedboard or zynq7030 build packs software/opu/KERNEL/ (main.py): the generic classify.c."""
-        for kernel in ('spectralpointwise1d_opt_zynq7020', 'spectralpointwise1d_opt_zynq7030'):
-            with self.subTest(kernel=kernel):
-                include = ROOT / 'software/opu' / kernel / 'include.txt'
-                files = [line.split('#')[0].strip() for line in include.read_text().splitlines()]
-                files = [f for f in files if f]
-                self.assertEqual(files, ['software/opu/justounetsimple_opt/classify.c'])
-                self.assertTrue((ROOT / files[0]).is_file())
 
 if __name__ == '__main__':
     unittest.main()

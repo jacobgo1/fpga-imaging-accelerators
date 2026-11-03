@@ -1,6 +1,6 @@
 """The two board notebooks every model shares, end to end, for every model in tools/models.py.
 
-software/pynq/shared/classify_golden.ipynb runs the golden kernels, classify.ipynb the
+software/pynq/classify_golden.ipynb runs the golden kernels, classify.ipynb the
 optimized ones. Their code cells run against a fake `pynq` whose kernel computes with the
 PC's models (tools/models.py: golden_forward, fixed_scores), on an image folder made by
 tools/image.py prepare, with the kernel.json main.py packs. The notebooks check the board
@@ -10,7 +10,6 @@ and the stitching -- not PYNQ or the board.
 """
 import contextlib
 import gc
-import importlib.util
 import io
 import json
 import os
@@ -22,27 +21,20 @@ import types
 import unittest
 import zipfile
 
-from kernels import kernel_dir, kernel_dirs
+from helpers import ROOT, kernel_dir, kernel_dirs, load_module
+
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
-SHARED = ROOT / 'software/pynq/shared'
+SHARED = ROOT / 'software/pynq'
 GOLDEN_REGS = {'AP_CTRL': 0x00, 'DIN_DATA': 0x10, 'DOUT_DATA': 0x1c, 'N_DATA': 0x28}
 OPT_REGS = {'AP_CTRL': 0x00, 'DIN0_DATA': 0x10, 'DIN1_DATA': 0x1c, 'DIN2_DATA': 0x28, 'DIN3_DATA': 0x34,
             'DOUT_DATA': 0x40, 'HEIGHT_DATA': 0x4c, 'WIDTH_DATA': 0x54, 'CYCLES_DATA': 0x5c}
 CYCLES_PER_PIXEL = 7    # what the fake optimized kernel's counter says
 MHZ = 200.0
-
-
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def golden_has_n(model):

@@ -1,6 +1,5 @@
 """main.py without AMD tools: finding a kernel's files, run folders, settings, the report."""
 import contextlib
-import importlib.util
 import io
 import os
 import pathlib
@@ -10,15 +9,14 @@ import sys
 import tempfile
 import unittest
 
+from helpers import ROOT, load_module
+
 try:
     import tkinter
 except ImportError:
     tkinter = None
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('flow', ROOT / 'main.py')
-flow = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(flow)
+flow = load_module('flow', ROOT / 'main.py')
 
 
 def cli(*args):

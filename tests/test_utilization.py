@@ -4,7 +4,8 @@ import sys
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+from helpers import ROOT
+
 sys.path.insert(0, str(ROOT / 'tools'))
 import utilization  # noqa: E402
 

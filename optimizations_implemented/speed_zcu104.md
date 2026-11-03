@@ -1,7 +1,7 @@
 # Measured speed on the ZCU104
 
 Every optimized ZCU104 kernel on the board, one 598 × 1092 capture (653 016 pixels, 665 patches
-of 32 × 32 for the 2D models), one start for the whole image, from `software/pynq/shared/classify.ipynb`.
+of 32 × 32 for the 2D models), one start for the whole image, from `software/pynq/classify.ipynb`.
 The design of each kernel is in its model's file; this one only collects the runs, so the
 clocks can be compared.
 
@@ -80,7 +80,7 @@ What the runs show:
 
 ## Golden baselines
 
-The plain-loop float kernels (int8 weights), from `software/pynq/shared/classify_golden.ipynb`:
+The plain-loop float kernels (int8 weights), from `software/pynq/classify_golden.ipynb`:
 the ARM drops the bands, z-scores and cuts the patches; the FPGA computes the network
 (justounetsimple and waveletcnn: one patch a start; sp_unet: the whole image or a row of 35
 patches a start; the 1D kernels: the whole image or a band of 128 rows a start). They show what
