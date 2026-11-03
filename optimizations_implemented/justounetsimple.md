@@ -45,7 +45,7 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
 | conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
-| ReLU fused with pooling / upsampling | ✓ | ✓ | ✓ |
+| ReLU fused with pooling / upsampling; else one process each (`relu_act`, `max_pool`, `upsample`) | separate (on trial, 2026-11-03) | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | FIFO depths from a cycle model (`s_a` 256, `s_b` 32, `s_c` 64) | ✓ | not checked | not checked |
 | Memory bank chosen by a constant index (avoids II 5 in the patch buffer) | ✓ | ✓ | ✓ |
@@ -64,7 +64,7 @@ slowest stage sets the pace, T cycles per patch.
 | patch_buffer | 4 096 | 10 240 | 14 336 |
 | conv1 | **4 129** | **10 273** | 14 369 |
 | conv2 / conv3 / conv4 | 3 276 / 1 638 / 3 171 | 9 216 each | 9 216 each |
-| pool, pool+up, up, store | ≤ 1 280 | small | small |
+| ReLU, pool, upsample, store (ZCU104: one process each) | ≤ 1 280 | small | small |
 | **T** | **4 129** (conv1) | **10 273** (conv1) | **15 360** (readers) |
 | DSPs | ~1 112 (conv1 864, conv2-4 216, z-score 32) | 378 of 400 (conv1 324, conv2-4 54) | 216 of 220 (conv1) |
 
@@ -177,3 +177,11 @@ Routed, kernel alone (without the interconnects); by process in
   ahead; the readers' code reads like a plain loop. Each row now waits for DDR's first word, 8 rows a
   patch a port; estimate (not measured) +5-15 %, ~19-20.5 ms against 17.87. The 7030 and 7020 keep
   `read_patch_rows`. Not yet built: compare cycles a patch with the 2026-11-01 run (6 718 at 250 MHz).
+- 2026-11-03: the ZCU104 measured 20 ms with `read_patch_rows_simple` (17.87 ms with the read-ahead):
+  kept, for the simpler readers.
+- 2026-11-03: ZCU104 on trial with ReLU, max pool and upsample as one process each (`relu_act`,
+  `max_pool`, `upsample`; the last two new in `src/optimized/shared/`) instead of `relu_pool`,
+  `relu_pool_up` and `relu_up`; the chain reads like the model. The same answers bit for bit. Each
+  process runs a pixel a cycle, far under T, so the cycles a patch should not change; the cost is 4
+  more processes and FIFOs (16 deep, SRL), an estimated 150-500 LUTs each. Not yet built: compare
+  cycles a patch and the csynth LUTs / FFs with the fused version.

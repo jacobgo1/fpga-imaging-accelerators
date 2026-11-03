@@ -5,9 +5,9 @@
 #include "../../../optimized/shared/patch_buffer.hpp"
 #include "../../../optimized/shared/conv3x3_2mul.hpp"
 #include "../../../optimized/shared/conv3x3_all_in.hpp"
-#include "../../../optimized/shared/relu_pool.hpp"
-#include "../../../optimized/shared/relu_pool_up.hpp"
-#include "../../../optimized/shared/relu_up.hpp"
+#include "../../../optimized/shared/relu_act.hpp"
+#include "../../../optimized/shared/max_pool.hpp"
+#include "../../../optimized/shared/upsample.hpp"
 #include "../../../optimized/shared/store_scores.hpp"
 #include "../../../optimized/shared/count_cycles.hpp"
 #include "../../../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
@@ -63,10 +63,14 @@ void justounetsimple_opt(const cube_word_t* din0, const cube_word_t* din1,
     hls::stream<cube_word_t> cube_words[READ_PORTS];
     hls::stream<vec_t<act8_t, CONV1_BANDS_PER_CYCLE>> zscores("zscores");
     hls::stream<vec_t<sum_t, BASE_CHANNELS>> conv1_sums("conv1_sums");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv1_act("conv1_act");
     hls::stream<vec_t<act_t, BASE_CHANNELS>> conv1_pooled("conv1_pooled");
     hls::stream<vec_t<sum_t, 2 * BASE_CHANNELS>> conv2_sums("conv2_sums");
-    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_pooled_upsampled("conv2_pooled_upsampled");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_act("conv2_act");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_pooled("conv2_pooled");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_upsampled("conv2_upsampled");
     hls::stream<vec_t<sum_t, BASE_CHANNELS>> conv3_sums("conv3_sums");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv3_act("conv3_act");
     hls::stream<vec_t<act_t, BASE_CHANNELS>> conv3_upsampled("conv3_upsampled");
     hls::stream<vec_t<sum_t, CLASSES>> conv4_sums("conv4_sums");
     hls::stream<bool> all_written("all_written");
@@ -75,7 +79,17 @@ void justounetsimple_opt(const cube_word_t* din0, const cube_word_t* din1,
     #pragma HLS STREAM variable=cube_words             depth=64
     #pragma HLS STREAM variable=zscores                depth=64
     #pragma HLS STREAM variable=conv1_pooled           depth=256
-    #pragma HLS STREAM variable=conv2_pooled_upsampled depth=32
+    #pragma HLS STREAM variable=conv2_upsampled        depth=32
+    // Between the ReLU, pool and upsample processes: slack, so a short wait in
+    // one does not freeze the next (see CLAUDE.md, deep FIFOs).
+    #pragma HLS STREAM variable=conv1_act              depth=16
+    #pragma HLS STREAM variable=conv2_act              depth=16
+    #pragma HLS STREAM variable=conv2_pooled           depth=16
+    #pragma HLS STREAM variable=conv3_act              depth=16
+    #pragma HLS BIND_STORAGE variable=conv1_act        type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=conv2_act        type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=conv2_pooled     type=fifo impl=srl
+    #pragma HLS BIND_STORAGE variable=conv3_act        type=fifo impl=srl
     #pragma HLS STREAM variable=conv3_upsampled        depth=64
     #pragma HLS STREAM variable=conv4_sums             depth=32
 
@@ -94,22 +108,23 @@ void justounetsimple_opt(const cube_word_t* din0, const cube_word_t* din1,
     conv3x3_2mul<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
                  CONV1_BANDS_PER_CYCLE, CONV1_BIAS_SHIFT, weights::conv1_weight, weights::conv1_bias,
                  DSP_PACK_SHIFT, DSP_PACK_GROUP>(zscores, conv1_sums, height, width);
-    relu_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, CONV1_OUTPUT_SHIFT>(
-        conv1_sums, conv1_pooled, height, width);
+    relu_act<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE, CONV1_OUTPUT_SHIFT>(conv1_sums, conv1_act, height, width);
+    max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
     // conv2: 6 -> 12 at 16 x 16.
     conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, BASE_CHANNELS, 2 * BASE_CHANNELS, CONV2_BIAS_SHIFT,
                    weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS>(
         conv1_pooled, conv2_sums, height, width);
-    relu_pool_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, CONV2_OUTPUT_SHIFT>(
-        conv2_sums, conv2_pooled_upsampled, height, width);
+    relu_act<PATCH_SIZE, PATCH_SIZE, HALF_PATCH * HALF_PATCH, CONV2_OUTPUT_SHIFT>(conv2_sums, conv2_act, height, width);
+    max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv2_act, conv2_pooled, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH / 2, HALF_PATCH / 2>(conv2_pooled, conv2_upsampled, height, width);
 
     // conv3: 12 -> 6 at 16 x 16.
     conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 2 * BASE_CHANNELS, BASE_CHANNELS, CONV3_BIAS_SHIFT,
                    weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS>(
-        conv2_pooled_upsampled, conv3_sums, height, width);
-    relu_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, CONV3_OUTPUT_SHIFT>(
-        conv3_sums, conv3_upsampled, height, width);
+        conv2_upsampled, conv3_sums, height, width);
+    relu_act<PATCH_SIZE, PATCH_SIZE, HALF_PATCH * HALF_PATCH, CONV3_OUTPUT_SHIFT>(conv3_sums, conv3_act, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv3_act, conv3_upsampled, height, width);
 
     // conv4: 6 -> 3 at 32 x 32, the scores.
     conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, BASE_CHANNELS, CLASSES, CONV4_BIAS_SHIFT,
