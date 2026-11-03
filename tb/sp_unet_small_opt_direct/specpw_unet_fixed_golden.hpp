@@ -2,10 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include "../../src/golden/specpw_unet_golden.hpp"   // the sizes
-#include "../../src/golden/maxpool_golden.hpp"
-#include "../../src/golden/upsample_golden.hpp"
-#include "../../src/golden/concat_golden.hpp"
+#include "../../src/models/SpecPW-UNet/specpw_unet.hpp"   // the sizes and layers
 
 // The quantized SpecPW-UNet in integers, as plain loops: what an optimized
 // kernel must match bit for bit, and the same as classify_fixed in
@@ -129,19 +126,19 @@ void specpw_unet_fixed_golden(const int32_t din[HEIGHT][WIDTH][BANDS],
 
     conv2d_same_fixed_golden<HEIGHT, WIDTH, S3, D1, 3, true>(stem3, params.double1_conv1, act, act, act_max, double1_first);
     conv2d_same_fixed_golden<HEIGHT, WIDTH, D1, D1, 3, true>(double1_first, params.double1_conv2, act, act, act_max, skip);
-    maxpool_golden<int32_t, HEIGHT, WIDTH, D1>(skip, pooled1);
+    golden::maxpool2d<HEIGHT, WIDTH, D1>(skip, pooled1);
     conv2d_same_fixed_golden<HALF_H, HALF_W, D1, D2, 3, true>(pooled1, params.double2_conv1, act, act, act_max, double2_first);
     conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(double2_first, params.double2_conv2, act, act, act_max, double2);
-    maxpool_golden<int32_t, HALF_H, HALF_W, D2>(double2, pooled2);
+    golden::maxpool2d<HALF_H, HALF_W, D2>(double2, pooled2);
 
-    upsample_golden<int32_t, QUARTER_H, QUARTER_W, D2>(pooled2, up1_input);
+    golden::upsample2d<QUARTER_H, QUARTER_W, D2>(pooled2, up1_input);
     conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(up1_input, params.up1, act, act, act_max, up1);
     conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D3, 3, true>(up1, params.double3_conv1, act, act, act_max, double3_first);
     conv2d_same_fixed_golden<HALF_H, HALF_W, D3, D3, 3, true>(double3_first, params.double3_conv2, act, act, act_max, double3);
-    upsample_golden<int32_t, HALF_H, HALF_W, D3>(double3, up2_input);
+    golden::upsample2d<HALF_H, HALF_W, D3>(double3, up2_input);
     conv2d_same_fixed_golden<HEIGHT, WIDTH, D3, D3, 3, true>(up2_input, params.up2, act, act, act_max, up2);
 
-    concat_golden<int32_t, HEIGHT, WIDTH, D3, D1>(up2, skip, joined);
+    golden::concat<HEIGHT, WIDTH, D3, D1>(up2, skip, joined);
     conv2d_same_fixed_golden<HEIGHT, WIDTH, D3 + D1, D4, 3, true>(joined, params.double4_conv1, act, act, act_max, double4_first);
     conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, D4, 3, true>(double4_first, params.double4_conv2, act, act, act_max, double4);
     conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, CLASSES, 1, false>(double4, params.final_conv, act, out_frac, act_max, dout);

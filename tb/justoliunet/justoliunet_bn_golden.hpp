@@ -1,11 +1,6 @@
 #pragma once
 
-#include "../golden/conv1d_golden.hpp"
-#include "../golden/batchnorm1d_golden.hpp"
-#include "../../src/golden/relu1d_golden.hpp"
-#include "../../src/golden/maxpool1d_golden.hpp"
-#include "../../src/golden/flatten_golden.hpp"
-#include "../golden/dense_golden.hpp"
+#include "../golden/batchnorm.hpp"
 
 // 1D-Justo-LiuNet as trained, in float, with a BatchNorm after conv1: the
 // testbenches' reference for the golden kernel justoliunet. With an identity BatchNorm
@@ -28,29 +23,26 @@ void justoliunet_bn_golden(
     constexpr int CONV3 = POOL2 - KERNEL + 1, POOL3 = CONV3 / 2;
     constexpr int CONV4 = POOL3 - KERNEL + 1, POOL4 = CONV4 / 2;
     constexpr int FLAT = 4 * BASE * POOL4;
+    using golden::activation;
 
-    data_t conv1[CONV1][BASE], normalized1[CONV1][BASE], relu1[CONV1][BASE], pool1[POOL1][BASE];
-    conv1d_golden<data_t, BANDS, 1, BASE, KERNEL>(din, conv1_weight, conv1_bias, conv1);
-    batchnorm1d_golden<data_t, CONV1, BASE>(conv1, bn_weight, bn_bias, bn_mean, bn_var, bn_eps, normalized1);
-    relu1d_golden<data_t, CONV1, BASE>(normalized1, relu1);
-    maxpool1d_golden<data_t, CONV1, BASE, 2>(relu1, pool1);
+    data_t relu1[CONV1][BASE], pool1[POOL1][BASE];
+    golden::conv1d<BANDS, 1, BASE, KERNEL>(din, conv1_weight, conv1_bias, relu1);
+    golden::batchnorm<BASE, activation::relu>(&relu1[0][0], CONV1, bn_weight, bn_bias, bn_mean, bn_var, bn_eps);
+    golden::maxpool1d<CONV1, BASE, 2>(relu1, pool1);
 
-    data_t conv2[CONV2][2 * BASE], relu2[CONV2][2 * BASE], pool2[POOL2][2 * BASE];
-    conv1d_golden<data_t, POOL1, BASE, 2 * BASE, KERNEL>(pool1, conv2_weight, conv2_bias, conv2);
-    relu1d_golden<data_t, CONV2, 2 * BASE>(conv2, relu2);
-    maxpool1d_golden<data_t, CONV2, 2 * BASE, 2>(relu2, pool2);
+    data_t relu2[CONV2][2 * BASE], pool2[POOL2][2 * BASE];
+    golden::conv1d<POOL1, BASE, 2 * BASE, KERNEL, activation::relu>(pool1, conv2_weight, conv2_bias, relu2);
+    golden::maxpool1d<CONV2, 2 * BASE, 2>(relu2, pool2);
 
-    data_t conv3[CONV3][3 * BASE], relu3[CONV3][3 * BASE], pool3[POOL3][3 * BASE];
-    conv1d_golden<data_t, POOL2, 2 * BASE, 3 * BASE, KERNEL>(pool2, conv3_weight, conv3_bias, conv3);
-    relu1d_golden<data_t, CONV3, 3 * BASE>(conv3, relu3);
-    maxpool1d_golden<data_t, CONV3, 3 * BASE, 2>(relu3, pool3);
+    data_t relu3[CONV3][3 * BASE], pool3[POOL3][3 * BASE];
+    golden::conv1d<POOL2, 2 * BASE, 3 * BASE, KERNEL, activation::relu>(pool2, conv3_weight, conv3_bias, relu3);
+    golden::maxpool1d<CONV3, 3 * BASE, 2>(relu3, pool3);
 
-    data_t conv4[CONV4][4 * BASE], relu4[CONV4][4 * BASE], pool4[POOL4][4 * BASE];
-    conv1d_golden<data_t, POOL3, 3 * BASE, 4 * BASE, KERNEL>(pool3, conv4_weight, conv4_bias, conv4);
-    relu1d_golden<data_t, CONV4, 4 * BASE>(conv4, relu4);
-    maxpool1d_golden<data_t, CONV4, 4 * BASE, 2>(relu4, pool4);
+    data_t relu4[CONV4][4 * BASE], pool4[POOL4][4 * BASE];
+    golden::conv1d<POOL3, 3 * BASE, 4 * BASE, KERNEL, activation::relu>(pool3, conv4_weight, conv4_bias, relu4);
+    golden::maxpool1d<CONV4, 4 * BASE, 2>(relu4, pool4);
 
     data_t flat[FLAT];
-    flatten_golden<data_t, POOL4, 4 * BASE>(pool4, flat);
-    dense_golden<data_t, FLAT, CLASSES>(flat, dense_weight, dense_bias, dout);
+    golden::flatten<POOL4, 4 * BASE>(pool4, flat);
+    golden::dense<FLAT, CLASSES>(flat, dense_weight, dense_bias, dout);
 }

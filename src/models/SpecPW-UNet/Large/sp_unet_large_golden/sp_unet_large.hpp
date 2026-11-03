@@ -1,7 +1,7 @@
 #ifndef SP_UNET_LARGE_HLS_HPP
 #define SP_UNET_LARGE_HLS_HPP
 
-#include "../../specpw_unet_quant_golden.hpp"
+#include "../../specpw_unet.hpp"
 
 // Golden SpecPW-UNet, large (stem 32-16-16, blocks 32 / 64 / 32 / 16): n z-scored 32 x 32 patches a start, 3 scores
 // per pixel out. Plain float loops, with the int8 weights compiled in.

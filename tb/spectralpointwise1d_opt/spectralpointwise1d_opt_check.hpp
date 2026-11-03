@@ -75,16 +75,17 @@ static void reference_fixed(const uint16_t px[CUBE_BANDS], int32_t out[4]) {
 
 // The float golden network on the float z-scores of the same pixel.
 static void reference_float(const uint16_t px[CUBE_BANDS], float out[3]) {
-    float x[110];
+    float x[1][1][110], scores[1][1][3];
     for (int k = 0; k < 110; k++) {
         // mean and std back from A and B: A = 2^(IN_FRAC+PREP_FRAC) / std, B = -mean * A + half
         const double a = jf::A[k], b = (double)jf::B[k] - std::ldexp(1.0, jf::PREP_FRAC - 1);
-        x[k] = (float)((px[8 + k] + b / a) * a / std::ldexp(1.0, jf::IN_FRAC + jf::PREP_FRAC));
+        x[0][0][k] = (float)((px[8 + k] + b / a) * a / std::ldexp(1.0, jf::IN_FRAC + jf::PREP_FRAC));
     }
     spectralpointwise1d_golden<float, int8_t, 110, 24, 12, 3>(
-        x, q::convsp1_weight, frac_to_scale(q::convsp1_weight_frac), q::convsp1_bias, frac_to_scale(q::convsp1_bias_frac),
-        q::convsp2_weight, frac_to_scale(q::convsp2_weight_frac), q::convsp2_bias, frac_to_scale(q::convsp2_bias_frac),
-        q::convsp3_weight, frac_to_scale(q::convsp3_weight_frac), q::convsp3_bias, frac_to_scale(q::convsp3_bias_frac), out);
+        x, q::convsp1_weight, golden::frac_to_scale(q::convsp1_weight_frac), q::convsp1_bias, golden::frac_to_scale(q::convsp1_bias_frac),
+        q::convsp2_weight, golden::frac_to_scale(q::convsp2_weight_frac), q::convsp2_bias, golden::frac_to_scale(q::convsp2_bias_frac),
+        q::convsp3_weight, golden::frac_to_scale(q::convsp3_weight_frac), q::convsp3_bias, golden::frac_to_scale(q::convsp3_bias_frac), scores);
+    for (int c = 0; c < 3; c++) out[c] = scores[0][0][c];
 }
 
 static int compare(int height, int width) {

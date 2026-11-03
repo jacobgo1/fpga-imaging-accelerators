@@ -3,8 +3,8 @@
 The numpy model (tools/justoliunet_model.py) is checked against the old PC reference of
 the aegean pixels and against the labels; the C++ kernels, compiled with plain g++,
 against the numpy model on the same real pixels. The kernels' testbenches compare them
-with a float network built from the same golden modules (relu1d, maxpool1d, flatten);
-this test is the independent check of those modules. The board notebook, shared by every
+with a float network built from the same golden layers (src/golden/layers.hpp);
+this test is the independent check of those layers. The board notebook, shared by every
 model, is tests/test_notebooks.py's.
 """
 import contextlib

@@ -115,7 +115,7 @@ static uint16_t cube[IMG_H][IMG_W][CUBE_BANDS];
 static cube_word_t din[IMG_H * IMG_W * CUBE_BANDS / BANDS_PER_WORD];
 static score_word_t dout[IMG_H * IMG_W];
 static int32_t exact[IMG_H][IMG_W][CLASSES];
-static float golden[IMG_H][IMG_W][CLASSES];
+static float golden_scores[IMG_H][IMG_W][CLASSES];
 
 int main()
 {
@@ -162,7 +162,7 @@ int main()
                 for (int x = 0; x < PATCH_SIZE && x0 + x < IMG_W; x++)
                     for (int o = 0; o < CLASSES; o++) {
                         exact[y0 + y][x0 + x][o] = ps[y][x][o];
-                        golden[y0 + y][x0 + x][o] = pf[y][x][o];
+                        golden_scores[y0 + y][x0 + x][o] = pf[y][x][o];
                     }
         }
 
@@ -187,7 +187,7 @@ int main()
                 }
             }
             for (int o = 0; o < CLASSES; o++) {
-                const float diff = std::fabs(a[o] * out_scale - golden[y][x][o]);
+                const float diff = std::fabs(a[o] * out_scale - golden_scores[y][x][o]);
                 if (diff > worst) worst = diff;
                 if (diff > SCORE_TOLERANCE) far++;
             }

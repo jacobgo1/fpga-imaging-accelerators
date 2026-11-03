@@ -4,7 +4,7 @@ The trained model, in float:
 load_weights   weights/fp32/sp_unet_SIZE/*.pt -> {state_dict name: float32 array}
 forward        BatchNorm as trained (not folded): a preprocessed (H, W, 110) image in,
                (H, W, 3) scores out. H and W must be divisible by 4. The reference
-               src/golden/specpw_unet_golden.hpp is checked against.
+               tb/sp_unet_small/specpw_unet_golden.hpp is checked against.
 flat_weights   every tensor in state_dict order as one float32 vector: the layout of
                specpw_unet_params_golden, so a testbench can read it in one go.
 

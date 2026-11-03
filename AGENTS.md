@@ -38,8 +38,9 @@ fpga.sh              short commands for the server (Tab completes kernels, runs,
 src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cpp, named
                      after the kernel), the golden kernel holding the quantized network;
                      tb/K/ its self-checking testbench, with the reference it checks against
-                     (tb/golden/: float layers only those references use)
-src/golden/          plain-loop layers the golden kernels are built from (what is computed)
+                     (tb/golden/batchnorm.hpp: the BatchNorm only those references have)
+src/golden/          layers.hpp: the plain-loop layers the golden kernels are built from (what is
+                     computed), one template each for float and quantized weights
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file: shared/ works on every board; zcu104/,
                      zynq7020/ and zynq7030/ hold each board's version of the modules that
@@ -58,7 +59,7 @@ optimizations_implemented/  one .md per model: its optimizations, stages, latenc
 ```
 
 Kernels now: `justoliunet` and `justoliunet_bn` (golden baselines of the 1D
-per-pixel networks, from src/golden/'s 1D modules; numpy model
+per-pixel networks, from src/golden/layers.hpp; numpy model
 tools/justoliunet_model.py),
 `justoliunet_opt` and `justoliunet_bn_opt` (fast, ZCU104: the raw cube in, a pixel
 every 18 cycles, integer fixed point, the DSPs on conv2 and conv3) and their ZedBoard
@@ -78,7 +79,7 @@ read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020
 answers, they share the testbench's checks),
 `sp_unet_small`, `sp_unet_medium`, `sp_unet_large` (golden baselines of SpecPW-UNet, the
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
-from src/golden/'s spectral stem, conv block, up block and concat modules; numpy model and the bit-exact integer model
+from src/golden/layers.hpp, the network in src/models/SpecPW-UNet/specpw_unet.hpp; numpy model and the bit-exact integer model
 classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
 tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
 `_large_opt_direct` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; direct 3x3 convs

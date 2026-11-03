@@ -87,11 +87,11 @@ static void reference_float(const uint16_t px[CUBE_BANDS], float out[3]) {
         x[k][0] = (float)((px[8 + k] + b / a) * a / std::ldexp(1.0, jf::IN_FRAC + jf::PREP_FRAC));
     }
     justoliunet_golden<float, int8_t, 110, 6, 3, KERNEL_SIZE>(
-        x, q::conv1_weight, frac_to_scale(q::conv1_weight_frac), q::conv1_bias, frac_to_scale(q::conv1_bias_frac),
-        q::conv2_weight, frac_to_scale(q::conv2_weight_frac), q::conv2_bias, frac_to_scale(q::conv2_bias_frac),
-        q::conv3_weight, frac_to_scale(q::conv3_weight_frac), q::conv3_bias, frac_to_scale(q::conv3_bias_frac),
-        q::conv4_weight, frac_to_scale(q::conv4_weight_frac), q::conv4_bias, frac_to_scale(q::conv4_bias_frac),
-        q::fc_weight, frac_to_scale(q::fc_weight_frac), q::fc_bias, frac_to_scale(q::fc_bias_frac), out);
+        x, q::conv1_weight, golden::frac_to_scale(q::conv1_weight_frac), q::conv1_bias, golden::frac_to_scale(q::conv1_bias_frac),
+        q::conv2_weight, golden::frac_to_scale(q::conv2_weight_frac), q::conv2_bias, golden::frac_to_scale(q::conv2_bias_frac),
+        q::conv3_weight, golden::frac_to_scale(q::conv3_weight_frac), q::conv3_bias, golden::frac_to_scale(q::conv3_bias_frac),
+        q::conv4_weight, golden::frac_to_scale(q::conv4_weight_frac), q::conv4_bias, golden::frac_to_scale(q::conv4_bias_frac),
+        q::fc_weight, golden::frac_to_scale(q::fc_weight_frac), q::fc_bias, golden::frac_to_scale(q::fc_bias_frac), out);
 }
 
 static int compare(int height, int width) {

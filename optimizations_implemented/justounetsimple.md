@@ -177,6 +177,7 @@ Routed, kernel alone (without the interconnects); by process in
   ahead; the readers' code reads like a plain loop. Each row now waits for DDR's first word, 8 rows a
   patch a port; estimate (not measured) +5-15 %, ~19-20.5 ms against 17.87. The 7030 and 7020 keep
   `read_patch_rows`. Not yet built: compare cycles a patch with the 2026-11-01 run (6 718 at 250 MHz).
+<<<<<<< Updated upstream
 - 2026-11-03: the ZCU104 measured 20 ms with `read_patch_rows_simple` (17.87 ms with the read-ahead):
   kept, for the simpler readers.
 - 2026-11-03: ZCU104 on trial with ReLU, max pool and upsample as one process each (`relu_act`,
@@ -185,3 +186,8 @@ Routed, kernel alone (without the interconnects); by process in
   process runs a pixel a cycle, far under T, so the cycles a patch should not change; the cost is 4
   more processes and FIFOs (16 deep, SRL), an estimated 150-500 LUTs each. Not yet built: compare
   cycles a patch and the csynth LUTs / FFs with the fused version.
+=======
+- 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
+  (one template each for float and quantized weights); the golden kernel's ReLU is now done in its
+  conv, one map buffer fewer a layer, the same answers. Golden kernel not rebuilt yet.
+>>>>>>> Stashed changes

@@ -67,7 +67,7 @@ static uint16_t cube[IMG_H][IMG_W][CUBE_BANDS];
 static cube_word_t din[IMG_H * IMG_W * CUBE_BANDS / BANDS_PER_WORD];  // the same cube, as the kernel's words
 static score_word_t dout[IMG_H * IMG_W];
 static int32_t exact[IMG_H][IMG_W][CLASSES];
-static float golden[IMG_H][IMG_W][CLASSES];
+static float golden_scores[IMG_H][IMG_W][CLASSES];
 
 static int check_kernel()
 {
@@ -110,7 +110,7 @@ static int check_kernel()
                 for (int x = 0; x < PATCH_SIZE && x0 + x < IMG_W; x++)
                     for (int o = 0; o < CLASSES; o++) {
                         exact[y0 + y][x0 + x][o] = ps[y][x][o];
-                        golden[y0 + y][x0 + x][o] = pf[y][x][o];
+                        golden_scores[y0 + y][x0 + x][o] = pf[y][x][o];
                     }
         }
 
@@ -126,7 +126,7 @@ static int check_kernel()
             int best = 0, golden_best = 0;
             for (int o = 1; o < CLASSES; o++) {
                 if (e[o] > e[best]) best = o;
-                if (golden[y][x][o] > golden[y][x][golden_best]) golden_best = o;
+                if (golden_scores[y][x][o] > golden_scores[y][x][golden_best]) golden_best = o;
             }
             for (int o = 0; o < LANES; o++) {
                 const int32_t want = o < CLASSES ? e[o] : best;
@@ -137,7 +137,7 @@ static int check_kernel()
                 }
             }
             for (int o = 0; o < CLASSES; o++) {
-                const float diff = std::fabs(a[o] * out_scale - golden[y][x][o]);
+                const float diff = std::fabs(a[o] * out_scale - golden_scores[y][x][o]);
                 if (diff > worst) worst = diff;
                 if (diff > SCORE_TOLERANCE) far++;
             }

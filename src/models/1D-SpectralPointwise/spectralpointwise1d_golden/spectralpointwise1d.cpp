@@ -5,12 +5,12 @@ namespace spectralpointwise1d_int8 { using int8_t = float; }
 
 namespace weights = spectralpointwise1d_int8;
 
-constexpr float CONVSP1_WEIGHT_SCALE = frac_to_scale(weights::convsp1_weight_frac);
-constexpr float CONVSP2_WEIGHT_SCALE = frac_to_scale(weights::convsp2_weight_frac);
-constexpr float CONVSP3_WEIGHT_SCALE = frac_to_scale(weights::convsp3_weight_frac);
-constexpr float CONVSP1_BIAS_SCALE = frac_to_scale(weights::convsp1_bias_frac);
-constexpr float CONVSP2_BIAS_SCALE = frac_to_scale(weights::convsp2_bias_frac);
-constexpr float CONVSP3_BIAS_SCALE = frac_to_scale(weights::convsp3_bias_frac);
+constexpr float CONVSP1_WEIGHT_SCALE = golden::frac_to_scale(weights::convsp1_weight_frac);
+constexpr float CONVSP2_WEIGHT_SCALE = golden::frac_to_scale(weights::convsp2_weight_frac);
+constexpr float CONVSP3_WEIGHT_SCALE = golden::frac_to_scale(weights::convsp3_weight_frac);
+constexpr float CONVSP1_BIAS_SCALE = golden::frac_to_scale(weights::convsp1_bias_frac);
+constexpr float CONVSP2_BIAS_SCALE = golden::frac_to_scale(weights::convsp2_bias_frac);
+constexpr float CONVSP3_BIAS_SCALE = golden::frac_to_scale(weights::convsp3_bias_frac);
 
 void spectralpointwise1d(const data_t *din, data_t *dout, int n)
 {
@@ -25,11 +25,11 @@ void spectralpointwise1d(const data_t *din, data_t *dout, int n)
     pixels: for (int p = 0; p < n; p++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=1024
         // Read the spectrum once, not once per multiply.
-        data_t spectrum[SPW_BANDS];
+        data_t spectrum[1][1][SPW_BANDS];
         read: for (int band = 0; band < SPW_BANDS; band++)
-            spectrum[band] = din[p * SPW_BANDS + band];
+            spectrum[0][0][band] = din[p * SPW_BANDS + band];
 
-        data_t scores[SPW_CLASSES];
+        data_t scores[1][1][SPW_CLASSES];
         spectralpointwise1d_golden<data_t, float, SPW_BANDS, SPW_CONV1_CHANNELS, SPW_CONV2_CHANNELS, SPW_CLASSES>(
             spectrum,
             weights::convsp1_weight, CONVSP1_WEIGHT_SCALE, weights::convsp1_bias, CONVSP1_BIAS_SCALE,
@@ -38,6 +38,6 @@ void spectralpointwise1d(const data_t *din, data_t *dout, int n)
             scores);
 
         write: for (int c = 0; c < SPW_CLASSES; c++)
-            dout[p * SPW_CLASSES + c] = scores[c];
+            dout[p * SPW_CLASSES + c] = scores[0][0][c];
     }
 }

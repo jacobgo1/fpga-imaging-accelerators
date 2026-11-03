@@ -99,7 +99,7 @@ main.py            the build: python3 main.py STAGE --kernel KERNEL
 fpga.sh            short commands for the lab server
 config/            project.json, optional HLS directives per kernel
 src/models/        synthesizable C++: one folder per network, one per kernel in it
-src/golden/        plain-loop layers the golden kernels are built from: what is computed
+src/golden/        layers.hpp: the plain-loop layers the golden kernels are built from
 src/optimized/     streaming, fixed-point building blocks: how it is computed fast;
                    all in shared/; zcu104/, zynq7020/, zynq7030/: chip.hpp, each chip's facts
 src/common/        C++ shared between kernels (hls::stream, hls::vector, hls::burst_maxi for plain g++)

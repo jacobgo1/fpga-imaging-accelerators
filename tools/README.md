@@ -53,7 +53,7 @@ waveletcnn_model.py       numpy model of the waveletcnn kernels: float forward p
                           DWT + 1x1 projection + 3x3 conv_block + 1x1 seg_head), and the
                           bit-exact integer version of waveletcnn_opt (classify_fixed).
 specpw_unet_model.py      numpy model of SpecPW-UNet (sp_unet_small/medium/large): the trained
-                          model in float (the reference of src/golden/specpw_unet_golden.hpp),
+                          model in float (the reference of tb/sp_unet_small/specpw_unet_golden.hpp),
                           the int8-weight network the golden kernels run (forward_patch,
                           classify), and classify_fixed, the integer arithmetic of an optimized
                           kernel bit for bit (also tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp).

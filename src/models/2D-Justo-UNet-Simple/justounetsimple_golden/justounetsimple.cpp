@@ -5,14 +5,14 @@ namespace justounetsimple_int8 { using int8_t = float; }
 
 namespace weights = justounetsimple_int8;
 
-constexpr float CONV1_WEIGHT_SCALE = frac_to_scale(weights::conv1_weight_frac);
-constexpr float CONV2_WEIGHT_SCALE = frac_to_scale(weights::conv2_weight_frac);
-constexpr float CONV3_WEIGHT_SCALE = frac_to_scale(weights::conv3_weight_frac);
-constexpr float CONV4_WEIGHT_SCALE = frac_to_scale(weights::conv4_weight_frac);
-constexpr float CONV1_BIAS_SCALE = frac_to_scale(weights::conv1_bias_frac);
-constexpr float CONV2_BIAS_SCALE = frac_to_scale(weights::conv2_bias_frac);
-constexpr float CONV3_BIAS_SCALE = frac_to_scale(weights::conv3_bias_frac);
-constexpr float CONV4_BIAS_SCALE = frac_to_scale(weights::conv4_bias_frac);
+constexpr float CONV1_WEIGHT_SCALE = golden::frac_to_scale(weights::conv1_weight_frac);
+constexpr float CONV2_WEIGHT_SCALE = golden::frac_to_scale(weights::conv2_weight_frac);
+constexpr float CONV3_WEIGHT_SCALE = golden::frac_to_scale(weights::conv3_weight_frac);
+constexpr float CONV4_WEIGHT_SCALE = golden::frac_to_scale(weights::conv4_weight_frac);
+constexpr float CONV1_BIAS_SCALE = golden::frac_to_scale(weights::conv1_bias_frac);
+constexpr float CONV2_BIAS_SCALE = golden::frac_to_scale(weights::conv2_bias_frac);
+constexpr float CONV3_BIAS_SCALE = golden::frac_to_scale(weights::conv3_bias_frac);
+constexpr float CONV4_BIAS_SCALE = golden::frac_to_scale(weights::conv4_bias_frac);
 
 void justounetsimple(data_t din[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_BANDS],
                      data_t dout[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_CLASSES])

@@ -1,10 +1,6 @@
 #pragma once
 
-#include "../../src/golden/conv2d_same_golden.hpp"
-#include "../../src/golden/batchnorm_golden.hpp"
-#include "../../src/golden/relu_golden.hpp"
-#include "../../src/golden/maxpool_golden.hpp"
-#include "../../src/golden/upsample_golden.hpp"
+#include "../golden/batchnorm.hpp"
 
 // 2D-JustoUNet as trained, in float, with its BatchNorms: the testbench's
 // reference for the golden kernel justounetsimple. Four 3x3 conv blocks:
@@ -31,31 +27,25 @@ void justounet2d_golden(
 {
     constexpr int HALF_H = HEIGHT / 2, HALF_W = WIDTH / 2;
     constexpr int QUARTER_H = HEIGHT / 4, QUARTER_W = WIDTH / 4;
+    using golden::activation;
 
-    static data_t conv_a[HEIGHT][WIDTH][BASE], normalized_a[HEIGHT][WIDTH][BASE], relu_a[HEIGHT][WIDTH][BASE];
-    static data_t pooled_a[HALF_H][HALF_W][BASE];
-    conv2d_same_golden<data_t, HEIGHT, WIDTH, BANDS, BASE, KERNEL>(din, conv1_weight, conv1_bias, conv_a);
-    batchnorm_golden<data_t, HEIGHT, WIDTH, BASE>(conv_a, bn1_weight, bn1_bias, bn1_mean, bn1_var, eps, normalized_a);
-    relu_golden<data_t, HEIGHT, WIDTH, BASE>(normalized_a, relu_a);
-    maxpool_golden<data_t, HEIGHT, WIDTH, BASE>(relu_a, pooled_a);
+    static data_t relu_a[HEIGHT][WIDTH][BASE], pooled_a[HALF_H][HALF_W][BASE];
+    golden::conv2d<HEIGHT, WIDTH, BANDS, BASE, KERNEL>(din, conv1_weight, conv1_bias, relu_a);
+    golden::batchnorm<BASE, activation::relu>(&relu_a[0][0][0], HEIGHT * WIDTH, bn1_weight, bn1_bias, bn1_mean, bn1_var, eps);
+    golden::maxpool2d<HEIGHT, WIDTH, BASE>(relu_a, pooled_a);
 
-    static data_t conv_b[HALF_H][HALF_W][2 * BASE], normalized_b[HALF_H][HALF_W][2 * BASE];
     static data_t relu_b[HALF_H][HALF_W][2 * BASE], pooled_b[QUARTER_H][QUARTER_W][2 * BASE];
     static data_t upsampled_b[HALF_H][HALF_W][2 * BASE];
-    conv2d_same_golden<data_t, HALF_H, HALF_W, BASE, 2 * BASE, KERNEL>(pooled_a, conv2_weight, conv2_bias, conv_b);
-    batchnorm_golden<data_t, HALF_H, HALF_W, 2 * BASE>(conv_b, bn2_weight, bn2_bias, bn2_mean, bn2_var, eps, normalized_b);
-    relu_golden<data_t, HALF_H, HALF_W, 2 * BASE>(normalized_b, relu_b);
-    maxpool_golden<data_t, HALF_H, HALF_W, 2 * BASE>(relu_b, pooled_b);
-    upsample_golden<data_t, QUARTER_H, QUARTER_W, 2 * BASE>(pooled_b, upsampled_b);
+    golden::conv2d<HALF_H, HALF_W, BASE, 2 * BASE, KERNEL>(pooled_a, conv2_weight, conv2_bias, relu_b);
+    golden::batchnorm<2 * BASE, activation::relu>(&relu_b[0][0][0], HALF_H * HALF_W, bn2_weight, bn2_bias, bn2_mean, bn2_var, eps);
+    golden::maxpool2d<HALF_H, HALF_W, 2 * BASE>(relu_b, pooled_b);
+    golden::upsample2d<QUARTER_H, QUARTER_W, 2 * BASE>(pooled_b, upsampled_b);
 
-    static data_t conv_c[HALF_H][HALF_W][BASE], normalized_c[HALF_H][HALF_W][BASE], relu_c[HALF_H][HALF_W][BASE];
-    static data_t upsampled_c[HEIGHT][WIDTH][BASE];
-    conv2d_same_golden<data_t, HALF_H, HALF_W, 2 * BASE, BASE, KERNEL>(upsampled_b, conv3_weight, conv3_bias, conv_c);
-    batchnorm_golden<data_t, HALF_H, HALF_W, BASE>(conv_c, bn3_weight, bn3_bias, bn3_mean, bn3_var, eps, normalized_c);
-    relu_golden<data_t, HALF_H, HALF_W, BASE>(normalized_c, relu_c);
-    upsample_golden<data_t, HALF_H, HALF_W, BASE>(relu_c, upsampled_c);
+    static data_t relu_c[HALF_H][HALF_W][BASE], upsampled_c[HEIGHT][WIDTH][BASE];
+    golden::conv2d<HALF_H, HALF_W, 2 * BASE, BASE, KERNEL>(upsampled_b, conv3_weight, conv3_bias, relu_c);
+    golden::batchnorm<BASE, activation::relu>(&relu_c[0][0][0], HALF_H * HALF_W, bn3_weight, bn3_bias, bn3_mean, bn3_var, eps);
+    golden::upsample2d<HALF_H, HALF_W, BASE>(relu_c, upsampled_c);
 
-    static data_t conv_d[HEIGHT][WIDTH][CLASSES];
-    conv2d_same_golden<data_t, HEIGHT, WIDTH, BASE, CLASSES, KERNEL>(upsampled_c, conv4_weight, conv4_bias, conv_d);
-    batchnorm_golden<data_t, HEIGHT, WIDTH, CLASSES>(conv_d, bn4_weight, bn4_bias, bn4_mean, bn4_var, eps, dout);
+    golden::conv2d<HEIGHT, WIDTH, BASE, CLASSES, KERNEL>(upsampled_c, conv4_weight, conv4_bias, dout);
+    golden::batchnorm<CLASSES>(&dout[0][0][0], HEIGHT * WIDTH, bn4_weight, bn4_bias, bn4_mean, bn4_var, eps);
 }

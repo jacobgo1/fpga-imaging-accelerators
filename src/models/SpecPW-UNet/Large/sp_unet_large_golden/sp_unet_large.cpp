@@ -5,7 +5,7 @@ namespace sp_unet_large_int8 { using int8_t = float; }
 
 namespace weights = sp_unet_large_int8;
 
-template<int FRAC> struct scale_of { static constexpr float value = frac_to_scale(FRAC); };
+template<int FRAC> struct scale_of { static constexpr float value = golden::frac_to_scale(FRAC); };
 
 // A layer's weight, its scale, bias, its scale.
 #define LAYER(name) weights::name##_weight, scale_of<weights::name##_weight_frac>::value, \

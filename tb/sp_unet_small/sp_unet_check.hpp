@@ -15,7 +15,7 @@
 //
 // Two patches in one start, different random inputs: the second one checks
 // that the kernel reads and writes each patch at its own place.
-#include "../../src/golden/specpw_unet_golden.hpp"
+#include "specpw_unet_golden.hpp"
 #include <cmath>
 #include <cstdio>
 #include <random>

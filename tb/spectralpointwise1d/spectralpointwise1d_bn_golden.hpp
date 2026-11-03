@@ -1,12 +1,10 @@
 #pragma once
 
-#include "../golden/dense_golden.hpp"
-#include "../golden/batchnorm1d_golden.hpp"
-#include "../../src/golden/relu1d_golden.hpp"
+#include "../golden/batchnorm.hpp"
 
 // 1D-SpectralPointwise as trained, in float, with its BatchNorm: the testbench's
 // reference for the golden kernel spectralpointwise1d. A 1x1 conv on one pixel is a
-// dense layer; the pixel is a spectrum of one position for the BatchNorm and ReLUs.
+// dense layer.
 template<typename data_t, int BANDS, int CONV1_CHANNELS, int CONV2_CHANNELS, int CLASSES>
 void spectralpointwise1d_bn_golden(
     const data_t din[BANDS],
@@ -17,12 +15,10 @@ void spectralpointwise1d_bn_golden(
     const data_t conv3_weight[CLASSES][CONV2_CHANNELS],        const data_t conv3_bias[CLASSES],
     data_t dout[CLASSES])
 {
-    data_t conv1[1][CONV1_CHANNELS], normalized1[1][CONV1_CHANNELS], relu1[1][CONV1_CHANNELS];
-    data_t conv2[1][CONV2_CHANNELS], relu2[1][CONV2_CHANNELS];
-    dense_golden<data_t, BANDS, CONV1_CHANNELS>(din, conv1_weight, conv1_bias, conv1[0]);
-    batchnorm1d_golden<data_t, 1, CONV1_CHANNELS>(conv1, bn_weight, bn_bias, bn_mean, bn_var, bn_eps, normalized1);
-    relu1d_golden<data_t, 1, CONV1_CHANNELS>(normalized1, relu1);
-    dense_golden<data_t, CONV1_CHANNELS, CONV2_CHANNELS>(relu1[0], conv2_weight, conv2_bias, conv2[0]);
-    relu1d_golden<data_t, 1, CONV2_CHANNELS>(conv2, relu2);
-    dense_golden<data_t, CONV2_CHANNELS, CLASSES>(relu2[0], conv3_weight, conv3_bias, dout);
+    using golden::activation;
+    data_t relu1[CONV1_CHANNELS], relu2[CONV2_CHANNELS];
+    golden::dense<BANDS, CONV1_CHANNELS>(din, conv1_weight, conv1_bias, relu1);
+    golden::batchnorm<CONV1_CHANNELS, activation::relu>(relu1, 1, bn_weight, bn_bias, bn_mean, bn_var, bn_eps);
+    golden::dense<CONV1_CHANNELS, CONV2_CHANNELS, activation::relu>(relu1, conv2_weight, conv2_bias, relu2);
+    golden::dense<CONV2_CHANNELS, CLASSES>(relu2, conv3_weight, conv3_bias, dout);
 }

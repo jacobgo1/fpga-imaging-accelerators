@@ -5,14 +5,14 @@ namespace waveletcnn_int8 { using int8_t = float; }
 
 namespace weights = waveletcnn_int8;
 
-constexpr float LOWPASS_SCALE = frac_to_scale(weights::dwt_spectral_h0_frac);
-constexpr float HIGHPASS_SCALE = frac_to_scale(weights::dwt_spectral_h1_frac);
-constexpr float PROJECTION_WEIGHT_SCALE = frac_to_scale(weights::projection_weight_frac);
-constexpr float PROJECTION_BIAS_SCALE = frac_to_scale(weights::projection_bias_frac);
-constexpr float CONV_WEIGHT_SCALE = frac_to_scale(weights::conv_block_0_weight_frac);
-constexpr float CONV_BIAS_SCALE = frac_to_scale(weights::conv_block_0_bias_frac);
-constexpr float HEAD_WEIGHT_SCALE = frac_to_scale(weights::seg_head_0_weight_frac);
-constexpr float HEAD_BIAS_SCALE = frac_to_scale(weights::seg_head_0_bias_frac);
+constexpr float LOWPASS_SCALE = golden::frac_to_scale(weights::dwt_spectral_h0_frac);
+constexpr float HIGHPASS_SCALE = golden::frac_to_scale(weights::dwt_spectral_h1_frac);
+constexpr float PROJECTION_WEIGHT_SCALE = golden::frac_to_scale(weights::projection_weight_frac);
+constexpr float PROJECTION_BIAS_SCALE = golden::frac_to_scale(weights::projection_bias_frac);
+constexpr float CONV_WEIGHT_SCALE = golden::frac_to_scale(weights::conv_block_0_weight_frac);
+constexpr float CONV_BIAS_SCALE = golden::frac_to_scale(weights::conv_block_0_bias_frac);
+constexpr float HEAD_WEIGHT_SCALE = golden::frac_to_scale(weights::seg_head_0_weight_frac);
+constexpr float HEAD_BIAS_SCALE = golden::frac_to_scale(weights::seg_head_0_bias_frac);
 
 void waveletcnn(data_t din[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_BANDS],
                 data_t dout[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_CLASSES])

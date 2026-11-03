@@ -1,9 +1,9 @@
-"""SpecPW-UNet: the golden modules, the golden kernels and the integer model.
+"""SpecPW-UNet: the float reference, the golden kernels and the integer model.
 
 The numpy model (tools/specpw_unet_model.py) is the trained network in float, checked
 here against the labelled aegean pixels. Against it, compiled with plain g++:
- - the float golden model (src/golden/specpw_unet_golden.hpp), from the golden modules
-   (spectral stem, conv block, up block, maxpool, the skip connection's concat);
+ - the float reference (tb/sp_unet_small/specpw_unet_golden.hpp), from the golden layers
+   (src/golden/layers.hpp);
  - the golden kernels sp_unet_small/medium/large (int8 weights, float activations), on
    real 32 x 32 patches;
  - the integer model's plain-loop C++
@@ -218,7 +218,7 @@ class SpecPWUNetTests(unittest.TestCase):
                     for k, patch in enumerate(self.patches(self.x).astype(np.float32)):
                         patch.tofile(tmp / 'in.bin')
                         compile_and_run(FLOAT_DRIVER.format(size=size, n=PATCH), tmp, f'float_{size}',
-                                        [ROOT / 'src/golden'], [],
+                                        [ROOT / 'tb/sp_unet_small'], [],
                                         [tmp / 'weights.bin', tmp / 'in.bin', tmp / 'out.bin']) if k == 0 else \
                             subprocess.run([str(tmp / f'float_{size}.exe'), str(tmp / 'weights.bin'),
                                             str(tmp / 'in.bin'), str(tmp / 'out.bin')], check=True)

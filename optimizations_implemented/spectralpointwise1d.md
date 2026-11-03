@@ -193,3 +193,6 @@ Routed, kernel alone (without the interconnects); by process in
   `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
   `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
   reports to the new ones.
+- 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
+  (one template each for float and quantized weights); the golden kernels compute the same, not
+  rebuilt yet.
