@@ -1,12 +1,13 @@
 # Software
 
 What runs on the board's ARM: two Jupyter notebooks for PYNQ, shared by every
-model, in `software/pynq/shared/`: `classify_golden.ipynb` for the golden kernels
+model, in `software/pynq/`: `classify_golden.ipynb` for the golden kernels
 (the kernel named like its model) and `classify.ipynb` for the optimized ones
 (every `*_opt*`). Each takes the register offsets from the driver header generated
 inside the exported HLS IP (`x<kernel>_hw.h`, packed next to the notebook) and
 which model it is from `kernel.json` (main.py writes it from `tools/models.py`).
-`software/opu/` holds the C programs for the boards running the OPU system's PetaLinux.
+`software/opu/classify.c` is the C program every optimized kernel runs on the boards with the
+OPU system's PetaLinux, the same way.
 
 `fpga.sh` in the repository root wraps everything below in short commands
 (`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)
@@ -20,7 +21,7 @@ Every successful `bitstream` build writes, next to the bitstream:
 build/<kernel>/<run>/<kernel>_pynq/      everything the notebook needs, in one place:
     <kernel>.bit  <kernel>.hwh             the design (PYNQ wants the same name for both)
     x<kernel>_hw.h                         register offsets
-    classify.ipynb or classify_golden.ipynb  the notebook, from software/pynq/shared/
+    classify.ipynb or classify_golden.ipynb  the notebook, from software/pynq/
     kernel.json                            which model, its patch size and scores' format
     mu_sd.txt                              (golden only) the training mean/std per band
 build/<kernel>/<run>/<kernel>_pynq.zip   the same, as one file to upload

@@ -1,5 +1,6 @@
-/* classify.c -- runs a justounetsimple_opt kernel on the OPU system's PetaLinux (the
- * lab's ZedBoards, boards/README.md): the notebook's job without PYNQ, Python or numpy.
+/* classify.c -- runs an optimized kernel on the OPU system's PetaLinux (the lab's
+ * ZedBoards, boards/README.md): the notebook's job without PYNQ, Python or numpy. Every
+ * optimized kernel takes the raw cube and gives the same scores, so one program serves all.
  * main.py builds it for the board's ARM with the kernel's register offsets
  * (kernel_regs.h, from x<kernel>_hw.h) and puts it in the OPU zip.
  *

@@ -1,3 +1,0 @@
-# The ZCU104 kernel's program: it takes this kernel's register offsets (kernel_regs.h)
-# when main.py builds it, and gives every read port the cube.
-software/opu/justounetsimple_opt/classify.c
