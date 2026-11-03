@@ -191,3 +191,5 @@ Routed, kernel alone (without the interconnects); by process in
   (one template each for float and quantized weights); the golden kernel's ReLU is now done in its
   conv, one map buffer fewer a layer, the same answers. Golden kernel not rebuilt yet.
 >>>>>>> Stashed changes
+- 2026-11-03: `src/optimized/*/chip.hpp` removed: each optimized kernel sets its chip's DSP packing (and
+  UltraRAM) at the top of its `.cpp`, under "Chip variables for implementation". Same values.

@@ -3,6 +3,9 @@
 #include "../../../../../weights/quantized/sp_unet_small/sp_unet_small_int8.hpp"
 namespace weights = sp_unet_small_int8;
 
+// Chip variables for implementation:
+constexpr int DSP_PACK_SHIFT = 18, DSP_PACK_GROUP = 8;   // DSP48E2, 27-bit input: two int8 weights 18 bits apart, groups of 8
+
 // Every process takes at most T = 9 828 cycles a patch; the multipliers of each:
 namespace sizes {
 constexpr int CONVSP1_BANDS_PER_CYCLE = 16;     // convsp1: 16 bands a cycle, 7 cycles a pixel (7 168), 192 DSPs
@@ -27,7 +30,6 @@ typedef layer_size< 8, 1, true> DOUBLE4_CONV2;  // 8 -> 8     1 x 8 = 8      x 1
 #include "sp_unet_opt_common.hpp"
 #include "../../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../../optimized/shared/pixel_buffer.hpp"
-#include "../../../../optimized/zcu104/chip.hpp"
 #include "../../../../optimized/shared/pointwise_packed.hpp"
 #include "../../../../optimized/shared/conv1x1.hpp"
 #include "../../../../optimized/shared/conv3x3_tiled.hpp"

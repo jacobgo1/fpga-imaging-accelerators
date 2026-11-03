@@ -101,7 +101,7 @@ config/            project.json, optional HLS directives per kernel
 src/models/        synthesizable C++: one folder per network, one per kernel in it
 src/golden/        layers.hpp: the plain-loop layers the golden kernels are built from
 src/optimized/     streaming, fixed-point building blocks: how it is computed fast;
-                   all in shared/; zcu104/, zynq7020/, zynq7030/: chip.hpp, each chip's facts
+                   all in shared/; each kernel sets its chip's facts at its top
 src/common/        C++ shared between kernels (hls::stream, hls::vector, hls::burst_maxi for plain g++)
 tb/KERNEL/         self-checking testbenches, with the references they check against
 scripts/           hls.tcl (Vitis HLS), vivado.tcl (Vivado)

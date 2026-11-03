@@ -497,3 +497,5 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
   (one template each for float and quantized weights); the golden kernels compute the same, not
   rebuilt yet.
+- 2026-11-03: `src/optimized/*/chip.hpp` removed: each optimized kernel sets its chip's DSP packing (and
+  UltraRAM) at the top of its `.cpp`, under "Chip variables for implementation". Same values.

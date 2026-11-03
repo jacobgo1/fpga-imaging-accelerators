@@ -72,8 +72,8 @@ ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
 finds the kernel and its ports from the files next to it.
 
 Every module is in `src/optimized/shared/`; what differs between the chips (the
-DSP packing, UltraRAM or not) is in `src/optimized/zcu104/chip.hpp`, `zynq7020/` and
-`zynq7030/`, and each kernel passes it to the modules. The golden
+DSP packing, UltraRAM or not) is at the top of each kernel's `.cpp`, under "Chip variables for implementation",
+and the kernel passes it to the modules. The golden
 `justounetsimple` is small enough that they should fit any of the
 chips as they are (not yet built for the Zynq-7000s).
 

@@ -3,6 +3,9 @@
 #include "../../../../../weights/quantized/sp_unet_small/sp_unet_small_int8.hpp"
 namespace weights = sp_unet_small_int8;
 
+// Chip variables for implementation:
+constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
+
 // Every process takes at most T = 76 176 cycles a patch; the multipliers of each:
 namespace sizes {
 constexpr int CONVSP1_BANDS_PER_CYCLE = 20;                         // convsp1: 20 bands a chunk, 6 chunks
@@ -31,7 +34,6 @@ typedef tiled_ram_layer_size< 8, 1, 1, true> DOUBLE4_CONV2;             // 8 -> 
 #include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
 #include "../../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../../optimized/shared/pixel_buffer.hpp"
-#include "../../../../optimized/zynq7020/chip.hpp"
 #include "../../../../optimized/shared/pointwise_packed.hpp"
 #include "../../../../optimized/shared/conv1x1.hpp"
 #include "../../../../optimized/shared/conv3x3_tiled_ram.hpp"

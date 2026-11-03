@@ -6,7 +6,7 @@
 #include "patch_grid.hpp"
 
 // The z-score and the ping-pong buffer between the readers and the first layer,
-// in UltraRAM or block RAM (URAM: the board's HAS_URAM, in its chip.hpp).
+// in UltraRAM or block RAM (URAM: the kernel's HAS_URAM).
 //
 // Reader r sends rows r, r + READ_PORTS, ... of each patch, WORDS_PER_PIXEL words
 // a pixel. Words before FIRST_KEPT_WORD are dropped; kept band k becomes

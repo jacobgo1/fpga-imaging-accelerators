@@ -42,10 +42,10 @@ src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cp
 src/golden/          layers.hpp: the plain-loop layers the golden kernels are built from (what is
                      computed), one template each for float and quantized weights
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
-                     one module per file, all in shared/, for every board; zcu104/,
-                     zynq7020/ and zynq7030/ hold only chip.hpp, the chip's facts the
-                     modules take as arguments (DSP_PACK_SHIFT / DSP_PACK_GROUP for 2
-                     multiplies per DSP, HAS_URAM for patch_buffer)
+                     one module per file, all in shared/, for every board; each kernel sets
+                     its chip's facts at the top of its .cpp ("Chip variables for
+                     implementation": DSP_PACK_SHIFT / DSP_PACK_GROUP for 2 multiplies per
+                     DSP, HAS_URAM for patch_buffer) and passes them to the modules
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/shared/  the board notebooks every model shares: classify_golden.ipynb (golden

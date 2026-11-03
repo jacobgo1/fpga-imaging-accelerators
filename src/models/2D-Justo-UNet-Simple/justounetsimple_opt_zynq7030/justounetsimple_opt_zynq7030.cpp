@@ -1,7 +1,6 @@
 #include "justounetsimple_opt_zynq7030.hpp"
 #include "../../../optimized/shared/zscore_int8.hpp"
 #include "../../../optimized/shared/read_patch_rows.hpp"
-#include "../../../optimized/zynq7030/chip.hpp"
 #include "../../../optimized/shared/patch_buffer.hpp"
 #include "../../../optimized/shared/conv3x3_2mul.hpp"
 #include "../../../optimized/shared/conv3x3_tiled.hpp"
@@ -13,6 +12,10 @@
 
 namespace weights = justounetsimple_int8;
 namespace zscore = zscore_int8;
+
+// Chip variables for implementation:
+constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
+constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
 
 constexpr int HALF_PATCH = PATCH_SIZE / 2;
 constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
