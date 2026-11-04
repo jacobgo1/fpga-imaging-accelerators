@@ -8,8 +8,8 @@
 // OUT_PER_CYCLE output channels times ROWS_PER_STEP rows of the window a cycle
 // (1 for a chip with few DSPs, 3 for the whole window). The smallest, one output
 // channel a cycle, is IN_PER_CYCLE x 9 multipliers whatever the layer's size. The
-// same streams as conv3x3_narrow; out the sums, or with RELU ReLU'd and rounded
-// off ROUND_BITS bits to activations, so no ReLU module is needed after it.
+// same streams as conv3x3_narrow; out the sums, or with activation::relu ReLU'd and
+// rounded off ROUND_BITS bits to activations, so no ReLU module is needed after it.
 //
 // A pixel's steps: output group outer, then input group, then window rows.
 // The weights are one wide memory word a step: one memory a layer, since a
@@ -20,17 +20,17 @@ struct tiled_word_t {
 };
 
 template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE,
-         int ROWS_PER_STEP, bool RELU, int ROUND_BITS, bool DSP>
+         int ROWS_PER_STEP, activation A, int ROUND_BITS, bool DSP>
 void conv3x3_tiled_patch(
     hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
     const tiled_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, ROWS_PER_STEP>
         weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE) * (3 / ROWS_PER_STEP)],
     const sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE],
-    hls::stream<vec_t<typename conv_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
+    hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
     constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
     constexpr int ROW_STEPS = 3 / ROWS_PER_STEP, STEPS = OUT_GROUPS * IN_GROUPS * ROW_STEPS;
     constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
-    typedef typename conv_out<RELU, ROUND_BITS>::type out_t;
+    typedef typename conv_out<A, ROUND_BITS>::type out_t;
 
     act_t lines[2][MAP_WIDTH][IN_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=1
@@ -89,7 +89,7 @@ void conv3x3_tiled_patch(
                 const sum_t total = (in_group == 0 && first_row ? bias[out_group][j] : running[j]) + sum;
                 running[j] = total;
                 // Rounded as its output group finishes: OUT_PER_CYCLE rounding units, not OUT_CHANNELS.
-                const out_t done = conv_out<RELU, ROUND_BITS>::of(total);
+                const out_t done = conv_out<A, ROUND_BITS>::of(total);
                 for (int og = 0; og < OUT_GROUPS; og++) {
                     #pragma HLS UNROLL
                     if (last_input && out_group == og) outputs[og * OUT_PER_CYCLE + j] = done;
@@ -170,9 +170,9 @@ void load_tiled_weights(
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int OUT_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
-         int ROWS_PER_STEP = 3, bool RELU = false, int ROUND_BITS = 0>
+         int ROWS_PER_STEP = 3, activation A = activation::none, int ROUND_BITS = 0>
 void conv3x3_tiled(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
-                   hls::stream<vec_t<typename conv_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out,
+                   hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                    int height, int width) {
     constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE) * (3 / ROWS_PER_STEP);
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE];
@@ -187,7 +187,7 @@ void conv3x3_tiled(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
         patches_bram: for (int k = 0; k < patches; k++) {
             #pragma HLS LOOP_TRIPCOUNT min=1 max=665
             conv3x3_tiled_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE,
-                                ROWS_PER_STEP, RELU, ROUND_BITS, DSP>(in, weight, bias, out);
+                                ROWS_PER_STEP, A, ROUND_BITS, DSP>(in, weight, bias, out);
         }
     } else {
         tiled_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, ROWS_PER_STEP> weight[STEPS];
@@ -198,7 +198,7 @@ void conv3x3_tiled(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
         patches: for (int k = 0; k < patches; k++) {
             #pragma HLS LOOP_TRIPCOUNT min=1 max=665
             conv3x3_tiled_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE,
-                                ROWS_PER_STEP, RELU, ROUND_BITS, DSP>(in, weight, bias, out);
+                                ROWS_PER_STEP, A, ROUND_BITS, DSP>(in, weight, bias, out);
         }
     }
 }

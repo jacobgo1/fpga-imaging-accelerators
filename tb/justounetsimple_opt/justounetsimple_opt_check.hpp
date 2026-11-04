@@ -20,7 +20,6 @@ constexpr int IMAGE_HEIGHT = 40, IMAGE_WIDTH = 50;   // matches the m_axi depth 
 constexpr int FIRST_MODEL_BAND = zscore::FIRST_BAND;
 constexpr int VALUES_PER_PIXEL = 4;                  // 3 scores and the class
 constexpr float SCORE_TOLERANCE = 0.02f;             // against the float kernel
-constexpr int HALF_PATCH = PATCH_SIZE / 2;
 
 static int32_t relu_to_activation(int64_t sum, int shift) {
     if (sum <= 0) return 0;

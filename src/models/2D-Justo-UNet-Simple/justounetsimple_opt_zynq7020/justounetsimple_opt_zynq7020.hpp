@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
+#include "../../../optimized/shared/zscore_int8.hpp"
+
+namespace zscore = zscore_int8;
 
 // justounetsimple_opt for the Zynq-7020 (--board zynq7020 or zedboard): the same answers,
 // conv1 on 216 of the 220 DSPs, everything else in LUTs, two 64-bit read ports.
@@ -24,6 +27,18 @@ constexpr int SCORE_FRAC_BITS = 16;       // ... of the scores
 
 typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
 typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
+
+constexpr int HALF_PATCH = PATCH_SIZE / 2;
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
+constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
+constexpr int PIXELS_PER_BURST = 8;       // 240 words, within the 256 a burst allows
+constexpr int BURSTS_IN_FLIGHT = 2;
+constexpr bool ZSCORE_ON_DSPS = false;    // conv1 takes 216 of the 220 DSPs
+constexpr bool CONV2_TO_4_ON_DSPS = false;
+
+// Chip variables for implementation:
+constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
+constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
 
 // The argument names become the kernel's register names: keep them.
 void justounetsimple_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,

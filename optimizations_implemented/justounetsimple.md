@@ -45,7 +45,7 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
 | conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
-| ReLU fused with pooling / upsampling; else one process each (`relu_act`, `max_pool`, `upsample`) | separate (on trial, 2026-11-03) | ✓ | ✓ |
+| ReLU fused with pooling / upsampling (`relu_pool`, `relu_pool_up`, `relu_up`); else ReLU in the conv (`activation::relu`), pool and upsample one process each (`max_pool`, `upsample`) | in the conv (on trial, 2026-11-03) | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | FIFO depths from a cycle model (`s_a` 256, `s_b` 32, `s_c` 64) | ✓ | not checked | not checked |
 | Memory bank chosen by a constant index (avoids II 5 in the patch buffer) | ✓ | ✓ | ✓ |
@@ -64,7 +64,7 @@ slowest stage sets the pace, T cycles per patch.
 | patch_buffer | 4 096 | 10 240 | 14 336 |
 | conv1 | **4 129** | **10 273** | 14 369 |
 | conv2 / conv3 / conv4 | 3 276 / 1 638 / 3 171 | 9 216 each | 9 216 each |
-| ReLU, pool, upsample, store (ZCU104: one process each) | ≤ 1 280 | small | small |
+| pool, upsample, store (ZCU104: one process each, the ReLU in its conv) | ≤ 1 280 | small | small |
 | **T** | **4 129** (conv1) | **10 273** (conv1) | **15 360** (readers) |
 | DSPs | ~1 112 (conv1 864, conv2-4 216, z-score 32) | 378 of 400 (conv1 324, conv2-4 54) | 216 of 220 (conv1) |
 
@@ -177,7 +177,6 @@ Routed, kernel alone (without the interconnects); by process in
   ahead; the readers' code reads like a plain loop. Each row now waits for DDR's first word, 8 rows a
   patch a port; estimate (not measured) +5-15 %, ~19-20.5 ms against 17.87. The 7030 and 7020 keep
   `read_patch_rows`. Not yet built: compare cycles a patch with the 2026-11-01 run (6 718 at 250 MHz).
-<<<<<<< Updated upstream
 - 2026-11-03: the ZCU104 measured 20 ms with `read_patch_rows_simple` (17.87 ms with the read-ahead):
   kept, for the simpler readers.
 - 2026-11-03: ZCU104 on trial with ReLU, max pool and upsample as one process each (`relu_act`,
@@ -186,10 +185,31 @@ Routed, kernel alone (without the interconnects); by process in
   process runs a pixel a cycle, far under T, so the cycles a patch should not change; the cost is 4
   more processes and FIFOs (16 deep, SRL), an estimated 150-500 LUTs each. Not yet built: compare
   cycles a patch and the csynth LUTs / FFs with the fused version.
-=======
 - 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
   (one template each for float and quantized weights); the golden kernel's ReLU is now done in its
   conv, one map buffer fewer a layer, the same answers. Golden kernel not rebuilt yet.
->>>>>>> Stashed changes
 - 2026-11-03: `src/optimized/*/chip.hpp` removed: each optimized kernel sets its chip's DSP packing (and
   UltraRAM) at the top of its `.cpp`, under "Chip variables for implementation". Same values.
+- 2026-11-03: csynth of the split version (ZCU104, 5 ns): every new process Final II = 1, at most
+  1 410 cycles a patch (upsample 16x16x6; relu_act and max_pool ~1 025) against conv1's 4 142, so no
+  process waits on them. Estimates: relu_act 1 494 / 2 238 / 1 464 LUTs, max_pool 1 383 / 1 916,
+  upsample 1 321 / 1 103: 10.9 k LUTs, 3.9 k FFs for the seven, 80.9 k LUTs for the kernel (35 %),
+  1 120 DSPs. Not yet compared like with like: the fused modules' 2.8 k LUTs are routed numbers;
+  the routed report of a bitstream build gives the real cost.
+- 2026-11-03: ZCU104: the ReLU back inside each conv, now as its `activation` option (`activation::relu`,
+  in `fixed_point.hpp`, as the golden layers do), so the three `relu_act` processes and their FIFOs are
+  gone; max pool and upsample stay one process each. `conv3x3_all_in` / `conv3x3_2mul` take the
+  weights, bias, shifts and activation as template arguments; the FIFO depths are in the stream types,
+  `hls::stream<T, 16>`. The constants (sizes, chip variables, DSP choices) are in each kernel's .hpp,
+  those from the weights' fractions in the .cpp. The same answers bit for bit (all kernels).
+  Not yet built: check csynth's FIFO lines ("Implementing FIFO 'conv1_act_U' ... using Shift
+  Registers"), now without a BIND_STORAGE pragma, and that the cycles a patch stay.
+- 2026-11-03: the split version (separate `relu_act`, `max_pool`, `upsample`; simple readers) measured on the
+  ZCU104, built at the default 187.5 MHz, not 250: 21.42 ms by the kernel's count (6 039 cycles a patch),
+  21.62 ms FPGA, 22.42 ms wall clock for 598 x 1092. Routed: the kernel 40.5 k LUTs, 48.0 k FFs, 1 116
+  DSPs, 25 RAMB36, 16 URAM (43.1 k LUTs on 2026-11-02 with the read-ahead readers). The split parts:
+  `relu_act` 433 / 464 / 416 LUTs, `max_pool` 657 / 910, `upsample` 461 / 505, their 16-deep FIFOs
+  60-117 each (SRL) - about 1.8 k LUTs more than `relu_pool` / `relu_pool_up` / `relu_up` (2.8 k). Found
+  in passing: every process has its own 16 x 16 multiplier for `patch_count` (height x width patches),
+  263-345 LUTs each, ~4.5 k LUTs over the kernel; and the 2-deep FIFOs of the conv sums cost 270-548
+  LUTs each (registers), more than the 16-deep SRL ones.

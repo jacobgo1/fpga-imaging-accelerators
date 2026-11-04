@@ -43,7 +43,7 @@ src/golden/          layers.hpp: the plain-loop layers the golden kernels are bu
                      computed), one template each for float and quantized weights
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file, all in shared/, for every board; each kernel sets
-                     its chip's facts at the top of its .cpp ("Chip variables for
+                     its chip's facts in its .hpp ("Chip variables for
                      implementation": DSP_PACK_SHIFT / DSP_PACK_GROUP for 2 multiplies per
                      DSP, HAS_URAM for patch_buffer) and passes them to the modules
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
@@ -125,7 +125,13 @@ image folder (labels required).
 3. Write the kernel as a DATAFLOW chain from `src/optimized/` blocks:
    - read the raw cube from DDR and do the preprocessing in hardware;
    - integer fixed point throughout;
-   - size each stage so none waits for another.
+   - give each conv its weights, bias, shifts and activation (`activation::relu` / `none`)
+     as template arguments, instead of a ReLU process;
+   - the constants in the kernel's .hpp (sizes, chip variables, which multipliers on DSPs);
+     those derived from the weights' fractions stay in the .cpp, since the testbench
+     includes the .hpp with the golden kernel's float weights;
+   - size each stage so none waits for another; FIFO depths in the stream type,
+     `hls::stream<T, 16>`.
 4. Testbench: bit-exact against a plain-loop integer reference, and close to the
    float golden model. Mutation-test it: inject bugs, check it fails.
 5. Add the model to tools/models.py: the shared notebooks then run it (one start for the

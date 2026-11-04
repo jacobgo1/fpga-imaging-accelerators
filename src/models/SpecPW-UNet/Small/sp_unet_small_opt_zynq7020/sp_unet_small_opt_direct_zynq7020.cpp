@@ -1,37 +1,4 @@
 #include "sp_unet_small_opt_direct_zynq7020.hpp"
-
-#include "../../../../../weights/quantized/sp_unet_small/sp_unet_small_int8.hpp"
-namespace weights = sp_unet_small_int8;
-
-// Chip variables for implementation:
-constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
-
-// Every process takes at most T = 76 176 cycles a patch; the multipliers of each:
-namespace sizes {
-constexpr int CONVSP1_BANDS_PER_CYCLE = 20;                         // convsp1: 20 bands a chunk, 6 chunks
-constexpr int CONVSP1_PASSES = 12;                                  // ... x 12 passes over its pairs: 73 728 cycles a patch, 20 DSPs
-constexpr int SKIP_DEPTH = 2048;                                    // the skip FIFO, pixels (room to spare)
-constexpr bool ZSCORE_ON_DSPS = true;                               // the z-score's 4 multipliers on DSPs
-constexpr int CONVSP2_IN_PER_CYCLE = 4, CONVSP2_OUT_PER_CYCLE = 1;  // convsp2 24 -> 12: 6 x 12 = 72 cycles a pixel (73 728), 4 DSPs
-constexpr bool CONVSP2_ON_DSPS = true;
-constexpr int CONVSP3_IN_PER_CYCLE = 2, CONVSP3_OUT_PER_CYCLE = 1;  // convsp3 12 -> 12: 6 x 12 = 72 cycles a pixel (73 728), 2 DSPs
-constexpr bool CONVSP3_ON_DSPS = true;
-constexpr int FINAL_IN_PER_CYCLE = 1, FINAL_OUT_PER_CYCLE = 1;      // final 8 -> 3: 8 x 3 = 24 cycles a pixel (24 576), 1 DSP
-constexpr bool FINAL_ON_DSPS = true;
-// The convs: channels, taps x in x out steps a pixel x pixels = cycles a patch, multipliers.
-typedef tiled_ram_layer_size< 6, 3, 1, true> DOUBLE1_CONV1;             // 12 -> 12  9 x  2 x  4 =   72 a pixel  x 1058 =  76 176   18
-typedef tiled_ram_layer_size< 6, 3, 1, true> DOUBLE1_CONV2;             // 12 -> 12  9 x  2 x  4 =   72 a pixel  x 1058 =  76 176   18
-typedef tiled_ram_layer_size<12, 1, 1, true> DOUBLE2_CONV1;             // 12 -> 24  9 x  1 x 24 =  216 a pixel  x  274 =  59 184   12
-typedef tiled_ram_layer_size<24, 1, 1, true> DOUBLE2_CONV2;             // 24 -> 24  9 x  1 x 24 =  216 a pixel  x  274 =  59 184   24
-typedef tiled_ram_layer_size<24, 1, 1, true> UP1_CONV;                  // 24 -> 24  9 x  1 x 24 =  216 a pixel  x  274 =  59 184   24
-typedef tiled_ram_layer_size<12, 1, 1, true> DOUBLE3_CONV1;             // 24 -> 12  9 x  2 x 12 =  216 a pixel  x  274 =  59 184   12
-typedef tiled_ram_layer_size< 6, 1, 1, true> DOUBLE3_CONV2;             // 12 -> 12  9 x  2 x 12 =  216 a pixel  x  274 =  59 184    6
-typedef tiled_ram_layer_size< 6, 3, 1, true> UP2_CONV;                  // 12 -> 12  9 x  2 x  4 =   72 a pixel  x 1058 =  76 176   18
-typedef tiled_ram_layer_size<24, 1, 1, true> DOUBLE4_CONV1;             // 24 ->  8  9 x  1 x  8 =   72 a pixel  x 1058 =  76 176   24
-typedef tiled_ram_layer_size< 8, 1, 1, true> DOUBLE4_CONV2;             // 8 ->  8  9 x  1 x  8 =   72 a pixel  x 1058 =  76 176    8
-}
-
-#include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
 #include "../../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../../optimized/shared/pixel_buffer.hpp"
 #include "../../../../optimized/shared/pointwise_packed.hpp"
@@ -44,14 +11,17 @@ typedef tiled_ram_layer_size< 8, 1, 1, true> DOUBLE4_CONV2;             // 8 -> 
 #include "../../../../optimized/shared/store_scores.hpp"
 #include "../../../../optimized/shared/count_cycles.hpp"
 
+#include "../../../../../weights/quantized/sp_unet_small/sp_unet_small_int8.hpp"
+namespace weights = sp_unet_small_int8;
+
+#include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
+
 // A conv's template arguments from its size and fractions. Each conv sends
 // ReLU'd activations, so the pooling and upsampling after it only take maxima
 // and copy (their SHIFT 0), and no 32-bit sums cross a FIFO.
 #define TILED_RAM_LAYER(size, fracs, layer) sizes::size::IN_PER_CYCLE, sizes::size::OUT_PER_CYCLE, \
     fracs::BIAS_SHIFT, weights::layer##_weight, weights::layer##_bias, sizes::size::DSP, \
-    sizes::size::TAPS_PER_STEP, true, fracs::SHIFT
-
-constexpr int PIXELS_PER_BURST = 8, BURSTS_IN_FLIGHT = 2;   // 240 words a burst
+    sizes::size::TAPS_PER_STEP, activation::relu, fracs::SHIFT
 
 void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
                                        int height, int width, uint32_t& cycles)
@@ -109,10 +79,10 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
     pointwise_packed<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
                      CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias,
                      DSP_PACK_SHIFT, DSP_PACK_GROUP, sizes::CONVSP1_PASSES>(zscores, convsp1_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, activation::relu,
             CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
             sizes::CONVSP2_ON_DSPS, sizes::CONVSP2_IN_PER_CYCLE>(convsp1_out, convsp2_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, activation::relu,
             CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
             sizes::CONVSP3_ON_DSPS, sizes::CONVSP3_IN_PER_CYCLE>(convsp2_out, stem_out, height, width);
 
@@ -154,7 +124,7 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
                       TILED_RAM_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
         double4_relu1, double4_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
             FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias,
             sizes::FINAL_ON_DSPS, sizes::FINAL_IN_PER_CYCLE>(double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);

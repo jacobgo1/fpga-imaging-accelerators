@@ -1,33 +1,4 @@
 #include "sp_unet_medium_opt_direct.hpp"
-
-#include "../../../../../weights/quantized/sp_unet_medium/sp_unet_medium_int8.hpp"
-namespace weights = sp_unet_medium_int8;
-
-// Chip variables for implementation:
-constexpr int DSP_PACK_SHIFT = 18, DSP_PACK_GROUP = 8;   // DSP48E2, 27-bit input: two int8 weights 18 bits apart, groups of 8
-
-// Every process takes at most T = 34 944 cycles a patch; the multipliers of each:
-namespace sizes {
-constexpr int CONVSP1_BANDS_PER_CYCLE = 8;      // convsp1: 8 bands a cycle, 14 cycles a pixel (14 336), 96 DSPs
-constexpr bool ZSCORE_ON_DSPS = false;          // the z-score's 32 multipliers in LUTs: the DSPs are for the convs
-constexpr bool CONVSP2_3_ON_DSPS = true;        // convsp2 and convsp3 on DSPs: in LUTs they took ~25 k LUTs (small)
-constexpr int CONVSP2_OUT_PER_CYCLE = 1;        // convsp2 24 -> 16: 16 cycles a pixel (16 384), 24 DSPs
-constexpr int CONVSP3_OUT_PER_CYCLE = 1;        // convsp3 16 -> 12: 12 (12 288), 16 DSPs
-constexpr int FINAL_OUT_PER_CYCLE = 1;          // final 12 -> 3: 3 (3 072), 12 in LUTs
-// The convs: channels, cycles a pixel x pixels (+ a row) = cycles a patch, multipliers.
-typedef layer_size< 3, 3, true> DOUBLE1_CONV1;  // 12 -> 24   4 x 8 = 32     x 1 057 = 33 824      81
-typedef layer_size< 6, 3, true> DOUBLE1_CONV2;  // 24 -> 24   4 x 8 = 32     x 1 057 = 33 824     162
-typedef layer_size< 3, 3, true> DOUBLE2_CONV1;  // 24 -> 48   8 x 16 = 128   x 273 = 34 944        81
-typedef layer_size< 6, 3, true> DOUBLE2_CONV2;  // 48 -> 48   8 x 16 = 128   x 273 = 34 944       162
-typedef layer_size< 6, 3, true> UP1_CONV;       // 48 -> 48   8 x 16 = 128   x 273 = 34 944       162
-typedef layer_size< 3, 3, true> DOUBLE3_CONV1;  // 48 -> 24   16 x 8 = 128   x 273 = 34 944        81
-typedef layer_size< 6, 1, true> DOUBLE3_CONV2;  // 24 -> 24   4 x 24 = 96    x 273 = 26 208        54
-typedef layer_size< 6, 3, true> UP2_CONV;       // 24 -> 24   4 x 8 = 32     x 1 057 = 33 824     162
-typedef layer_size< 6, 3, true> DOUBLE4_CONV1;  // 48 -> 12   8 x 4 = 32     x 1 057 = 33 824     162
-typedef layer_size< 6, 1, true> DOUBLE4_CONV2;  // 12 -> 12   2 x 12 = 24    x 1 057 = 25 368      54
-}
-
-#include "../../Small/sp_unet_small_opt/sp_unet_opt_common.hpp"
 #include "../../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../../optimized/shared/pixel_buffer.hpp"
 #include "../../../../optimized/shared/pointwise_packed.hpp"
@@ -40,6 +11,11 @@ typedef layer_size< 6, 1, true> DOUBLE4_CONV2;  // 12 -> 12   2 x 12 = 24    x 1
 #include "../../../../optimized/shared/concat_pixels.hpp"
 #include "../../../../optimized/shared/store_scores.hpp"
 #include "../../../../optimized/shared/count_cycles.hpp"
+
+#include "../../../../../weights/quantized/sp_unet_medium/sp_unet_medium_int8.hpp"
+namespace weights = sp_unet_medium_int8;
+
+#include "../../Small/sp_unet_small_opt/sp_unet_opt_common.hpp"
 
 // A conv's template arguments from its size and fractions.
 #define CONV_LAYER(size, fracs, layer) sizes::size::IN_PER_CYCLE, sizes::size::OUT_PER_CYCLE, \
@@ -160,10 +136,10 @@ void sp_unet_medium_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_max
     pointwise_packed<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
                      CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias,
                      DSP_PACK_SHIFT, DSP_PACK_GROUP>(zscores, convsp1_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, true,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, activation::relu,
             CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
             sizes::CONVSP2_3_ON_DSPS>(convsp1_out, convsp2_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, true,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, activation::relu,
             CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
             sizes::CONVSP2_3_ON_DSPS>(convsp2_out, stem_out, height, width);
 
@@ -220,7 +196,7 @@ void sp_unet_medium_opt_direct(hls::burst_maxi<cube_word_t> din0, hls::burst_max
         double4_relu1, double4_conv2_out, height, width);
     relu_act<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4_CONV2_FRACS::SHIFT, DOUBLE4>(
         double4_conv2_out, double4_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, false,
+    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
             FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(
         double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);

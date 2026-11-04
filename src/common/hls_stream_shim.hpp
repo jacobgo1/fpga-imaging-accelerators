@@ -11,8 +11,13 @@
 
 namespace hls {
 
+// stream<T, DEPTH> is a stream<T> with its FIFO depth in the type, as in Vitis HLS:
+// the depth matters only to synthesis.
+template <typename T, int DEPTH = 0>
+class stream;
+
 template <typename T>
-class stream {
+class stream<T, 0> {
 public:
     stream() = default;
     explicit stream(const char* /*name*/) {}
@@ -28,6 +33,13 @@ public:
 
 private:
     std::queue<T> values_;
+};
+
+template <typename T, int DEPTH>
+class stream : public stream<T, 0> {
+public:
+    stream() = default;
+    explicit stream(const char* name) : stream<T, 0>(name) {}
 };
 
 } // namespace hls

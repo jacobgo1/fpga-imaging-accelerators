@@ -23,17 +23,19 @@ void load_conv_weights(const weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3], c
 }
 
 // A same-padded 3x3 conv of one map, streamed: every input channel of a pixel
-// in, raster order; every pixel's sums out, the same order. Two lines of input
+// in, raster order; every pixel's outputs out (conv_out: sums or activations),
+// the same order. Two lines of input
 // are kept on chip, the window in registers.
 //
 // The window's centre trails the input by a row and a pixel, so the loop runs
 // W + 1 steps past the last input. Taps outside the map are zeroed by the
 // centre's position. OUT_PER_CYCLE output channels a cycle, so a layer with
 // time to spare uses fewer multipliers.
-template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE, bool DSP, typename A_T>
+template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
+         activation A, int ROUND_BITS, bool DSP, typename A_T>
 void conv3x3_all_in_patch(hls::stream<vec_t<A_T, IN_CHANNELS> >& in,
                           const weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3], const sum_t bias[OUT_CHANNELS],
-                          hls::stream<vec_t<sum_t, OUT_CHANNELS> >& out) {
+                          hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
     constexpr int STEPS = OUT_CHANNELS / OUT_PER_CYCLE;
     constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
 
@@ -85,12 +87,12 @@ void conv3x3_all_in_patch(hls::stream<vec_t<A_T, IN_CHANNELS> >& in,
                 sums[o] = bias[o] + sum;
             }
             if (last_step) {
-                vec_t<sum_t, OUT_CHANNELS> pixel_sums;
+                vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> pixel_out;
                 for (int o = 0; o < OUT_CHANNELS; o++) {
                     #pragma HLS UNROLL
-                    pixel_sums.v[o] = sums[o];
+                    pixel_out.v[o] = conv_out<A, ROUND_BITS>::of(sums[o]);
                 }
-                out.write(pixel_sums);
+                out.write(pixel_out);
             }
         }
 
@@ -109,11 +111,13 @@ void conv3x3_all_in_patch(hls::stream<vec_t<A_T, IN_CHANNELS> >& in,
 }
 
 // A 3x3 conv with few channels: every input channel at once, OUT_PER_CYCLE output
-// channels a cycle. The weights stay a ROM inside this process.
+// channels a cycle. A: its activation (conv_out), ROUND_BITS what that rounds off.
+// The weights stay a ROM inside this process.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int BIAS_SHIFT, const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS],
-         bool DSP, int OUT_PER_CYCLE = 1>
-void conv3x3_all_in(hls::stream<vec_t<act_t, IN_CHANNELS> >& in, hls::stream<vec_t<sum_t, OUT_CHANNELS> >& out,
+         bool DSP, int OUT_PER_CYCLE = 1, activation A = activation::none, int ROUND_BITS = 0>
+void conv3x3_all_in(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
+                    hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                     int height, int width) {
     weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3];
     #pragma HLS ARRAY_PARTITION variable=weight type=cyclic factor=OUT_PER_CYCLE dim=1
@@ -127,6 +131,7 @@ void conv3x3_all_in(hls::stream<vec_t<act_t, IN_CHANNELS> >& in, hls::stream<vec
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_all_in_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, OUT_PER_CYCLE, DSP>(in, weight, bias, out);
+        conv3x3_all_in_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, OUT_PER_CYCLE,
+                             A, ROUND_BITS, DSP>(in, weight, bias, out);
     }
 }

@@ -5,31 +5,16 @@
 
 // A 1x1 conv on int16 activations: IN_PER_CYCLE input channels times OUT_PER_CYCLE
 // output channels a cycle, so a layer with time to spare uses fewer multipliers.
-// RELU: outputs ReLU'd and rounded off ROUND_BITS bits to activations; otherwise the
-// sums, for the scores.
-template<bool RELU, int ROUND_BITS> struct conv1x1_out {
-    typedef act_t type;
-    static type of(sum_t sum) {
-        #pragma HLS INLINE
-        return requant_relu<ROUND_BITS>(sum);
-    }
-};
-template<int ROUND_BITS> struct conv1x1_out<false, ROUND_BITS> {
-    typedef sum_t type;
-    static type of(sum_t sum) {
-        #pragma HLS INLINE
-        return sum;
-    }
-};
-
+// A: its activation (conv_out): ReLU'd and rounded to activations, or the sums,
+// for the scores.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
-         bool RELU, int BIAS_SHIFT, int ROUND_BITS,
+         activation A, int BIAS_SHIFT, int ROUND_BITS,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
          int IN_PER_CYCLE = IN_CHANNELS>
 void conv1x1(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
-             hls::stream<vec_t<typename conv1x1_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out,
+             hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
              int height, int width) {
-    typedef typename conv1x1_out<RELU, ROUND_BITS>::type out_t;
+    typedef typename conv_out<A, ROUND_BITS>::type out_t;
     constexpr int OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE, IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE;
     constexpr int STEPS = OUT_GROUPS * IN_GROUPS;   // per pixel: output group outer, input group inner
     weight_t weight[STEPS][OUT_PER_CYCLE][IN_PER_CYCLE];
@@ -75,7 +60,7 @@ void conv1x1(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
                 sum += mul<DSP, sum_t>(pixel[(IN_GROUPS == 1 ? 0 : in_group * IN_PER_CYCLE) + i], weight[step][j][i]);
             }
             running[j] = sum;
-            const out_t result = conv1x1_out<RELU, ROUND_BITS>::of(sum);
+            const out_t result = conv_out<A, ROUND_BITS>::of(sum);
             // Written at fixed places, the run-time choice in which statement runs.
             for (int og = 0; og < OUT_GROUPS; og++) {
                 #pragma HLS UNROLL

@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
+#include "../../../optimized/shared/zscore_int8.hpp"
+
+namespace zscore = zscore_int8;
 
 // waveletcnn_opt for the Zynq-7030 (--board zynq7030): the same answers, four
 // 64-bit read ports (the writer shares HP3), one conv output channel a cycle.
@@ -28,6 +31,11 @@ constexpr int SCORE_FRAC_BITS = 15;             // ... of the scores
 
 typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
 typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
+
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
+constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
+constexpr int PIXELS_PER_BURST = 8, BURSTS_IN_FLIGHT = 2;
+constexpr bool ZSCORE_ON_DSPS = false;
 
 // The argument names become the kernel's register names: keep them.
 void waveletcnn_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,

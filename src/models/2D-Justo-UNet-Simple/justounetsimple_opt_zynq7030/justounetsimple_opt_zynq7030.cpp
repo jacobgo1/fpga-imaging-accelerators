@@ -1,5 +1,4 @@
 #include "justounetsimple_opt_zynq7030.hpp"
-#include "../../../optimized/shared/zscore_int8.hpp"
 #include "../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../optimized/shared/patch_buffer.hpp"
 #include "../../../optimized/shared/conv3x3_2mul.hpp"
@@ -8,22 +7,10 @@
 #include "../../../optimized/shared/relu_pool_up.hpp"
 #include "../../../optimized/shared/relu_up.hpp"
 #include "../../../optimized/shared/store_scores.hpp"
+
 #include "../../../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
 
 namespace weights = justounetsimple_int8;
-namespace zscore = zscore_int8;
-
-// Chip variables for implementation:
-constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
-constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
-
-constexpr int HALF_PATCH = PATCH_SIZE / 2;
-constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
-constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
-constexpr int PIXELS_PER_BURST = 8;       // 240 words, within the 256 a burst allows
-constexpr int BURSTS_IN_FLIGHT = 2;
-constexpr bool ZSCORE_ON_DSPS = false;
-constexpr bool CONV2_TO_4_ON_DSPS = true;   // 54 of the 76 DSPs conv1 leaves
 
 // A layer's sums have the fraction bits of its input plus those of its weights.
 // The bias is shifted up to them, the sums down to the next layer's activations.

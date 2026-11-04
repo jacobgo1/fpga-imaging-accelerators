@@ -155,3 +155,6 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
   (one template each for float and quantized weights); the golden kernel's ReLU is now done in its
   conv, one map buffer fewer a layer, the same answers. Golden kernel not rebuilt yet.
+- 2026-11-03: `conv3x3_all_in` has an `activation` option (here `none`: its LeakyReLU stays in
+  `leaky_conv1x1`); the zscore include and constants moved to each kernel's .hpp, those from the
+  weights' fractions stay in the .cpp. The same answers bit for bit; not rebuilt.

@@ -64,11 +64,13 @@ void load_packed_weights(const weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3],
     }
 }
 
-template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int SHIFT, int GROUP>
+template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
+         activation A, int ROUND_BITS, int SHIFT, int GROUP>
 void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
                         const packed_weight_t<SHIFT> packed[OUT_CHANNELS / 2][IN_CHANNELS][3][3],
                         const sum_t bias[OUT_CHANNELS],
-                        hls::stream<vec_t<sum_t, OUT_CHANNELS> >& out) {
+                        hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
+    typedef conv_out<A, ROUND_BITS> output;
     constexpr int CHUNKS = IN_CHANNELS / IN_PER_CYCLE;
     constexpr int INPUTS = CHUNKS * MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
 
@@ -101,7 +103,7 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
         if (inputs >= LAG) {
             const bool row_inside[3] = {y > 0, true, y < MAP_HEIGHT - 1};
             const bool col_inside[3] = {x > 0, true, x < MAP_WIDTH - 1};
-            vec_t<sum_t, OUT_CHANNELS> pixel_sums;
+            vec_t<typename output::type, OUT_CHANNELS> pixel_out;
             for (int j = 0; j < OUT_CHANNELS / 2; j++) {
                 #pragma HLS UNROLL
                 sum_t low = 0, high = 0;
@@ -127,14 +129,14 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
                 const sum_t low_total = (first_chunk ? bias[2 * j] : partial[y][x][2 * j]) + low;
                 const sum_t high_total = (first_chunk ? bias[2 * j + 1] : partial[y][x][2 * j + 1]) + high;
                 if (last_chunk) {
-                    pixel_sums.v[2 * j] = low_total;
-                    pixel_sums.v[2 * j + 1] = high_total;
+                    pixel_out.v[2 * j] = output::of(low_total);
+                    pixel_out.v[2 * j + 1] = output::of(high_total);
                 } else {
                     partial[y][x][2 * j] = low_total;
                     partial[y][x][2 * j + 1] = high_total;
                 }
             }
-            if (last_chunk) out.write(pixel_sums);
+            if (last_chunk) out.write(pixel_out);
             if (x < MAP_WIDTH - 1) x++;
             else if (y < MAP_HEIGHT - 1) { x = 0; y++; }
             else { x = 0; y = 0; chunk_now++; }
@@ -144,12 +146,14 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
 }
 
 // The layer: the input channels padded with zero weights to a multiple of
-// IN_PER_CYCLE, which the producer sends. The weights stay a ROM inside this process.
+// IN_PER_CYCLE, which the producer sends. A: its activation (conv_out), ROUND_BITS
+// what that rounds off. The weights stay a ROM inside this process.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS],
-         int SHIFT, int GROUP>
-void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec_t<sum_t, OUT_CHANNELS> >& out,
+         int SHIFT, int GROUP, activation A = activation::none, int ROUND_BITS = 0>
+void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
+                  hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                   int height, int width) {
     constexpr int PADDED_IN = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE * IN_PER_CYCLE;
     packed_weight_t<SHIFT> packed[OUT_CHANNELS / 2][PADDED_IN][3][3];
@@ -164,7 +168,8 @@ void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_2mul_patch<MAP_HEIGHT, MAP_WIDTH, PADDED_IN, OUT_CHANNELS, IN_PER_CYCLE, SHIFT, GROUP>(
+        conv3x3_2mul_patch<MAP_HEIGHT, MAP_WIDTH, PADDED_IN, OUT_CHANNELS, IN_PER_CYCLE, A, ROUND_BITS,
+                           SHIFT, GROUP>(
             in, packed, bias, out);
     }
 }

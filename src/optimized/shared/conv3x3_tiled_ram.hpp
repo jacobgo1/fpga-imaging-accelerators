@@ -18,17 +18,17 @@ struct tiled_ram_word_t {
 };
 
 template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE,
-         int TAPS_PER_STEP, bool RELU, int ROUND_BITS, bool DSP>
+         int TAPS_PER_STEP, activation A, int ROUND_BITS, bool DSP>
 void conv3x3_tiled_ram_patch(
     hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
     const tiled_ram_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, TAPS_PER_STEP>
         weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE) * (9 / TAPS_PER_STEP)],
     const sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE],
-    hls::stream<vec_t<typename conv_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
+    hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
     constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
     constexpr int TAP_STEPS = 9 / TAPS_PER_STEP, STEPS = OUT_GROUPS * IN_GROUPS * TAP_STEPS;
     constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 2;
-    typedef typename conv_out<RELU, ROUND_BITS>::type out_t;
+    typedef typename conv_out<A, ROUND_BITS>::type out_t;
 
     // [row memory][channel lane][column * IN_GROUPS + group]: plain arrays. A local
     // struct packed with AGGREGATE made Vitis HLS 2025.2 crash; reshaping the lanes
@@ -119,7 +119,7 @@ void conv3x3_tiled_ram_patch(
                 }
                 const sum_t total = (in_group == 0 && first_tap ? bias[out_group][j] : running[j]) + sum;
                 running[j] = total;
-                const out_t done = conv_out<RELU, ROUND_BITS>::of(total);
+                const out_t done = conv_out<A, ROUND_BITS>::of(total);
                 for (int og = 0; og < OUT_GROUPS; og++) {
                     #pragma HLS UNROLL
                     if (last_input && out_group == og) outputs[og * OUT_PER_CYCLE + j] = done;
@@ -206,9 +206,9 @@ void load_tiled_ram_weights(
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int OUT_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
-         int TAPS_PER_STEP, bool RELU, int ROUND_BITS>
+         int TAPS_PER_STEP, activation A, int ROUND_BITS>
 void conv3x3_tiled_ram(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
-                       hls::stream<vec_t<typename conv_out<RELU, ROUND_BITS>::type, OUT_CHANNELS> >& out,
+                       hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                        int height, int width) {
     constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE) * (9 / TAPS_PER_STEP);
     tiled_ram_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, TAPS_PER_STEP> weight[STEPS];
@@ -222,6 +222,6 @@ void conv3x3_tiled_ram(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_tiled_ram_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE,
-                                TAPS_PER_STEP, RELU, ROUND_BITS, DSP>(in, weight, bias, out);
+                                TAPS_PER_STEP, A, ROUND_BITS, DSP>(in, weight, bias, out);
     }
 }

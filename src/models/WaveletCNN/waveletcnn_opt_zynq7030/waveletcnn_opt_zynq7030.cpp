@@ -1,20 +1,14 @@
 #include "waveletcnn_opt_zynq7030.hpp"
-#include "../../../optimized/shared/zscore_int8.hpp"
 #include "../../../optimized/shared/read_patch_rows.hpp"
 #include "../../../optimized/shared/pixel_buffer.hpp"
 #include "../../../optimized/shared/dwt_proj.hpp"
 #include "../../../optimized/shared/conv3x3_all_in.hpp"
 #include "../../../optimized/shared/leaky_conv1x1.hpp"
 #include "../../../optimized/shared/store_scores.hpp"
+
 #include "../../../../weights/quantized/waveletcnn/waveletcnn_int8.hpp"
 
 namespace weights = waveletcnn_int8;
-namespace zscore = zscore_int8;
-
-constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
-constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
-constexpr int PIXELS_PER_BURST = 8, BURSTS_IN_FLIGHT = 2;
-constexpr bool ZSCORE_ON_DSPS = false;
 
 // A layer's sums have its input's fraction bits plus its weights'. The DWT's
 // products keep all of theirs (exact in int16).

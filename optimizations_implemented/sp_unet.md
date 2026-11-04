@@ -499,3 +499,8 @@ Routed, kernel alone (without the interconnects); by process in
   rebuilt yet.
 - 2026-11-03: `src/optimized/*/chip.hpp` removed: each optimized kernel sets its chip's DSP packing (and
   UltraRAM) at the top of its `.cpp`, under "Chip variables for implementation". Same values.
+- 2026-11-03: `conv3x3_tiled`, `conv3x3_tiled_ram` and `conv1x1` take `activation::relu` / `none` instead of
+  `bool RELU` (one option for every conv, `fixed_point.hpp`). The same answers bit for bit; not rebuilt.
+- 2026-11-03: the constants (the `sizes` table, chip variables) moved to each kernel's .hpp; those
+  from the weights' fractions, `sp_unet_opt_common.hpp` and the layer macros stay in the .cpp. The same
+  answers bit for bit.

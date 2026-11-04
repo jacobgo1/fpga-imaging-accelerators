@@ -59,16 +59,19 @@ act_t requant_leaky_relu(sum_t sum) {
     return leaked > 32767 ? (act_t)32767 : leaked < -32768 ? (act_t)-32768 : (act_t)leaked;
 }
 
-// What a conv sends on: its sums as they are, or with RELU ReLU'd and rounded
-// off ROUND_BITS bits to activations.
-template<bool RELU, int ROUND_BITS> struct conv_out {
+// The activation after a layer, as in the PyTorch model: none sends the sums on
+// (the scores, or a ReLU module after it), relu ReLUs them and rounds off
+// ROUND_BITS bits to activations, inside the layer's own process.
+enum class activation { none, relu };
+
+template<activation A, int ROUND_BITS> struct conv_out {
     typedef act_t type;
     static type of(sum_t sum) {
         #pragma HLS INLINE
         return requant_relu<ROUND_BITS>(sum);
     }
 };
-template<int ROUND_BITS> struct conv_out<false, ROUND_BITS> {
+template<int ROUND_BITS> struct conv_out<activation::none, ROUND_BITS> {
     typedef sum_t type;
     static type of(sum_t sum) {
         #pragma HLS INLINE

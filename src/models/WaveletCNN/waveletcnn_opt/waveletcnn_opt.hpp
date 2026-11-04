@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
+#include "../../../optimized/shared/zscore_int8.hpp"
+
+namespace zscore = zscore_int8;
 
 // The quantized WaveletCNN on a whole raw capture. Its first two layers are per
 // pixel, so the patch buffer only holds a strip, and the wavelet transform is
@@ -31,6 +34,10 @@ constexpr int SCORE_FRAC_BITS = 15;             // ... of the scores
 
 typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
 typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
+
+constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
+constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
+constexpr bool ZSCORE_ON_DSPS = true;
 
 // The argument names become the kernel's register names: keep them.
 void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
