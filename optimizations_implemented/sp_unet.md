@@ -526,3 +526,9 @@ Routed, kernel alone (without the interconnects); by process in
   not built: check csynth's DSP count and the Bind Op Report.
 - 2026-11-04: `conv1x1` takes which pixels it walks as a type, `patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>`,
   so the 1D networks use it too. The same hardware and answers; nothing to rebuild for it alone.
+- 2026-11-04: `conv3x3_tiled_patch` is a perfect loop nest (pixels -> output groups -> input groups,
+  pipelined at the bottom, HLS flattening it to one pipeline a patch) instead of one flat loop with a
+  hand-written counter chain; the window centre's y and x come from p - W - 1 by shifts. Its unused
+  `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
+  the nest flattened at II = 1 and T stays 9 828 / 34 944 / 69 888 cycles a patch (the 7020 kernel uses
+  `conv3x3_tiled_ram`, not changed).

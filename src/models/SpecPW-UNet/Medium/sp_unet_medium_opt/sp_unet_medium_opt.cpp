@@ -111,21 +111,21 @@ void sp_unet_medium_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_
     // The encoder: double1 at 32 x 32, whose output is also the skip; double2 at 16 x 16.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, STEM3, DOUBLE1,
                   sizes::DOUBLE1_CONV1::IN_PER_CYCLE, sizes::DOUBLE1_CONV1::OUT_PER_CYCLE, DOUBLE1_CONV1_FRACS::BIAS_SHIFT,
-                  weights::double1_block_0_weight, weights::double1_block_0_bias, sizes::DOUBLE1_CONV1::DSP, 3,
+                  weights::double1_block_0_weight, weights::double1_block_0_bias, sizes::DOUBLE1_CONV1::DSP,
                   activation::relu, DOUBLE1_CONV1_FRACS::SHIFT>(stem_out, double1_relu1, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1, DOUBLE1,
                   sizes::DOUBLE1_CONV2::IN_PER_CYCLE, sizes::DOUBLE1_CONV2::OUT_PER_CYCLE, DOUBLE1_CONV2_FRACS::BIAS_SHIFT,
-                  weights::double1_block_3_weight, weights::double1_block_3_bias, sizes::DOUBLE1_CONV2::DSP, 3,
+                  weights::double1_block_3_weight, weights::double1_block_3_bias, sizes::DOUBLE1_CONV2::DSP,
                   activation::relu, DOUBLE1_CONV2_FRACS::SHIFT>(double1_relu1, double1_out, height, width);
     duplicate<PATCH_SIZE, PATCH_SIZE, PIXELS>(double1_out, skip, pool1_in, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(pool1_in, pool1_out, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE1, DOUBLE2,
                   sizes::DOUBLE2_CONV1::IN_PER_CYCLE, sizes::DOUBLE2_CONV1::OUT_PER_CYCLE, DOUBLE2_CONV1_FRACS::BIAS_SHIFT,
-                  weights::double2_block_0_weight, weights::double2_block_0_bias, sizes::DOUBLE2_CONV1::DSP, 3,
+                  weights::double2_block_0_weight, weights::double2_block_0_bias, sizes::DOUBLE2_CONV1::DSP,
                   activation::relu, DOUBLE2_CONV1_FRACS::SHIFT>(pool1_out, double2_relu1, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
                   sizes::DOUBLE2_CONV2::IN_PER_CYCLE, sizes::DOUBLE2_CONV2::OUT_PER_CYCLE, DOUBLE2_CONV2_FRACS::BIAS_SHIFT,
-                  weights::double2_block_3_weight, weights::double2_block_3_bias, sizes::DOUBLE2_CONV2::DSP, 3,
+                  weights::double2_block_3_weight, weights::double2_block_3_bias, sizes::DOUBLE2_CONV2::DSP,
                   activation::relu, DOUBLE2_CONV2_FRACS::SHIFT>(double2_relu1, double2_out, height, width);
     // Pool to 8 x 8 and upsample back.
     max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(double2_out, pool2_out, height, width);
@@ -134,31 +134,31 @@ void sp_unet_medium_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_
     // The decoder: up1's conv at 16 x 16, double3, upsample to 32 x 32, up2's conv.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
                   sizes::UP1_CONV::IN_PER_CYCLE, sizes::UP1_CONV::OUT_PER_CYCLE, UP1_FRACS::BIAS_SHIFT,
-                  weights::up1_1_weight, weights::up1_1_bias, sizes::UP1_CONV::DSP, 3,
+                  weights::up1_1_weight, weights::up1_1_bias, sizes::UP1_CONV::DSP,
                   activation::relu, UP1_FRACS::SHIFT>(pool2_up, up1_relu, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE3,
                   sizes::DOUBLE3_CONV1::IN_PER_CYCLE, sizes::DOUBLE3_CONV1::OUT_PER_CYCLE, DOUBLE3_CONV1_FRACS::BIAS_SHIFT,
-                  weights::double3_block_0_weight, weights::double3_block_0_bias, sizes::DOUBLE3_CONV1::DSP, 3,
+                  weights::double3_block_0_weight, weights::double3_block_0_bias, sizes::DOUBLE3_CONV1::DSP,
                   activation::relu, DOUBLE3_CONV1_FRACS::SHIFT>(up1_relu, double3_relu1, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
                   sizes::DOUBLE3_CONV2::IN_PER_CYCLE, sizes::DOUBLE3_CONV2::OUT_PER_CYCLE, DOUBLE3_CONV2_FRACS::BIAS_SHIFT,
-                  weights::double3_block_3_weight, weights::double3_block_3_bias, sizes::DOUBLE3_CONV2::DSP, 3,
+                  weights::double3_block_3_weight, weights::double3_block_3_bias, sizes::DOUBLE3_CONV2::DSP,
                   activation::relu, DOUBLE3_CONV2_FRACS::SHIFT>(double3_relu1, double3_act, height, width);
     upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(double3_act, double3_out, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3, DOUBLE3,
                   sizes::UP2_CONV::IN_PER_CYCLE, sizes::UP2_CONV::OUT_PER_CYCLE, UP2_FRACS::BIAS_SHIFT,
-                  weights::up2_1_weight, weights::up2_1_bias, sizes::UP2_CONV::DSP, 3,
+                  weights::up2_1_weight, weights::up2_1_bias, sizes::UP2_CONV::DSP,
                   activation::relu, UP2_FRACS::SHIFT>(double3_out, up2_relu, height, width);
 
     // The skip joins, then double4 and the final 1x1 conv: the scores.
     concat_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE3, DOUBLE1>(up2_relu, skip, joined, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3 + DOUBLE1, DOUBLE4,
                   sizes::DOUBLE4_CONV1::IN_PER_CYCLE, sizes::DOUBLE4_CONV1::OUT_PER_CYCLE, DOUBLE4_CONV1_FRACS::BIAS_SHIFT,
-                  weights::double4_block_0_weight, weights::double4_block_0_bias, sizes::DOUBLE4_CONV1::DSP, 3,
+                  weights::double4_block_0_weight, weights::double4_block_0_bias, sizes::DOUBLE4_CONV1::DSP,
                   activation::relu, DOUBLE4_CONV1_FRACS::SHIFT>(joined, double4_relu1, height, width);
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
                   sizes::DOUBLE4_CONV2::IN_PER_CYCLE, sizes::DOUBLE4_CONV2::OUT_PER_CYCLE, DOUBLE4_CONV2_FRACS::BIAS_SHIFT,
-                  weights::double4_block_3_weight, weights::double4_block_3_bias, sizes::DOUBLE4_CONV2::DSP, 3,
+                  weights::double4_block_3_weight, weights::double4_block_3_bias, sizes::DOUBLE4_CONV2::DSP,
                   activation::relu, DOUBLE4_CONV2_FRACS::SHIFT>(double4_relu1, double4_out, height, width);
     conv1x1<patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
             FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias, false>(

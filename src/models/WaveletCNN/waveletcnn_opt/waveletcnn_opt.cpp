@@ -64,7 +64,7 @@ void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word
     // The 3x3 conv, 12 -> 12, and its LeakyReLU.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, MID_CHANNELS, MID_CHANNELS,
                   CONV_OUT_PER_CYCLE, CONV_SUM_FRAC_BITS - weights::conv_block_0_bias_frac, weights::conv_block_0_weight,
-                  weights::conv_block_0_bias, true, 3,
+                  weights::conv_block_0_bias, true,
                   activation::leaky, CONV_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS>(projected, conv_act, height, width);
 
     // The 1x1 head 12 -> 3 and its LeakyReLU: a pixel a cycle.

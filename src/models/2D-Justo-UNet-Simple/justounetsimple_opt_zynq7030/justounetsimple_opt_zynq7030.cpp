@@ -84,7 +84,7 @@ void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_
     // conv2: 6 -> 12 at 16 x 16; ReLU; pool to 8 x 8 and upsample back.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, BASE_CHANNELS, 2 * BASE_CHANNELS,
                   CONV2_TO_4_CHANNELS_PER_CYCLE, 1, CONV2_BIAS_SHIFT,
-                  weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS, activation::relu,
                   CONV2_OUTPUT_SHIFT>(conv1_pooled, conv2_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv2_act, conv2_pooled, height, width);
     upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH / 2, HALF_PATCH / 2>(conv2_pooled, conv2_upsampled, height, width);
@@ -92,7 +92,7 @@ void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_
     // conv3: 12 -> 6 at 16 x 16; ReLU; upsample to 32 x 32.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 2 * BASE_CHANNELS, BASE_CHANNELS,
                   CONV2_TO_4_CHANNELS_PER_CYCLE, 1, CONV3_BIAS_SHIFT,
-                  weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS, activation::relu,
                   CONV3_OUTPUT_SHIFT>(conv2_upsampled, conv3_act, height, width);
     upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv3_act, conv3_upsampled, height, width);
 

@@ -167,3 +167,9 @@ Routed, kernel alone (without the interconnects); by process in
   (`activation::leaky`), so `leaky_conv1x1` is gone too: the head is `conv1x1` with
   `activation::leaky_scores`, and the FIFO between them is 16 bits a channel instead of 32. Not built:
   check csynth's T, DSPs (216 / 108 / 54 conv, 36 head) and LUTs.
+- 2026-11-04: `conv3x3_tiled_patch` is a perfect loop nest (pixels -> output groups -> input groups,
+  pipelined at the bottom, HLS flattening it to one pipeline a patch) instead of one flat loop with a
+  hand-written counter chain; the window centre's y and x come from p - W - 1 by shifts. Its unused
+  `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
+  the nest flattened at II = 1 and conv_block stays 6 342 / 12 684 / 25 368 cycles a patch (6, 12, 24
+  cycles a pixel).

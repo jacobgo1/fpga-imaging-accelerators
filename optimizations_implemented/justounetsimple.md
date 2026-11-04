@@ -229,3 +229,8 @@ Routed, kernel alone (without the interconnects); by process in
   channel a cycle and one output channel a step, as before. Its weights are a LUTRAM word a step instead
   of registers, and it rounds one channel at a time instead of all. The same answers bit for bit; not
   built: check csynth's cycles a patch and LUTs for conv2-conv4.
+- 2026-11-04: `conv3x3_tiled_patch` is a perfect loop nest (pixels -> output groups -> input groups,
+  pipelined at the bottom, HLS flattening it to one pipeline a patch) instead of one flat loop with a
+  hand-written counter chain; the window centre's y and x come from p - W - 1 by shifts. Its unused
+  `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
+  the nest flattened at II = 1 and the cycles a patch and DSP / LUT / FF counts do not change.

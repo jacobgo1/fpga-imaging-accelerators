@@ -166,7 +166,7 @@ and *how much* it does a cycle; those depend on the layer and the chip, so `src/
 one conv module per window and input order, and everything else is a template option they all
 take the same way:
 
-- how much a cycle: `IN_PER_CYCLE`, `OUT_PER_CYCLE` (and window rows or taps a step), sized so
+- how much a cycle: `IN_PER_CYCLE`, `OUT_PER_CYCLE` (and, in `conv3x3_tiled_ram`, window taps a step), sized so
   no process waits for another;
 - the multiplier: `DSP` (a DSP or LUTs, `mul<DSP>`), or two products per DSP (`dsp_pack.hpp`,
   `DSP_PACK_SHIFT` the chip's spacing). Packing needs two outputs sharing an 8-bit
