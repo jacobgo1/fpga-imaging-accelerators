@@ -8,7 +8,7 @@
 // justoliunet_opt for the Zynq-7020 (--board zedboard): the same answers, bit for bit.
 // 220 DSPs cannot compute positions side by side, so each layer takes one output
 // position at a time, folded over steps, and its input arrives one position at a
-// time (conv1d_positions.hpp). One pixel every 108 cycles, one read port.
+// time (position_windows, conv1d.hpp). One pixel every 108 cycles, one read port.
 
 constexpr int CUBE_BANDS = 120;
 constexpr int BANDS_PER_WORD = 4;                                  // one 64-bit word

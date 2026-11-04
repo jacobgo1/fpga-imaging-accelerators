@@ -29,8 +29,8 @@ typedef layer_size< 4, 1, true> DOUBLE4_CONV2;  // 16 -> 16   4 x 16 = 64    x 1
 constexpr int DSP_PACK_SHIFT = 18;   // DSP48E2, 27-bit input: two weights 18 bits apart (dsp_pack.hpp)
 
 // The argument names become the kernel's register names: keep them.
-void sp_unet_large_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                       hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void sp_unet_large_opt(const cube_word_t* din0, const cube_word_t* din1,
+                       const cube_word_t* din2, const cube_word_t* din3,
                        hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
 
 #endif

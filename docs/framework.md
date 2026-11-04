@@ -182,8 +182,7 @@ take the same way:
 | `conv3x3_2mul` | 3×3 on the raw bands: a patch's bands in chunks, the sums held per pixel | a 112-channel pixel would need a line buffer far too wide; the 2D layer that can pack |
 | `conv1x1` | a pixel with all its channels at a time (2D patches or 1D lanes, `patch_pixels` / `pixel_lane`) | the general 1×1, every head |
 | `pointwise_packed` | 1×1 on the raw bands, a pixel's bands in chunks | as `conv3x3_2mul`, for 1×1 |
-| `conv1d_map` | 1D along the bands, the whole map of a pixel at once | the ZCU104's 1D layers, many positions a cycle |
-| `conv1d_positions` | 1D, one band position at a time, folded | the 7020/7030's 1D layers: too few DSPs for a whole map |
+| `conv1d` | 1D along the bands: a window in (from `map_windows`, a pixel's whole map, or `position_windows`, one position at a time), `POSITIONS` × `OUT_PER_CYCLE` × `IN_PER_CYCLE` a step | every 1D layer on every chip; the windows process keeps the window fill out of the conv's steps |
 
 Two first layers are fused with what comes before them, as the design of their network:
 `zscore_pointwise` (1D-SpectralPointwise is DDR-bound, so the z-score and convsp1 work on each

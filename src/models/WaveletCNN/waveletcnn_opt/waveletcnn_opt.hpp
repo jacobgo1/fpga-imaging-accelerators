@@ -40,8 +40,8 @@ constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
 constexpr bool ZSCORE_ON_DSPS = true;
 
 // The argument names become the kernel's register names: keep them.
-void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-               hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void waveletcnn_opt(const cube_word_t* din0, const cube_word_t* din1,
+               const cube_word_t* din2, const cube_word_t* din3,
                hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
 
 #endif

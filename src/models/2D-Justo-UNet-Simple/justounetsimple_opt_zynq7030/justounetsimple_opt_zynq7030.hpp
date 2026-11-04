@@ -31,8 +31,6 @@ typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
 constexpr int HALF_PATCH = PATCH_SIZE / 2;
 constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
 constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
-constexpr int PIXELS_PER_BURST = 8;       // 240 words, within the 256 a burst allows
-constexpr int BURSTS_IN_FLIGHT = 2;
 constexpr bool ZSCORE_ON_DSPS = false;
 constexpr bool CONV2_TO_4_ON_DSPS = true;   // 54 of the 76 DSPs conv1 leaves
 
@@ -41,8 +39,8 @@ constexpr int DSP_PACK_SHIFT = 16;   // DSP48E1, 25-bit input: two weights 16 bi
 constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
 
 // The argument names become the kernel's register names: keep them.
-void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                                  hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void justounetsimple_opt_zynq7030(const cube_word_t* din0, const cube_word_t* din1,
+                                  const cube_word_t* din2, const cube_word_t* din3,
                                   hls::burst_maxi<score_word_t> dout, int height, int width);
 
 #endif

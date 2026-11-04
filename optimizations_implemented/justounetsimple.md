@@ -234,3 +234,6 @@ Routed, kernel alone (without the interconnects); by process in
   hand-written counter chain; the window centre's y and x come from p - W - 1 by shifts. Its unused
   `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
   the nest flattened at II = 1 and the cycles a patch and DSP / LUT / FF counts do not change.
+- 2026-11-04: the 7030 and 7020 kernels read with `read_patch_rows_simple` too (`PIXELS_PER_BURST`,
+  `BURSTS_IN_FLIGHT` gone); `read_patch_rows` is kept but unused. Not built: check hls.log for the
+  inferred read bursts and compare the cycles a patch with the last runs.

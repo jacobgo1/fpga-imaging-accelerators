@@ -1,5 +1,5 @@
 #include "justounetsimple_opt_zynq7030.hpp"
-#include "../../../optimized/read_patch_rows.hpp"
+#include "../../../optimized/read_patch_rows_simple.hpp"
 #include "../../../optimized/patch_buffer.hpp"
 #include "../../../optimized/conv3x3_2mul.hpp"
 #include "../../../optimized/conv3x3_tiled.hpp"
@@ -28,8 +28,8 @@ constexpr int CONV2_OUTPUT_SHIFT = CONV2_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS;
 constexpr int CONV3_OUTPUT_SHIFT = CONV3_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS;
 constexpr int CONV4_OUTPUT_SHIFT = CONV4_SUM_FRAC_BITS - SCORE_FRAC_BITS;
 
-void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                                  hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void justounetsimple_opt_zynq7030(const cube_word_t* din0, const cube_word_t* din1,
+                                  const cube_word_t* din2, const cube_word_t* din3,
                                   hls::burst_maxi<score_word_t> dout, int height, int width)
 {
     // Four readers on HP0-3; the writer shares HP3. depth is for co-simulation only.
@@ -63,14 +63,10 @@ void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_
     hls::stream<vec_t<act_t, BASE_CHANNELS>, 64> conv3_upsampled("conv3_upsampled");
     hls::stream<vec_t<sum_t, CLASSES>, 32> scores("scores");
 
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
-        din0, cube_words[0], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
-        din1, cube_words[1], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
-        din2, cube_words[2], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
-        din3, cube_words[3], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
     patch_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, CONV1_BANDS_PER_CYCLE,
                  READ_PORTS, zscore::FRAC, zscore::IN_MAX, zscore::A, zscore::B, ZSCORE_ON_DSPS, HAS_URAM>(
         cube_words, zscores, height, width);

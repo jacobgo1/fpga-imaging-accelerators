@@ -80,3 +80,6 @@ Routed, kernel alone (without the interconnects); by process in
   sets `DSP_PACK_SHIFT` (18 / 16) and passes it; the group size follows (4 / 1, as before).
   The same expressions, the same answers bit for bit; not built: check csynth's DSP count and the
   Bind Op Report.
+- 2026-11-04: `conv1d` with `map_windows` / `position_windows` replaces `conv1d_map` / `conv1d_positions`,
+  as in justoliunet.md (the same chain). The same answers bit for bit; not built: predicted 18 / 72 / 108
+  cycles a pixel on the ZCU104 / 7030 / ZedBoard.

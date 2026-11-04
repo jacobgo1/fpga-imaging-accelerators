@@ -30,13 +30,11 @@ typedef tiled_ram_layer_size<24, 1, 1, true> DOUBLE4_CONV1;             // 24 ->
 typedef tiled_ram_layer_size< 8, 1, 1, true> DOUBLE4_CONV2;             // 8 ->  8  9 x  1 x  8 =   72 a pixel  x 1058 =  76 176    8
 }
 
-constexpr int PIXELS_PER_BURST = 8, BURSTS_IN_FLIGHT = 2;   // 240 words a burst
-
 // Chip variables for implementation:
 constexpr int DSP_PACK_SHIFT = 16;   // DSP48E1, 25-bit input: two weights 16 bits apart (dsp_pack.hpp)
 
 // The argument names become the kernel's register names: keep them.
-void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
+void sp_unet_small_opt_zynq7020(const cube_word_t* din0, hls::burst_maxi<score_word_t> dout,
                                 int height, int width, uint32_t& cycles);
 
 #endif

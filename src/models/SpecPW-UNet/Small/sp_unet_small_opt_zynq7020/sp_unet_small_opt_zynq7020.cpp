@@ -1,5 +1,5 @@
 #include "sp_unet_small_opt_zynq7020.hpp"
-#include "../../../../optimized/read_patch_rows.hpp"
+#include "../../../../optimized/read_patch_rows_simple.hpp"
 #include "../../../../optimized/pixel_buffer.hpp"
 #include "../../../../optimized/pointwise_packed.hpp"
 #include "../../../../optimized/conv1x1.hpp"
@@ -16,7 +16,7 @@ namespace weights = sp_unet_small_int8;
 
 #include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
 
-void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
+void sp_unet_small_opt_zynq7020(const cube_word_t* din0, hls::burst_maxi<score_word_t> dout,
                                 int height, int width, uint32_t& cycles)
 {
     // depth is for co-simulation only.
@@ -59,8 +59,7 @@ void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_ma
     #pragma HLS BIND_STORAGE variable=pool2_up    type=fifo impl=lutram
     #pragma HLS BIND_STORAGE variable=double3_out type=fifo impl=lutram
 
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
-        din0, cube_words[0], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
     pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD,
                  sizes::CONVSP1_BANDS_PER_CYCLE, READ_PORTS, CONVSP1_CHUNKS, zscore::FRAC, zscore::IN_MAX,
                  zscore::A, zscore::B, sizes::ZSCORE_ON_DSPS>(cube_words, zscores, height, width);

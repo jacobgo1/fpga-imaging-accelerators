@@ -42,9 +42,9 @@ RENAMED = {
     'conv3x3_narrow': 'conv3x3_tiled', 'conv3x3_stream': 'conv3x3_tiled_patch',
     'conv3x3_all_in': 'conv3x3_tiled', 'conv3x3_all_in_patch': 'conv3x3_tiled_patch',
     'pointwise_wide': 'pointwise_packed', 'pointwise': 'conv1x1', 'leaky_head': 'conv1x1', 'leaky_conv1x1': 'conv1x1', 'pointwise1d': 'conv1x1',
-    'conv1d_engine': 'conv1d_map', 'conv1d_stream': 'conv1d_positions',
+    'conv1d_engine': 'conv1d', 'conv1d_stream': 'conv1d', 'conv1d_map': 'conv1d', 'conv1d_positions': 'conv1d',
     'dense_scores': 'dense_map', 'dense_stream': 'dense_positions',
-    'pool_assemble': 'pool_to_map', 'pool_pairs': 'pool1d', 'pool_adjacent': 'pool1d_wide',
+    'pool_assemble': 'pool_to_map', 'pool_pairs': 'pool1d', 'pool_adjacent': 'pool1d', 'pool1d_wide': 'pool1d',
     'read_rows_ahead': 'read_patch_rows', 'read_pixels_ahead': 'read_pixels', 'patch_buffer_run': 'patch_buffer_body',
 }
 # HLS's operator instances in the golden kernels, by their short name.

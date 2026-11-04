@@ -6,7 +6,7 @@
 #include <cstdio>
 
 static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {
-    // All four ports read the cube; hls::burst_maxi takes a plain (not const) pointer.
+    // All four ports read the cube.
     // cycles counts only in the RTL (cosim): 0 here, in C simulation.
     uint32_t cycles = 0;
     sp_unet_large_opt(din, din, din, din, dout, height, width, cycles);

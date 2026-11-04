@@ -64,11 +64,11 @@ fp32 96.61 %; same class as fp32 on 99.66 %.
 One stage processes one pixel at a time; with II = 1 a loop iteration is one cycle, so
 cycles per pixel = iterations per pixel. The slowest stage sets the pace, T.
 
-- ZCU104 (`conv1d_map`): S = ceil(P / POS) × (OC / OCP).
-- 7030 and ZedBoard (`conv1d_positions`): S = w + P × (OC / OCP) × (IC / ICP), where w
-  is what is left of the 5 window-fill steps after the read-ahead: 5 - min(5, G × C - 1),
-  G = OC / OCP, C = IC / ICP (5 for the first pixel). A streamed layer takes in at most
-  one position a cycle, so S ≥ its input positions: conv1's 102 outputs are why the
+- Every chip (`conv1d`): S = ceil(P / POS) × (OC / OCP) × (IC / ICP), steps a window times
+  windows a pixel; ZCU104 IC / ICP = 1, 7030 and ZedBoard POS = 1 from conv2 on. The
+  window's 5 fill positions cost no conv steps: its windows process reads them while the
+  conv is on the pixel before. A streamed layer takes in at most one position a cycle
+  (`position_windows`), so S ≥ its input positions: conv1's 102 outputs are why the
   7020 cannot go below ~102, and why the 7030's conv1 does 2 positions a cycle.
 
 ZCU104 (per cycle, S, multipliers):
@@ -91,11 +91,11 @@ Zynq-7000s (packed DSPs: OCP / 2 × ICP × 6):
 | read | 1 port × 1 word | 30 | – | 1 port × 1 word | 30 | – |
 | z-score | 1 word (4 bands) | 30 | 4 LUT mult | 1 word (4 bands) | 30 | 4 LUT mult |
 | conv1 | 2 pos × 6 ch × 6 | 51 | 72 LUT mult | 1 pos × 6 ch × 6 | 102 | 36 LUT mult |
-| conv2 | 12 out × 6 in × 6 (G×C = 1) | 5 + 46 = 51 | 216 DSP | 6 out × 6 in × 6 (2) | 4 + 92 = 96 | 108 DSP |
-| conv3 | 18 out × 3 in × 6 (4) | 2 + 72 = **74** | 162 DSP | 6 out × 6 in × 6 (6) | 0 + 108 = **108** | 108 DSP |
-| conv4 | 4 out × 6 in × 6 (18) | 0 + 72 = 72 | 144 LUT mult | 2 out × 9 in × 6 (24) | 0 + 96 = 96 | 108 LUT mult |
+| conv2 | 12 out × 6 in × 6 (G×C = 1) | 46 (51 positions in) | 216 DSP | 6 out × 6 in × 6 (2) | 92 | 108 DSP |
+| conv3 | 18 out × 3 in × 6 (4) | **72** (measured 74 with the read-ahead) | 162 DSP | 6 out × 6 in × 6 (6) | **108** | 108 DSP |
+| conv4 | 4 out × 6 in × 6 (18) | **72** | 144 LUT mult | 2 out × 9 in × 6 (24) | 96 | 108 LUT mult |
 | dense | 1 × 3 | 48 | 3 LUT mult | 1 × 3 | 48 | 3 LUT mult |
-| **Total** | | **T = 74** | 378 of 400 DSP | | **T = 108** | 216 of 220 DSP |
+| **Total** | | **T = 72** predicted (74 measured before 2026-11-04) | 378 of 400 DSP | | **T = 108** | 216 of 220 DSP |
 
 Utilization of a layer's multipliers: u = MACs / (T × multipliers).
 ZCU104: conv3 100 %, conv1 94 %, conv4 89 %, conv2 85 %. 7030: conv3 97 %, conv4 97 %,
@@ -196,3 +196,14 @@ Routed, kernel alone (without the interconnects); by process in
   18 itself, and conv1d_positions no longer takes 16 / 1 as defaults.
   The same expressions, the same answers bit for bit; not built: check csynth's DSP count and the
   Bind Op Report.
+- 2026-11-04: `conv1d_map` and `conv1d_positions` are one `conv1d` (`src/optimized/conv1d.hpp`): a
+  window in, `POSITIONS` × `OUT_PER_CYCLE` × `IN_PER_CYCLE` a step, the bias at a window's first input
+  chunk, the rounding at its last; a loop nest windows → groups → chunks instead of counters. The
+  windows come from their own process, `map_windows` (a pixel's whole map: ZCU104, and conv1 on the
+  7000s) or `position_windows` (positions one at a time: 7000s conv2-conv4), so the read-ahead and its
+  fill / trailing / fetch logic are gone: the fill positions are read while the conv is on the pixel
+  before. `pool1d_wide` is `pool1d` with two positions a window; the 7000s pool in their own `pool1d`
+  process. The same answers bit for bit (mutation-tested). Predicted: ZCU104 18, ZedBoard 108, 7030
+  72 cycles a pixel (was 74: conv3 filled 2). Not built: check csynth's Final II = 1 for each
+  `conv1d` and windows process, the cycles a pixel in cosim, DSPs unchanged (1 304 / 378 / 216), and
+  the LUTs/FFs of the new windows FIFOs (on the 7020: three 36-108-byte windows a FIFO).

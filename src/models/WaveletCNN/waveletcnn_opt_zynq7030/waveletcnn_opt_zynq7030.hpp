@@ -34,12 +34,11 @@ typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
 
 constexpr int WORDS_PER_PIXEL = CUBE_BANDS / BANDS_PER_WORD;
 constexpr int FIRST_KEPT_WORD = zscore::FIRST_BAND / BANDS_PER_WORD;
-constexpr int PIXELS_PER_BURST = 8, BURSTS_IN_FLIGHT = 2;
 constexpr bool ZSCORE_ON_DSPS = false;
 
 // The argument names become the kernel's register names: keep them.
-void waveletcnn_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                        hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void waveletcnn_opt_zynq7030(const cube_word_t* din0, const cube_word_t* din1,
+                        const cube_word_t* din2, const cube_word_t* din3,
                         hls::burst_maxi<score_word_t> dout, int height, int width);
 
 #endif

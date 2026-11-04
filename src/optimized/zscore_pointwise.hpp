@@ -4,7 +4,6 @@
 #include "../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
 #include "pixel_io.hpp"
-#include "conv1d_map.hpp"
 
 // A per-pixel network's first layer, a 1x1 conv on the z-scored bands, done on
 // the raw words as they come from the reader: one word a cycle, its bands

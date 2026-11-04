@@ -117,13 +117,13 @@ LUTs (estimates).
 `justoliunet_opt_zynq7020`, `justoliunet_bn_opt_zynq7020` (`--board zedboard`; 78.1 MHz,
 220 DSP48E1, 53.2 k LUTs, 64-bit HP ports). The same techniques as the ZCU104 (every layer
 about the same cycles a pixel, DSPs on conv2 and conv3, two multiplies per DSP, uint8,
-read-ahead bursts) and the same formats, so the same answers bit for bit. What had to change:
+burst reads) and the same formats, so the same answers bit for bit. What had to change:
 
 - **Folding.** Each layer takes one output position at a time and spreads it over steps:
   $\mathit{OCP}$ output channels and $\mathit{ICP}$ input channels a cycle, all 6 taps, the
-  input-channel chunks summed in an accumulator (`conv1d_positions.hpp`).
+  input-channel chunks summed in an accumulator (`conv1d` with `POSITIONS = 1`, `conv1d.hpp`).
 - **Spectral streaming.** From conv1 on, a layer's input arrives one position at a time
-  and the layer keeps a window of the last 6 (a 1D line buffer, as `conv3x3_tiled_patch` keeps
+  and its `position_windows` process keeps a window of the last 6 (a 1D line buffer, as `conv3x3_tiled_patch` keeps
   two image lines). Whole feature maps in wide FIFOs and registers, as on the ZCU104,
   would have cost ~15 k of the 7020's 53 k LUTs (estimate); positions cost ~2 k.
 - **Packing on the DSP48E1** (25 × 18 bits): shift 16, so with uint8 every product is
@@ -135,12 +135,13 @@ read-ahead bursts) and the same formats, so the same answers bit for bit. What h
 |---|---|---|---|---|---|---|
 | Per cycle | 1 pos · 6 out · 6 taps | 6 out · 6 in · 6 | 6 out · 6 in · 6 | 2 out · 9 in · 6 | 1 · 3 | 4 bands |
 | $m_l$ | 36 | 216 | 216 | 108 | 3 | 4 |
-| $S_l$ (cycles/pixel) | 102 | 96 | **108** | 96 | 48 | 30 |
+| $S_l$ (cycles/pixel) | 102 | 92 | **108** | 96 | 48 | 30 |
 | Implementation | LUT | 108 DSP | 108 DSP | LUT | LUT | LUT |
 
-$S_l = (K-1) + P_l \cdot \frac{OC}{\mathit{OCP}} \cdot \frac{IC}{\mathit{ICP}}$ for the streamed
-layers, of which the last output's G·C − 1 steps that read nothing take the next pixel's
-first positions (up to 5), so only conv2 still fills 4 (2026-10-19; before, 113). 216 of
+$S_l = P_l \cdot \frac{OC}{\mathit{OCP}} \cdot \frac{IC}{\mathit{ICP}}$ for the streamed
+layers: the window's $K-1$ fill positions are read by `position_windows` while the conv is
+still on the pixel before, so they cost no conv steps (2026-11-04; from 2026-10-19 a read-ahead
+inside the conv hid most of them, conv2 still filled 4; before, 113). 216 of
 220 DSPs. Cycle model: 108 cycles/pixel
 in steady state (conv3), unchanged with 300 cycles of DDR latency per burst; with the
 position FIFOs at the default depth of 2 instead of 8 it would be 134 (the windows are
@@ -150,23 +151,25 @@ filled 5 positions back to back). **$t = 653\,016 \cdot 108 / 78.1\,\mathrm{MHz}
 Debugging note: Apple clang 15 at `-O2` (its SLP vectorizer) miscompiled a group choice
 written as `for gg: if (gg == g) out[gg * OCP + j] = ...` (the testbench failed; `-O1`,
 `-O3` and `-O2 -fno-slp-vectorize` passed). Written as `out[g * OCP + j]`, the same hardware
-in HLS, it is right at every level; both `conv1d_positions` and `pool_to_map` use that form.
+in HLS, it is right at every level; `conv1d` uses that form.
 
 ### The Zynq-7030 design as built
 
 `justoliunet_opt_zynq7030`, `justoliunet_bn_opt_zynq7030` (`--board zynq7030`; 100 MHz):
 the ZedBoard design, wider. A streamed layer takes in at most one position a cycle, so
-conv1's 102 outputs were the floor; here conv1 is a whole-map `conv1d_map` at 2
-positions a cycle (`pool1d_wide` pools each pair as it comes).
+conv1's 102 outputs were the floor; here conv1 takes its windows from the whole map
+(`map_windows`) at 2 positions a cycle (`pool1d` pools each pair as it comes).
 
 | | conv1 | conv2 | conv3 | conv4 | dense | z-score |
 |---|---|---|---|---|---|---|
 | Per cycle | 2 pos · 6 out · 6 taps | 12 out · 6 in · 6 | 18 out · 3 in · 6 | 4 out · 6 in · 6 | 1 · 3 | 4 bands |
 | $m_l$ | 72 | 432 | 324 | 144 | 3 | 4 |
-| $S_l$ (cycles/pixel) | 51 | 51 | **74** | 72 | 48 | 30 |
+| $S_l$ (cycles/pixel) | 51 | 51 | **72** | **72** | 48 | 30 |
 | Implementation | LUT | 216 DSP | 162 DSP | LUT | LUT | LUT |
 
-378 of 400 DSPs. Cycle model: 74 cycles/pixel (93 with FIFO depth 2), +300 cycles once
+378 of 400 DSPs. Measured 74 cycles/pixel with the read-ahead conv (conv3 then filled 2);
+predicted 72 since 2026-11-04, not yet built (conv3 and conv4 both 72, so check the FIFOs between
+them hold). Cycle model: 74 cycles/pixel (93 with FIFO depth 2), +300 cycles once
 with 300 cycles of DDR latency per burst. **$t = 653\,016 \cdot 74 / 100\,\mathrm{MHz} \approx 0.48$ s**
 (the paper design below: 81, 0.53 s). conv2 has no step count between 51 (all channels a
 step) and 96 (half), so its DSPs are busy 62 %.

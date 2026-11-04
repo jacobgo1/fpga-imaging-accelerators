@@ -51,7 +51,7 @@ for the quantized float model).
 | DATAFLOW, layers fused; feature maps never leave the chip | ✓ | ✓ | ✓ |
 | Strip ping-pong buffer (`pixel_buffer`): only `PORTS` rows × 32 pixels in BRAM (8×–16× smaller than a full patch buffer) | 4-row BRAM | 4-row BRAM | 2-row BRAM |
 | Fused 1D DWT + 1×1 projection (`dwt_proj`): 8-band sliding window accumulates `x[2m]`, `x[2m+1]`, `low[m]`, `high[m]` directly into the 12 projection channels; the 226-channel tensor is never stored | `DWT_STEPS_PER_CYCLE = 8` | `DWT_STEPS_PER_CYCLE = 4` | `DWT_STEPS_PER_CYCLE = 2` |
-| Read ports, each every n-th patch row (`read_patch_rows`, `burst_maxi`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
+| Read ports, each every n-th patch row (`read_patch_rows_simple`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
 | `conv_block` (12 → 12, 3×3) and its `LeakyReLU` (`activation::leaky`): line buffers + 3×3 shift-register window (`conv3x3_tiled`) | 12 in × 2 out/cycle | 12 in × 1 out/cycle | `P2 = 6` in × 1 out/cycle |
 | 1×1 `seg_head` (12 → 3) and its `LeakyReLU` (`conv1x1`, `activation::leaky_scores`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
@@ -60,7 +60,7 @@ for the quantized float model).
 ## Latency per stage (cycles per patch)
 
 Each stage runs at II = 1:
-- `read_patch_rows`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
+- `read_patch_rows_simple`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
 - `pixel_buffer` and `dwt_proj`: `ceil(58 / DWT_STEPS_PER_CYCLE)` steps/pixel × 1 024 pixels.
 - `conv_block`: `STEPS` cycles/pixel × (1 024 + 33) pixels.
 - `seg_head` (`conv1x1`) and `store_scores`: 1 024 cycles/patch.
@@ -173,3 +173,8 @@ Routed, kernel alone (without the interconnects); by process in
   `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
   the nest flattened at II = 1 and conv_block stays 6 342 / 12 684 / 25 368 cycles a patch (6, 12, 24
   cycles a pixel).
+- 2026-11-04: every kernel reads with `read_patch_rows_simple` (a plain `m_axi` pointer, one burst a
+  patch row that HLS infers), as `justounetsimple_opt` since 2026-11-03; `read_patch_rows` (the
+  read-ahead `burst_maxi` reader) is kept but unused. Each row now waits for DDR's first word: on
+  `justounetsimple_opt` that cost 17.87 → 20 ms. Not built: check hls.log for the inferred read
+  bursts (no "could not be inferred") and compare the cycles a patch with the last run.

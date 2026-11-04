@@ -1,5 +1,5 @@
 #include "waveletcnn_opt.hpp"
-#include "../../../optimized/read_patch_rows.hpp"
+#include "../../../optimized/read_patch_rows_simple.hpp"
 #include "../../../optimized/pixel_buffer.hpp"
 #include "../../../optimized/dwt_proj.hpp"
 #include "../../../optimized/conv3x3_tiled.hpp"
@@ -18,8 +18,8 @@ constexpr int PROJECTION_SUM_FRAC_BITS = DWT_FRAC_BITS + weights::projection_wei
 constexpr int CONV_SUM_FRAC_BITS = ACTIVATION_FRAC_BITS + weights::conv_block_0_weight_frac;
 constexpr int HEAD_SUM_FRAC_BITS = ACTIVATION_FRAC_BITS + weights::seg_head_0_weight_frac;
 
-void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-               hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+void waveletcnn_opt(const cube_word_t* din0, const cube_word_t* din1,
+               const cube_word_t* din2, const cube_word_t* din3,
                hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles)
 {
     // Four readers on HP0-3, the writer on HPC0. depth is for co-simulation only.
@@ -47,10 +47,10 @@ void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word
     hls::stream<bool> all_written("all_written");
     #pragma HLS STREAM variable=cube_words depth=64
 
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
-    read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0>(din0, cube_words[0], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
+    read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
     pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, DWT_BANDS_PER_CYCLE,
                  READ_PORTS, DWT_CYCLES_PER_PIXEL, zscore::FRAC, zscore::IN_MAX, zscore::A, zscore::B,
                  ZSCORE_ON_DSPS>(cube_words, zscores, height, width);

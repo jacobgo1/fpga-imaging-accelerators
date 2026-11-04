@@ -86,7 +86,7 @@ take about half of it. To be replaced by the csynth reports' utilization.
 ## Flow of the optimized kernels
 
 ```
-DDR ─► read_patch_rows x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
+DDR ─► read_patch_rows_simple x 4 (HP0-3, 128 bit, every 4th patch row, a burst a row)
      └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, raster order
      └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3
      └ double1: conv ─► conv ─► duplicate ─► max_pool, and ─► skip FIFO (UltraRAM, a patch) ──┐
@@ -532,3 +532,8 @@ Routed, kernel alone (without the interconnects); by process in
   `ROWS_PER_STEP` (always 3) is gone. The same answers bit for bit; **not built yet**: check csynth that
   the nest flattened at II = 1 and T stays 9 828 / 34 944 / 69 888 cycles a patch (the 7020 kernel uses
   `conv3x3_tiled_ram`, not changed).
+- 2026-11-04: every kernel reads with `read_patch_rows_simple` (a plain `m_axi` pointer, one burst a
+  patch row that HLS infers), as `justounetsimple_opt` since 2026-11-03; `read_patch_rows` (the
+  read-ahead `burst_maxi` reader) is kept but unused. Each row now waits for DDR's first word: on
+  `justounetsimple_opt` that cost 17.87 → 20 ms. Not built: check hls.log for the inferred read
+  bursts (no "could not be inferred") and compare the cycles a patch with the last run.
