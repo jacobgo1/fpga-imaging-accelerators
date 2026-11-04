@@ -14,7 +14,7 @@
 //  - golden: the float kernel (src/models/WaveletCNN/waveletcnn_golden/) on the same int8 input, as
 //    floats. The difference is the rounding between the layers; it must stay
 //    small.
-#include "../../src/optimized/shared/zscore_int8.hpp"
+#include "../../src/optimized/zscore_int8.hpp"
 #include "../../src/models/WaveletCNN/waveletcnn_golden/waveletcnn.cpp"
 #include <cmath>
 #include <cstdio>

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
-#include "../../common/hls_burst_maxi_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
+#include "../common/hls_burst_maxi_shim.hpp"
 #include "fixed_point.hpp"
 
 // DDR in and out for the per-pixel (1D) networks: no patches, the image is one

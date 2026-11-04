@@ -3,9 +3,9 @@
 namespace weights = justoliunet_bn_int8;
 namespace model_formats = justoliunet_bn_formats;
 #include "../../1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt.hpp"
-#include "../../../optimized/shared/pixel_io.hpp"
-#include "../../../optimized/shared/conv1d_map.hpp"
-#include "../../../optimized/shared/count_cycles.hpp"
+#include "../../../optimized/pixel_io.hpp"
+#include "../../../optimized/conv1d_map.hpp"
+#include "../../../optimized/count_cycles.hpp"
 
 namespace shared_formats = justoliunet_opt_formats;
 
@@ -43,11 +43,10 @@ void justoliunet_bn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_
     hls::stream<map_t<uact_t, 9, 18>> pool3_out("pool3_out");
     hls::stream<vec_t<uact_t, CONV4_POSITIONS_PER_CYCLE * CONV4_OUT_PER_CYCLE>> conv4_out("conv4_out");
     hls::stream<map_t<uact_t, 2, 24>> pool4_out("pool4_out");
-    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
+    hls::stream<vec_t<sum_t, CLASSES>, 8> scores("scores");
     hls::stream<bool> all_written("all_written");
     // The readers run ahead; everything after them moves a pixel at a time.
     #pragma HLS STREAM variable=cube_words depth=64
-    #pragma HLS STREAM variable=scores     depth=8
 
     read_pixels<WORDS_PER_PIXEL, BLOCK_PIXELS, READ_PORTS, 0>(din0, cube_words[0], height, width);
     read_pixels<WORDS_PER_PIXEL, BLOCK_PIXELS, READ_PORTS, 1>(din1, cube_words[1], height, width);

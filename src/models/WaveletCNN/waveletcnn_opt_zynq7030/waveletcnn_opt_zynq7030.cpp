@@ -1,10 +1,10 @@
 #include "waveletcnn_opt_zynq7030.hpp"
-#include "../../../optimized/shared/read_patch_rows.hpp"
-#include "../../../optimized/shared/pixel_buffer.hpp"
-#include "../../../optimized/shared/dwt_proj.hpp"
-#include "../../../optimized/shared/conv3x3_all_in.hpp"
-#include "../../../optimized/shared/leaky_conv1x1.hpp"
-#include "../../../optimized/shared/store_scores.hpp"
+#include "../../../optimized/read_patch_rows.hpp"
+#include "../../../optimized/pixel_buffer.hpp"
+#include "../../../optimized/dwt_proj.hpp"
+#include "../../../optimized/conv3x3_all_in.hpp"
+#include "../../../optimized/leaky_conv1x1.hpp"
+#include "../../../optimized/store_scores.hpp"
 
 #include "../../../../weights/quantized/waveletcnn/waveletcnn_int8.hpp"
 
@@ -38,15 +38,11 @@ void waveletcnn_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<
     #pragma HLS DATAFLOW
 
     hls::stream<cube_word_t> cube_words[READ_PORTS];
-    hls::stream<vec_t<act8_t, DWT_BANDS_PER_CYCLE>> zscores("zscores");
-    hls::stream<vec_t<act_t, MID_CHANNELS>> projected("projected");
-    hls::stream<vec_t<sum_t, MID_CHANNELS>> conv_sums("conv_sums");
-    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
+    hls::stream<vec_t<act8_t, DWT_BANDS_PER_CYCLE>, 64> zscores("zscores");
+    hls::stream<vec_t<act_t, MID_CHANNELS>, 64> projected("projected");
+    hls::stream<vec_t<sum_t, MID_CHANNELS>, 32> conv_sums("conv_sums");
+    hls::stream<vec_t<sum_t, CLASSES>, 32> scores("scores");
     #pragma HLS STREAM variable=cube_words depth=64
-    #pragma HLS STREAM variable=zscores    depth=64
-    #pragma HLS STREAM variable=projected  depth=64
-    #pragma HLS STREAM variable=conv_sums  depth=32
-    #pragma HLS STREAM variable=scores     depth=32
 
     read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
         din0, cube_words[0], height, width);

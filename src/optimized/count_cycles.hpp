@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 
 // The kernel's stopwatch: a process that starts with the kernel and counts clock
 // cycles until the last process says its last word is in memory.

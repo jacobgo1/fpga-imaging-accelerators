@@ -1,29 +1,22 @@
-#include "sp_unet_small_opt_direct_zynq7020.hpp"
-#include "../../../../optimized/shared/read_patch_rows.hpp"
-#include "../../../../optimized/shared/pixel_buffer.hpp"
-#include "../../../../optimized/shared/pointwise_packed.hpp"
-#include "../../../../optimized/shared/conv1x1.hpp"
-#include "../../../../optimized/shared/conv3x3_tiled_ram.hpp"
-#include "../../../../optimized/shared/relu_pool_skip.hpp"
-#include "../../../../optimized/shared/relu_pool_up.hpp"
-#include "../../../../optimized/shared/relu_up.hpp"
-#include "../../../../optimized/shared/concat_pixels.hpp"
-#include "../../../../optimized/shared/store_scores.hpp"
-#include "../../../../optimized/shared/count_cycles.hpp"
+#include "sp_unet_small_opt_zynq7020.hpp"
+#include "../../../../optimized/read_patch_rows.hpp"
+#include "../../../../optimized/pixel_buffer.hpp"
+#include "../../../../optimized/pointwise_packed.hpp"
+#include "../../../../optimized/conv1x1.hpp"
+#include "../../../../optimized/conv3x3_tiled_ram.hpp"
+#include "../../../../optimized/max_pool.hpp"
+#include "../../../../optimized/duplicate.hpp"
+#include "../../../../optimized/upsample.hpp"
+#include "../../../../optimized/concat_pixels.hpp"
+#include "../../../../optimized/store_scores.hpp"
+#include "../../../../optimized/count_cycles.hpp"
 
 #include "../../../../../weights/quantized/sp_unet_small/sp_unet_small_int8.hpp"
 namespace weights = sp_unet_small_int8;
 
 #include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
 
-// A conv's template arguments from its size and fractions. Each conv sends
-// ReLU'd activations, so the pooling and upsampling after it only take maxima
-// and copy (their SHIFT 0), and no 32-bit sums cross a FIFO.
-#define TILED_RAM_LAYER(size, fracs, layer) sizes::size::IN_PER_CYCLE, sizes::size::OUT_PER_CYCLE, \
-    fracs::BIAS_SHIFT, weights::layer##_weight, weights::layer##_bias, sizes::size::DSP, \
-    sizes::size::TAPS_PER_STEP, activation::relu, fracs::SHIFT
-
-void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
+void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
                                        int height, int width, uint32_t& cycles)
 {
     // depth is for co-simulation only.
@@ -38,35 +31,32 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
     #pragma HLS DATAFLOW
     constexpr int HALF_PATCH = PATCH_SIZE / 2;
     constexpr int PIXELS = PATCH_SIZE * PATCH_SIZE;
-    (void)sizes::SKIP_DEPTH;   // only the pragma uses it
     hls::stream<cube_word_t> cube_words[READ_PORTS];
-    hls::stream<vec_t<act8_t, sizes::CONVSP1_BANDS_PER_CYCLE>> zscores("zscores");
+    #pragma HLS STREAM variable=cube_words depth=64
+    hls::stream<vec_t<act8_t, sizes::CONVSP1_BANDS_PER_CYCLE>, 64> zscores("zscores");
     hls::stream<vec_t<act_t, STEM1>> convsp1_out("convsp1_out");
     hls::stream<vec_t<act_t, STEM2>> convsp2_out("convsp2_out");
     hls::stream<vec_t<act_t, STEM3>> stem_out("stem_out");
-    hls::stream<vec_t<act_t, DOUBLE1>> double1_relu1("double1_relu1"), double1_conv2_out("double1_conv2_out");
-    hls::stream<vec_t<act_t, DOUBLE1>> skip("skip"), pool1_out("pool1_out");
-    hls::stream<vec_t<act_t, DOUBLE2>> double2_relu1("double2_relu1"), double2_conv2_out("double2_conv2_out");
-    hls::stream<vec_t<act_t, DOUBLE2>> pool2_out("pool2_out"), up1_relu("up1_relu");
-    hls::stream<vec_t<act_t, DOUBLE3>> double3_relu1("double3_relu1"), double3_conv2_out("double3_conv2_out");
-    hls::stream<vec_t<act_t, DOUBLE3>> double3_out("double3_out"), up2_relu("up2_relu");
-    hls::stream<vec_t<act_t, DOUBLE3 + DOUBLE1>> joined("joined");
-    hls::stream<vec_t<act_t, DOUBLE4>> double4_relu1("double4_relu1"), double4_out("double4_out");
-    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
-    hls::stream<bool> all_written("all_written");
-
-    #pragma HLS STREAM variable=cube_words depth=64
-    #pragma HLS STREAM variable=zscores    depth=64
+    hls::stream<vec_t<act_t, DOUBLE1>> double1_relu1("double1_relu1"), double1_out("double1_out");
     // The skip waits up to a patch for up2; too shallow and it deadlocks.
-    #pragma HLS STREAM variable=skip depth=sizes::SKIP_DEPTH
+    hls::stream<vec_t<act_t, DOUBLE1>, sizes::SKIP_DEPTH> skip("skip");
     #pragma HLS BIND_STORAGE variable=skip type=fifo impl=bram
     // The pooled pixels and the upsampled rows come in bursts: room for a burst.
-    #pragma HLS STREAM variable=pool2_out   depth=32
-    #pragma HLS STREAM variable=double3_out depth=64
-    #pragma HLS STREAM variable=scores      depth=32
-    #pragma HLS STREAM variable=pool1_out   depth=16
+    hls::stream<vec_t<act_t, DOUBLE1>> pool1_in("pool1_in");
+    hls::stream<vec_t<act_t, DOUBLE1>, 16> pool1_out("pool1_out");
+    hls::stream<vec_t<act_t, DOUBLE2>> double2_relu1("double2_relu1"), double2_out("double2_out");
+    hls::stream<vec_t<act_t, DOUBLE2>> pool2_out("pool2_out");
+    hls::stream<vec_t<act_t, DOUBLE2>, 32> pool2_up("pool2_up");
+    hls::stream<vec_t<act_t, DOUBLE2>> up1_relu("up1_relu");
+    hls::stream<vec_t<act_t, DOUBLE3>> double3_relu1("double3_relu1"), double3_act("double3_act");
+    hls::stream<vec_t<act_t, DOUBLE3>, 64> double3_out("double3_out");
+    hls::stream<vec_t<act_t, DOUBLE3>> up2_relu("up2_relu");
+    hls::stream<vec_t<act_t, DOUBLE3 + DOUBLE1>> joined("joined");
+    hls::stream<vec_t<act_t, DOUBLE4>> double4_relu1("double4_relu1"), double4_out("double4_out");
+    hls::stream<vec_t<sum_t, CLASSES>, 32> scores("scores");
+    hls::stream<bool> all_written("all_written");
     #pragma HLS BIND_STORAGE variable=pool1_out   type=fifo impl=lutram
-    #pragma HLS BIND_STORAGE variable=pool2_out   type=fifo impl=lutram
+    #pragma HLS BIND_STORAGE variable=pool2_up    type=fifo impl=lutram
     #pragma HLS BIND_STORAGE variable=double3_out type=fifo impl=lutram
 
     read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
@@ -88,42 +78,56 @@ void sp_unet_small_opt_direct_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::b
 
     // The encoder: double1 at 32 x 32, whose output is also the skip; double2 at 16 x 16.
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, STEM3, DOUBLE1,
-                      TILED_RAM_LAYER(DOUBLE1_CONV1, DOUBLE1_CONV1_FRACS, double1_block_0)>(
-        stem_out, double1_relu1, height, width);
+                      sizes::DOUBLE1_CONV1::IN_PER_CYCLE, sizes::DOUBLE1_CONV1::OUT_PER_CYCLE, DOUBLE1_CONV1_FRACS::BIAS_SHIFT,
+                      weights::double1_block_0_weight, weights::double1_block_0_bias, sizes::DOUBLE1_CONV1::DSP, sizes::DOUBLE1_CONV1::TAPS_PER_STEP,
+                      activation::relu, DOUBLE1_CONV1_FRACS::SHIFT>(stem_out, double1_relu1, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE1, DOUBLE1,
-                      TILED_RAM_LAYER(DOUBLE1_CONV2, DOUBLE1_CONV2_FRACS, double1_block_3)>(
-        double1_relu1, double1_conv2_out, height, width);
-    relu_pool_skip<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, 0>(double1_conv2_out, skip, pool1_out, height, width);
+                      sizes::DOUBLE1_CONV2::IN_PER_CYCLE, sizes::DOUBLE1_CONV2::OUT_PER_CYCLE, DOUBLE1_CONV2_FRACS::BIAS_SHIFT,
+                      weights::double1_block_3_weight, weights::double1_block_3_bias, sizes::DOUBLE1_CONV2::DSP, sizes::DOUBLE1_CONV2::TAPS_PER_STEP,
+                      activation::relu, DOUBLE1_CONV2_FRACS::SHIFT>(double1_relu1, double1_out, height, width);
+    duplicate<PATCH_SIZE, PATCH_SIZE, PIXELS>(double1_out, skip, pool1_in, height, width);
+    max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(pool1_in, pool1_out, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE1, DOUBLE2,
-                      TILED_RAM_LAYER(DOUBLE2_CONV1, DOUBLE2_CONV1_FRACS, double2_block_0)>(
-        pool1_out, double2_relu1, height, width);
+                      sizes::DOUBLE2_CONV1::IN_PER_CYCLE, sizes::DOUBLE2_CONV1::OUT_PER_CYCLE, DOUBLE2_CONV1_FRACS::BIAS_SHIFT,
+                      weights::double2_block_0_weight, weights::double2_block_0_bias, sizes::DOUBLE2_CONV1::DSP, sizes::DOUBLE2_CONV1::TAPS_PER_STEP,
+                      activation::relu, DOUBLE2_CONV1_FRACS::SHIFT>(pool1_out, double2_relu1, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
-                      TILED_RAM_LAYER(DOUBLE2_CONV2, DOUBLE2_CONV2_FRACS, double2_block_3)>(
-        double2_relu1, double2_conv2_out, height, width);
-    // Pool to 8 x 8 and upsample back: each 2x2 block becomes its maximum.
-    relu_pool_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 0>(double2_conv2_out, pool2_out, height, width);
+                      sizes::DOUBLE2_CONV2::IN_PER_CYCLE, sizes::DOUBLE2_CONV2::OUT_PER_CYCLE, DOUBLE2_CONV2_FRACS::BIAS_SHIFT,
+                      weights::double2_block_3_weight, weights::double2_block_3_bias, sizes::DOUBLE2_CONV2::DSP, sizes::DOUBLE2_CONV2::TAPS_PER_STEP,
+                      activation::relu, DOUBLE2_CONV2_FRACS::SHIFT>(double2_relu1, double2_out, height, width);
+    // Pool to 8 x 8 and upsample back.
+    max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(double2_out, pool2_out, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH / 2, HALF_PATCH / 2>(pool2_out, pool2_up, height, width);
 
     // The decoder: up1's conv at 16 x 16, double3, upsample to 32 x 32, up2's conv.
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE2,
-                      TILED_RAM_LAYER(UP1_CONV, UP1_FRACS, up1_1)>(pool2_out, up1_relu, height, width);
+                      sizes::UP1_CONV::IN_PER_CYCLE, sizes::UP1_CONV::OUT_PER_CYCLE, UP1_FRACS::BIAS_SHIFT,
+                      weights::up1_1_weight, weights::up1_1_bias, sizes::UP1_CONV::DSP, sizes::UP1_CONV::TAPS_PER_STEP,
+                      activation::relu, UP1_FRACS::SHIFT>(pool2_up, up1_relu, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE2, DOUBLE3,
-                      TILED_RAM_LAYER(DOUBLE3_CONV1, DOUBLE3_CONV1_FRACS, double3_block_0)>(
-        up1_relu, double3_relu1, height, width);
+                      sizes::DOUBLE3_CONV1::IN_PER_CYCLE, sizes::DOUBLE3_CONV1::OUT_PER_CYCLE, DOUBLE3_CONV1_FRACS::BIAS_SHIFT,
+                      weights::double3_block_0_weight, weights::double3_block_0_bias, sizes::DOUBLE3_CONV1::DSP, sizes::DOUBLE3_CONV1::TAPS_PER_STEP,
+                      activation::relu, DOUBLE3_CONV1_FRACS::SHIFT>(up1_relu, double3_relu1, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, DOUBLE3, DOUBLE3,
-                      TILED_RAM_LAYER(DOUBLE3_CONV2, DOUBLE3_CONV2_FRACS, double3_block_3)>(
-        double3_relu1, double3_conv2_out, height, width);
-    relu_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 0>(double3_conv2_out, double3_out, height, width);
+                      sizes::DOUBLE3_CONV2::IN_PER_CYCLE, sizes::DOUBLE3_CONV2::OUT_PER_CYCLE, DOUBLE3_CONV2_FRACS::BIAS_SHIFT,
+                      weights::double3_block_3_weight, weights::double3_block_3_bias, sizes::DOUBLE3_CONV2::DSP, sizes::DOUBLE3_CONV2::TAPS_PER_STEP,
+                      activation::relu, DOUBLE3_CONV2_FRACS::SHIFT>(double3_relu1, double3_act, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(double3_act, double3_out, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3, DOUBLE3,
-                      TILED_RAM_LAYER(UP2_CONV, UP2_FRACS, up2_1)>(double3_out, up2_relu, height, width);
+                      sizes::UP2_CONV::IN_PER_CYCLE, sizes::UP2_CONV::OUT_PER_CYCLE, UP2_FRACS::BIAS_SHIFT,
+                      weights::up2_1_weight, weights::up2_1_bias, sizes::UP2_CONV::DSP, sizes::UP2_CONV::TAPS_PER_STEP,
+                      activation::relu, UP2_FRACS::SHIFT>(double3_out, up2_relu, height, width);
 
     // The skip joins, then double4 and the final 1x1 conv: the scores.
     concat_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE3, DOUBLE1>(up2_relu, skip, joined, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE3 + DOUBLE1, DOUBLE4,
-                      TILED_RAM_LAYER(DOUBLE4_CONV1, DOUBLE4_CONV1_FRACS, double4_block_0)>(
-        joined, double4_relu1, height, width);
+                      sizes::DOUBLE4_CONV1::IN_PER_CYCLE, sizes::DOUBLE4_CONV1::OUT_PER_CYCLE, DOUBLE4_CONV1_FRACS::BIAS_SHIFT,
+                      weights::double4_block_0_weight, weights::double4_block_0_bias, sizes::DOUBLE4_CONV1::DSP, sizes::DOUBLE4_CONV1::TAPS_PER_STEP,
+                      activation::relu, DOUBLE4_CONV1_FRACS::SHIFT>(joined, double4_relu1, height, width);
     conv3x3_tiled_ram<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, DOUBLE4, DOUBLE4,
-                      TILED_RAM_LAYER(DOUBLE4_CONV2, DOUBLE4_CONV2_FRACS, double4_block_3)>(
-        double4_relu1, double4_out, height, width);
+                      sizes::DOUBLE4_CONV2::IN_PER_CYCLE, sizes::DOUBLE4_CONV2::OUT_PER_CYCLE, DOUBLE4_CONV2_FRACS::BIAS_SHIFT,
+                      weights::double4_block_3_weight, weights::double4_block_3_bias, sizes::DOUBLE4_CONV2::DSP, sizes::DOUBLE4_CONV2::TAPS_PER_STEP,
+                      activation::relu, DOUBLE4_CONV2_FRACS::SHIFT>(double4_relu1, double4_out, height, width);
     conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
             FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias,
             sizes::FINAL_ON_DSPS, sizes::FINAL_IN_PER_CYCLE>(double4_out, scores, height, width);

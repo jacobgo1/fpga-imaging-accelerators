@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
 #include "pixel_io.hpp"
 #include "conv1d_map.hpp"

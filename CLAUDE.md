@@ -42,7 +42,7 @@ src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cp
 src/golden/          layers.hpp: the plain-loop layers the golden kernels are built from (what is
                      computed), one template each for float and quantized weights
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
-                     one module per file, all in shared/, for every board; each kernel sets
+                     one module per file, for every board; each kernel sets
                      its chip's facts in its .hpp ("Chip variables for
                      implementation": DSP_PACK_SHIFT / DSP_PACK_GROUP for 2 multiplies per
                      DSP, HAS_URAM for patch_buffer) and passes them to the modules
@@ -84,15 +84,15 @@ answers, they share the testbench's checks),
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
 from src/golden/layers.hpp, the network in src/models/SpecPW-UNet/specpw_unet.hpp; numpy model and the bit-exact integer model
 classify_fixed in tools/specpw_unet_model.py, the same as plain C++ loops in
-tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt_direct`, `_medium_opt_direct`,
-`_large_opt_direct` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; direct 3x3 convs
-(conv3x3_tiled, PI x PO a cycle), raster order, justounetsimple_opt's ReLU/pool/upsample
-modules; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 452 / 1 297 / 1 184 DSPs; small
+tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp), `sp_unet_small_opt`, `_medium_opt`,
+`_large_opt` (fast, ZCU104: the raw cube in, bit for bit classify_fixed; direct 3x3 convs
+(conv3x3_tiled, PI x PO a cycle, the ReLU inside), raster order, duplicate (to the skip) / max_pool /
+upsample; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 452 / 1 297 / 1 184 DSPs; small
 measured 26.2 ms at 250 MHz; the design in src/models/SpecPW-UNet/Small/sp_unet_small_opt/sp_unet_opt.hpp,
 the chain and each size's table of PI x PO per layer in its .cpp; one testbench check,
-tb/sp_unet_small_opt_direct/sp_unet_opt_check.hpp; a Winograd version was removed
+tb/sp_unet_small_opt/sp_unet_opt_check.hpp; a Winograd version was removed
 2026-10-31, see sp_unet.md),
-`sp_unet_small_opt_direct_zynq7020` (the direct kernel for the 7020; medium and large do not
+`sp_unet_small_opt_zynq7020` (the direct kernel for the 7020; medium and large do not
 fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_tiled_ram), a tap or a window column a step, their ReLU inside, one 64-bit read
 port, 2-deep FIFOs between the processes; T = 76 176 cycles a patch, measured 665 ms on the
@@ -162,7 +162,7 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/shared/conv3x3_2mul.hpp`, AMD WP486): it needs activations in
+  (`src/optimized/conv3x3_2mul.hpp`, AMD WP486): it needs activations in
   -127..127. The DSP's wide input sets the spacing: 18 bits on the UltraScale+
   DSP48E2 (27-bit input), 16 on the 7-series DSP48E1 (25-bit). Check the DSP
   count in the csynth report: about 864 for the ZCU104's conv1, 324 for the 7030's, 216 for the
@@ -172,7 +172,7 @@ those are the user's, on the lab server, every time.
 - Processes sized for the same time per patch need deep FIFOs between them (16, `impl=srl`),
   not the default 2: an HLS pipeline freezes all its stages when one read or write waits, so
   with no slack one process's short wait freezes the next and the time is never won back.
-  sp_unet_small_opt_direct went from 11 503 to 9 856 cycles a patch with that alone, though
+  sp_unet_small_opt went from 11 503 to 9 856 cycles a patch with that alone, though
   HLS reported II = 1 and the right interval for every process.
 - csim passing does not prove the RTL. After changing arithmetic, ask the user
   for a cosim (`python3 main.py cosim --kernel K`); a mismatch there is
@@ -182,13 +182,13 @@ those are the user's, on the lab server, every time.
   weights vanish. That is why DSP counts can be far below the multiply count.
 - Say where every multiplier goes; do not leave it to HLS. A multiply whose
   operands are only known at run time goes through `mul<DSP>`
-  (`src/optimized/shared/fixed_point.hpp`): a `BIND_OP` pragma, `impl=dsp` or
+  (`src/optimized/fixed_point.hpp`): a `BIND_OP` pragma, `impl=dsp` or
   `impl=fabric` (LUTs). `impl` takes only a literal word, so each choice is its
   own branch. The modules take `bool DSP` as their last template argument, so
   each kernel's top function shows it per process. Index arithmetic is always
   LUTs. Check the csynth report's Bind Op Report against it.
 - Generated files must stay in sync:
-  - `src/optimized/shared/zscore_int8.hpp` (the 2D kernels' integer z-score) comes from
+  - `src/optimized/zscore_int8.hpp` (the 2D kernels' integer z-score) comes from
     `python tools/preprocessing.py`, and a test checks it;
   - `weights/quantized/` comes from `quantize_weights.py` and is not in git.
 

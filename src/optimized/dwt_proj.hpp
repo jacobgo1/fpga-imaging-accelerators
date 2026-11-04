@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 

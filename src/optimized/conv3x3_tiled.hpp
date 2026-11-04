@@ -13,7 +13,7 @@
 //
 // A pixel's steps: output group outer, then input group, then window rows.
 // The weights are one wide memory word a step: one memory a layer, since a
-// thousand small ones made sp_unet_large_opt_direct too congested to route.
+// thousand small ones made sp_unet_large_opt too congested to route.
 template<int IN_PER_CYCLE, int OUT_PER_CYCLE, int ROWS_PER_STEP = 3>
 struct tiled_word_t {
     weight_t v[OUT_PER_CYCLE][IN_PER_CYCLE][ROWS_PER_STEP][3];

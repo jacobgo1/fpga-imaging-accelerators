@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 
 // Integer fixed point, shared by every module. An activation a means a * 2^-F,
 // a weight q means q * 2^-frac, so products and their sums are exact in int32.
@@ -78,19 +78,6 @@ template<int ROUND_BITS> struct conv_out<activation::none, ROUND_BITS> {
         return sum;
     }
 };
-
-// A ReLU module's input to an activation: sums are ReLU'd and rounded off ROUND_BITS
-// bits; activations (already ReLU'd by their conv) pass as they are.
-template<int ROUND_BITS>
-act_t to_act(sum_t sum) {
-    #pragma HLS INLINE
-    return requant_relu<ROUND_BITS>(sum);
-}
-template<int ROUND_BITS>
-act_t to_act(act_t activation) {
-    #pragma HLS INLINE
-    return activation;
-}
 
 static inline act_t max2(act_t a, act_t b) {
     #pragma HLS INLINE

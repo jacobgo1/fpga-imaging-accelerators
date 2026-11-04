@@ -72,3 +72,6 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
   (one template each for float and quantized weights); the golden kernel's ReLU is now done in its
   conv, one map buffer fewer a layer, the same answers. Golden kernel not rebuilt yet.
+- 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
+  (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
+  rebuilt: check csynth's FIFO depths.

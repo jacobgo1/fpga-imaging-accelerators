@@ -7,9 +7,9 @@ prep_constants      the same as integers, (dn * A + B) >> prep_frac, as the opti
                     kernels do it in hardware
 preprocess_fixed    that integer z-score, bit for bit
 
-The 2D kernels (justounetsimple_opt, waveletcnn_opt, sp_unet_*_opt_direct) take it as int8 with
+The 2D kernels (justounetsimple_opt, waveletcnn_opt, sp_unet_*_opt) take it as int8 with
 IN_FRAC fraction bits; `python tools/preprocessing.py` writes their constants into
-src/optimized/shared/zscore_int8.hpp. The 1D kernels use a 12-bit format of their own
+src/optimized/zscore_int8.hpp. The 1D kernels use a 12-bit format of their own
 (tools/justoliunet_model.py), from the same prep_constants.
 """
 from pathlib import Path
@@ -23,11 +23,11 @@ RAW_BANDS = 120
 DROPPED_BANDS = [0, 1, 2, 3, 4, 5, 6, 7, 118, 119]
 FIRST_BAND = 8
 # The 2D kernels' input: x * 2^IN_FRAC as int8, saturated at +-IN_MAX (z-scores -3.97 .. 3.97;
-# never -128, so two products can share a DSP, see src/optimized/shared/conv3x3_2mul.hpp).
+# never -128, so two products can share a DSP, see src/optimized/conv3x3_2mul.hpp).
 # On the aegean capture, int8 input changes 0.04% of justounetsimple's classes (against the
 # float model) and leaves its accuracy against the labels the same (96.20%).
 IN_FRAC, IN_MAX, PREP_FRAC = 5, 127, 22
-HEADER = ROOT / 'src/optimized/shared/zscore_int8.hpp'
+HEADER = ROOT / 'src/optimized/zscore_int8.hpp'
 
 
 def _mu_sd(mu_sd):

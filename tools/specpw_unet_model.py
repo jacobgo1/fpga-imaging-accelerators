@@ -16,13 +16,13 @@ forward_patch  what the kernel computes for one preprocessed 32 x 32 x 110 patch
 classify       a raw cube (H x W x 120) -> its scores, cut into 32 x 32 patches like the
                notebook (the last row and column repeated)
 
-The integer arithmetic of the optimized kernels (sp_unet_SIZE_opt_direct), bit for bit (the
-C++ plain-loop version is tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp, and the two agree
+The integer arithmetic of the optimized kernels (sp_unet_SIZE_opt), bit for bit (the
+C++ plain-loop version is tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp, and the two agree
 exactly, tests/test_specpw_unet.py):
 forward_patch_fixed  one int8 patch (z-score * 2^IN_FRAC) -> int32 scores * 2^OUT_FRAC
 classify_fixed       a raw cube -> int32 scores, with justounetsimple_opt's integer
                      z-score (preprocessing.preprocess_fixed)
-kernel_reference     a raw cube -> what sp_unet_SIZE_opt_direct writes (H x W x 4 int32)
+kernel_reference     a raw cube -> what sp_unet_SIZE_opt writes (H x W x 4 int32)
 
     python tools/specpw_unet_model.py                    # each size on the aegean pixels
 
@@ -54,7 +54,7 @@ LAYERS = ('convsp1', 'convsp2', 'convsp3', 'double1.block.0', 'double1.block.3',
           'double2.block.0', 'double2.block.3', 'up1.1', 'double3.block.0', 'double3.block.3',
           'up2.1', 'double4.block.0', 'double4.block.3', 'final')
 
-# The integer formats (tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp takes them as arguments):
+# The integer formats (tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp takes them as arguments):
 # the input is the z-score * 2^IN_FRAC as int8, saturated at +-127 (justounetsimple_opt's
 # preprocessing); every activation int16 with ACT_FRAC fraction bits, ReLU'd and saturated
 # at 32767 (up to 32.0); the scores int32 with OUT_FRAC. On the aegean pixels the largest
@@ -265,7 +265,7 @@ def aegean_raw():
 
 
 def kernel_reference(cube, qlayers, prep=None):
-    """What sp_unet_SIZE_opt_direct writes for a raw cube: H x W x 4 int32, the scores * 2^OUT_FRAC,
+    """What sp_unet_SIZE_opt writes for a raw cube: H x W x 4 int32, the scores * 2^OUT_FRAC,
     then the class (their argmax, the first one on a tie)."""
     return justounetsimple_model.with_class(classify_fixed(cube, qlayers, prep))
 

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 #include "patch_grid.hpp"
 
 // read_patch_rows without the read-ahead: the same words in the same order, from

@@ -4,8 +4,8 @@
 // its header, its model's weights as namespace weights and its size table as
 // namespace sizes.
 
-#include "../../../../optimized/shared/zscore_int8.hpp"
-#include "../../../../optimized/shared/fixed_point.hpp"
+#include "../../../../optimized/zscore_int8.hpp"
+#include "../../../../optimized/fixed_point.hpp"
 
 namespace zscore = zscore_int8;   // the 2D kernels' preprocessing
 

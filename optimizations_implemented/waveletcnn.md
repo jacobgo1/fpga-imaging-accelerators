@@ -116,7 +116,7 @@ Routed, kernel alone (without the interconnects); by process in
   optimized kernels (`waveletcnn_opt`, `waveletcnn_opt_zynq7030`, `waveletcnn_opt_zynq7020`)
   with strip ping-pong `pixel_buffer`, fused streaming `dwt_proj`, `conv3x3_narrow`/`conv3x3_serial`
   and `leaky_head`.
-- 2026-10-29: the z-score constants come from `src/optimized/shared/zscore_int8.hpp`, shared with the
+- 2026-10-29: the z-score constants come from `src/optimized/zscore_int8.hpp`, shared with the
   other 2D kernels (`python tools/preprocessing.py`; was waveletcnn_prep.hpp, the same values);
   `tools/waveletcnn_image.py` is gone: `tools/image.py prepare` makes the image folder.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
@@ -158,3 +158,6 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: `conv3x3_all_in` has an `activation` option (here `none`: its LeakyReLU stays in
   `leaky_conv1x1`); the zscore include and constants moved to each kernel's .hpp, those from the
   weights' fractions stay in the .cpp. The same answers bit for bit; not rebuilt.
+- 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
+  (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
+  rebuilt: check csynth's FIFO depths.

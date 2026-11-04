@@ -40,17 +40,17 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small` | ZCU104 | 5 ns | golden baseline: float, int8 weights, n patches per start; **measured 416.5 s** for a whole capture (626.4 ms a patch), 97.48 % |
 | `sp_unet_medium` | ZCU104 | 5 ns | the same; **measured 1 239.3 s** for a whole capture (1 863.6 ms a patch), 97.33 % |
 | `sp_unet_large` | ZCU104 | 5 ns | the same; **measured 2 164.5 s** for a whole capture (3 254.9 ms a patch), 97.55 % |
-| `sp_unet_small_opt_direct` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
-| `sp_unet_medium_opt_direct` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
-| `sp_unet_large_opt_direct` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
-| `sp_unet_small_opt_direct_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
-| `sp_unet_medium_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
-| `sp_unet_large_opt_direct_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
+| `sp_unet_small_opt` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
+| `sp_unet_medium_opt` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
+| `sp_unet_large_opt` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
+| `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
+| `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
+| `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
-`tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
-(`tb/sp_unet_small_opt_direct/sp_unet_opt_check.hpp`, shared by every optimized kernel). Same class as the
+`tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp`, which the testbench checks every output against
+(`tb/sp_unet_small_opt/sp_unet_opt_check.hpp`, shared by every optimized kernel). Same class as the
 float golden kernel on the testbench's 2 000 random pixels, scores within 0.01. On the aegean
 pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes (below).
 
@@ -89,18 +89,19 @@ take about half of it. To be replaced by the csynth reports' utilization.
 DDR ─► read_patch_rows x 4 (HP0-3, 128 bit, every 4th patch row, bursts a row ahead)
      └ pixel_buffer: z-score (int8), 4-row strip ping-pong in BRAM, raster order
      └ convsp1 (packed, 2 multiplies per DSP) ─► convsp2 ─► convsp3
-     └ double1: conv ─► relu_act ─► conv ─► relu_pool_skip ──► skip FIFO (UltraRAM, a patch) ──┐
-     └ double2: conv ─► relu_act ─► conv ─► relu_pool_up (pool to 8 x 8, upsample to 16 x 16)  │
-     └ up1: conv ─► relu_act ─► double3: conv ─► relu_act ─► conv ─► relu_up (to 32 x 32)      │
-     └ up2: conv ─► relu_act ─► concat_pixels ◄──────────────────────────────────────────────┘
-     └ double4: conv ─► relu_act ─► conv ─► relu_act ─► final 1x1 ─► store (HPC0, 3 scores + class)
+     └ double1: conv ─► conv ─► duplicate ─► max_pool, and ─► skip FIFO (UltraRAM, a patch) ──┐
+     └ double2: conv ─► conv ─► max_pool (to 8 x 8) ─► upsample (to 16 x 16)                  │
+     └ up1: conv ─► double3: conv ─► conv ─► upsample (to 32 x 32)                            │
+     └ up2: conv ─► concat_pixels ◄─────────────────────────────────────────────────────────┘
+     └ double4: conv ─► conv ─► final 1x1 ─► store (HPC0, 3 scores + class)
 ```
 
-Every 3x3 conv is `conv3x3_tiled` (PI inputs x PO outputs a cycle, 9 multipliers each).
+Every 3x3 conv is `conv3x3_tiled` (PI inputs x PO outputs a cycle, 9 multipliers each), with its
+ReLU and rounding inside (`activation::relu`): activations on every FIFO.
 
 The ZCU104 has 1 728 DSP48E2, 312 BRAM36, 96 URAM and 230 k LUTs.
 
-## The optimized kernels (`sp_unet_SIZE_opt_direct`)
+## The optimized kernels (`sp_unet_SIZE_opt`)
 
 Built only from techniques the other models already use. A Winograd version
 (`sp_unet_SIZE_opt`: F(2x2, 3x3), 2.3x fewer multiplies, the maps in 2x2-block order,
@@ -110,9 +111,9 @@ predicted 14.5 / 43.6 / 58.2 ms) was written first; only small worked, and it wa
 | | How |
 |---|---|
 | 3x3 convs | `conv3x3_tiled`: 9 per pixel, PI inputs x PO outputs a cycle |
-| UpBlocks | `relu_pool_up` / `relu_up` upsample, then a plain 3x3 conv |
+| UpBlocks | `upsample`, then a plain 3x3 conv |
 | Map order | raster, one pixel a vector |
-| ReLU + rounding | `relu_act` between the convs; `relu_pool_skip` (ReLU, pool, and the skip) after double1 |
+| ReLU + rounding | in every conv (`activation::relu`); `duplicate` (to the skip) and `max_pool` after double1 |
 | Skip FIFO | 2 048 pixels, UltraRAM (a patch at most, each patch is done on its own) |
 | Window | per patch, W + 1 steps of bubble (in the cycle counts below) |
 | FIFOs between the processes | 16 deep, in LUTs (SRL): the layers run at the same rate with no time to spare (below) |
@@ -144,9 +145,9 @@ and 1 604 DSPs is this one; the next faster (33 824 cycles, 120 ms) needs ~2 100
 
 | Kernel | Predicted cycles a patch | Predicted, 665 patches at 214 MHz | Measured |
 |---|---|---|---|
-| `sp_unet_small_opt_direct` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms); at 250 MHz 9 859 cycles, 26.23 ms (2026-11-01) |
-| `sp_unet_medium_opt_direct` | 34 960 | 109 ms | **35 006 cycles, 108.64 ms** (2026-10-30; 97.32 % against the labels); at 250 MHz 35 006 cycles, 93.12 ms (2026-11-01) |
-| `sp_unet_large_opt_direct` | 69 900 | 218 ms | **70 004 cycles, 217.25 ms** (2026-10-30; 97.55 % against the labels); at 250 MHz 70 007 cycles, 186.22 ms (2026-11-01) |
+| `sp_unet_small_opt` | 9 839 | 30.6 ms | **9 856 cycles, 30.6 ms** (with 2-deep FIFOs: 11 503, 35.7 ms); at 250 MHz 9 859 cycles, 26.23 ms (2026-11-01) |
+| `sp_unet_medium_opt` | 34 960 | 109 ms | **35 006 cycles, 108.64 ms** (2026-10-30; 97.32 % against the labels); at 250 MHz 35 006 cycles, 93.12 ms (2026-11-01) |
+| `sp_unet_large_opt` | 69 900 | 218 ms | **70 004 cycles, 217.25 ms** (2026-10-30; 97.55 % against the labels); at 250 MHz 70 007 cycles, 186.22 ms (2026-11-01) |
 
 Why these are predictions: they come from a model of the design, made before the kernel ran,
 not from a run.
@@ -196,7 +197,7 @@ loop depth from hls.log, the whole pipeline frozen on any wait, loops drained at
 reproduced the board, within 0.3 %. Deeper FIFOs in front of the DDR readers (`cube_words`, tried first)
 changed nothing.
 
-## The Zynq-7020 kernels (`sp_unet_SIZE_opt_direct_zynq7020`)
+## The Zynq-7020 kernels (`sp_unet_SIZE_opt_zynq7020`)
 
 The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the same
 arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
@@ -213,7 +214,7 @@ below), and the LUTs and flip-flops are what is short. So:
 | DSPs | 1 184-1 452 | **195 / 200 / 184** (small / medium / large), at most 205 |
 | A conv's 3x3 window | in registers (9 x IN activations), picked by multiplexers | **in three row memories** (`conv3x3_tiled_ram`): a step reads one column of the window at one address; no window registers |
 | A conv's step | PI x PO x the whole window (9 multipliers a unit) | PI x PO x **one tap or one column** of the window (`KT` = 1 or 3): sized in units of 1-3 DSPs, not 9 |
-| ReLU and rounding | `relu_act` / ReLU modules, 32-bit sums on the FIFOs, every channel rounded at once | **inside every conv** (`RELU_SHIFT`), rounded as each output group finishes (PO rounding units, not OUT): int16 activations on every FIFO, 7 processes fewer, the pooling only takes maxima (SHIFT 0) |
+| ReLU and rounding | inside every conv since 2026-11-04 (before: `relu_act` / ReLU modules, 32-bit sums on the FIFOs) | **inside every conv** (`activation::relu`), rounded as each output group finishes (PO rounding units, not OUT): int16 activations on every FIFO, 7 processes fewer, the pooling only takes maxima (SHIFT 0) |
 | convsp1 | packed for the DSP48E2 (18 bits apart, groups of 8) | packed for the DSP48E1 (16 bits apart, groups of 2), the pairs in passes (`OPASS`), a pass's pairs rounded at a time |
 | convsp2 / convsp3 / final, z-score | DSPs / DSPs / LUTs, LUTs | PI inputs a step (`conv1x1`'s `PI`) on 1-4 DSPs each, z-score on DSPs (small, large) |
 | Read ports | 4 x 128 bit | **1 x 64 bit** (30 720 cycles a patch; T is 76 000 or more) |
@@ -248,9 +249,9 @@ multipliers (the window trails the input by a row and two pixels).
 
 | Kernel | Cycles a patch | 665 patches at 78.1 MHz | at 100 MHz, if it closes |
 |---|---|---|---|
-| `sp_unet_small_opt_direct_zynq7020` | 76 176 (+ ~7 %: ~81 400) | ~694 ms; **measured 665.7 ms** at 76.189 MHz (76 270 cycles a patch: the convs' 76 176, +0.13 %) | ~542 ms |
-| `sp_unet_medium_opt_direct_zynq7020` | 228 528 (+ ~7 %) | **~2.1 s** | ~1.6 s |
-| `sp_unet_large_opt_direct_zynq7020` | 420 864 (+ ~7 %) | **~3.8 s** | ~3.0 s |
+| `sp_unet_small_opt_zynq7020` | 76 176 (+ ~7 %: ~81 400) | ~694 ms; **measured 665.7 ms** at 76.189 MHz (76 270 cycles a patch: the convs' 76 176, +0.13 %) | ~542 ms |
+| `sp_unet_medium_opt_zynq7020` | 228 528 (+ ~7 %) | **~2.1 s** | ~1.6 s |
+| `sp_unet_large_opt_zynq7020` | 420 864 (+ ~7 %) | **~3.8 s** | ~3.0 s |
 
 The + 7 % is the 2-deep FIFOs between the processes (the cycle model of small: 81 386 cycles a
 patch against 76 202 with 16 deep); for medium and large it is assumed the same. Predicted the same way as the ZCU104 direct kernels' (see "Predicted and measured times"): the
@@ -342,12 +343,12 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-10-26: DSPs kept at 1 200-1 500 for the clock: small 1 506 → 1 474 (z-score in LUTs), medium
   1 632 → 1 368 (T 9 216 → 12 288, 32.7 → 43.6 ms, no Winograd multiplier in LUTs), large 1 568 →
   1 440 (double1a in LUTs, same T).
-- 2026-10-26: direct kernels `sp_unet_SIZE_opt_direct` (no Winograd): `conv3x3_grouped` (PI x PO a
+- 2026-10-26: direct kernels `sp_unet_SIZE_opt` (no Winograd): `conv3x3_grouped` (PI x PO a
   cycle), `relu_act`, `relu_pool_skip`, `concat_pixels`, justounetsimple_opt's `relu_pool_up` and
   `relu_up`; raster order; T = 9 828 / 34 944 / 69 888 cycles a patch, 1 380 / 1 257 / 1 136 DSPs
   (predicted 34.9 / 124 / 248 ms). The shared checks, channel counts and fraction bits moved to
   `sp_unet_opt_common.hpp`.
-- 2026-10-27: `sp_unet_small_opt_direct` on the board: 41 ms for a whole capture, FPGA alone, at
+- 2026-10-27: `sp_unet_small_opt` on the board: 41 ms for a whole capture, FPGA alone, at
   187.5 MHz, against 34.9 ms predicted (≈ 11 560 cycles a patch against 9 828). A cycle simulation
   puts only ~3 % of it on `relu_pool_up`'s and `relu_up`'s take-then-give; with ideal memory the chain
   runs at 9 841, so the rest is not in its model of the chain.
@@ -369,16 +370,16 @@ Routed, kernel alone (without the interconnects); by process in
   were ~25 k of the 189 k): DSPs 1 452 / 1 297 / 1 184 (small / medium / large).
 - 2026-10-27: measured with the 16-deep FIFOs: 9 856 cycles a patch, 30.6 ms at 214 MHz (model 9 839).
   The fix is described under "Equal-rate processes need deep FIFOs between them".
-- 2026-10-27: `sp_unet_large_opt_direct` never finished routing: Vivado stayed in Phase 5.2/5.3 (global
+- 2026-10-27: `sp_unet_large_opt` never finished routing: Vivado stayed in Phase 5.2/5.3 (global
   iterations), estimated congestion level 6 (5 and up reduce routability). `conv3x3_grouped` kept its
   weights in one memory per (PO, PI, tap): 1 008 memories up to 256 deep on large. Now one wide memory a
   layer, a step's PO x PI x 9 weights a word, block RAM when deeper than 64 steps (~52 BRAM36 on large,
   ~60 on medium, none on small), LUTRAM otherwise; the same reads, so the same speed. Bit-exact on the
   three sizes; not yet routed.
-- 2026-10-28: `sp_unet_medium_opt_direct` and `sp_unet_large_opt_direct` on the board at 214 MHz: at the
+- 2026-10-28: `sp_unet_medium_opt` and `sp_unet_large_opt` on the board at 214 MHz: at the
   predicted ~109 ms and ~218 ms. Predicted and measured times, and how the predictions are made, in
   "Predicted and measured times".
-- 2026-10-28: Zynq-7020 kernels `sp_unet_SIZE_opt_direct_zynq7020`: one 64-bit read port, convs with a
+- 2026-10-28: Zynq-7020 kernels `sp_unet_SIZE_opt_zynq7020`: one 64-bit read port, convs with a
   row of the window a step (`conv3x3_grouped`'s `KR`) and their ReLU inside (`RELU_SHIFT`), convsp1
   packed for the DSP48E1 in passes (`pointwise_packed`'s `OPASS`, `zynq7020/pointwise_wide.hpp`), FIFOs
   16 deep in LUTRAM, the skip in block RAM; 197 / 197 / 192 DSPs, T = 76 104 / 228 312 / 419 328
@@ -386,7 +387,7 @@ Routed, kernel alone (without the interconnects); by process in
   includes the ZCU104 header (each kernel's .cpp includes its own first).
 - 2026-10-28: first 7020 build (small, `--board zedboard`): HLS and Vivado synthesis pass, placement
   refused: 66 239 LUTs as logic needed, 53 200 on the chip (124 %). To cut. OPU program for the
-  ZedBoard: the generic `classify.c` (`software/opu/sp_unet_SIZE_opt_direct_zynq7020/include.txt`).
+  ZedBoard: the generic `classify.c` (`software/opu/sp_unet_SIZE_opt_zynq7020/include.txt`).
 - 2026-10-28: 7020 LUT cuts after the first build: convs round PO lanes as each output group finishes
   and every conv sends activations (double1b/2b/3b too: `relu_pool_skip` / `relu_pool_up` / `relu_up`
   take activations, SHIFT 0, `relu_in`); `pointwise` takes PI inputs a step (convsp2/3 and final on 1-4
@@ -417,7 +418,7 @@ Routed, kernel alone (without the interconnects); by process in
   (63 %, was 92 496), but LUT 95 489 estimated (~52 k real at the earlier ratio, ~98 %) and BRAM18 172.
   To be sure it places: the FIFOs between the processes 2 deep instead of 16 (s_pool1 16, s_pool2 32,
   s_dec3 64 for their bursts): a few thousand LUTs, ~7 % more time (small ~694 ms predicted).
-- 2026-10-28: `sp_unet_small_opt_direct_zynq7020` built and ran on the ZedBoard: 665 ms for a whole capture
+- 2026-10-28: `sp_unet_small_opt_zynq7020` built and ran on the ZedBoard: 665 ms for a whole capture
   at 78.1 MHz, ≈ 78 100 cycles a patch: 2.6 % over the convs' 76 176, not the 7 % the cycle model gave the
   2-deep FIFOs (predicted ~694 ms). Its design: `conv3x3_lines` (the window in row memories), the ReLU in
   every conv, convsp2/3 and final on a few DSPs, 2-deep FIFOs between the processes.
@@ -431,8 +432,8 @@ Routed, kernel alone (without the interconnects); by process in
   medium's BRAM18 rose to 407. Back to a memory per (row, lane); the 1 024-deep skip FIFOs stay.
 - 2026-10-28: decided: the 7020 runs small only; medium and large stay on the ZCU104 (their 7020 kernels
   do not fit: ~59 k / ~69 k LUTs of 53.2 k; see "Medium and large do not fit the 7020").
-- 2026-10-29: `sp_unet_medium_opt_direct_zynq7020` and `sp_unet_large_opt_direct_zynq7020` removed (they do
-  not fit; in git before this date). The z-score constants come from `src/optimized/shared/zscore_int8.hpp`
+- 2026-10-29: `sp_unet_medium_opt_zynq7020` and `sp_unet_large_opt_zynq7020` removed (they do
+  not fit; in git before this date). The z-score constants come from `src/optimized/zscore_int8.hpp`
   (`python tools/preprocessing.py`), the same values as justounetsimple_prep.hpp before.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
   (optimized) and `classify_golden.ipynb`, one image folder for every model. They, and the ZedBoard's
@@ -440,22 +441,22 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-10-30: the ZedBoard's PLL makes 76.189 MHz, not 78.1 (`load.sh` prints it; seen on zb05). If the
   2026-10-28 run had that clock, its 665 ms is ≈ 76 100 cycles a patch: the convs' own 76 176, nothing
   lost to the 2-deep FIFOs. In `speed_zedboard.md`.
-- 2026-10-30: `sp_unet_large_opt_direct` on the ZCU104 at 214 MHz: 70 004 cycles a patch (69 900
+- 2026-10-30: `sp_unet_large_opt` on the ZCU104 at 214 MHz: 70 004 cycles a patch (69 900
   predicted), 217.25 ms, wall clock 218.4 ms; 97.55 % against the labels, IoU cloud / land / sea
   0.945 / 0.923 / 0.973. In `speed_zcu104.md`.
-- 2026-10-30: `sp_unet_small_opt_direct` and `sp_unet_medium_opt_direct` run again at 214 MHz: 9 858 /
+- 2026-10-30: `sp_unet_small_opt` and `sp_unet_medium_opt` run again at 214 MHz: 9 858 /
   35 006 cycles a patch, 30.59 / 108.64 ms, wall clock 32.1 / 109.8 ms; 97.48 / 97.32 % against the
   labels. In `speed_zcu104.md`.
 - 2026-10-31: golden `sp_unet_large` on the ZCU104: 2 164.5 s on the FPGA (3 254.9 ms a patch, one patch a
   start), 2 172.4 s wall clock; 97.55 % against the labels, IoU 0.945 / 0.923 / 0.973, the same as
-  `sp_unet_large_opt_direct`'s, which is ~10 000× faster (217.25 ms). In `speed_zcu104.md`.
+  `sp_unet_large_opt`'s, which is ~10 000× faster (217.25 ms). In `speed_zcu104.md`.
 - 2026-10-31: golden `sp_unet_medium` on the ZCU104: 1 239.3 s on the FPGA (1 863.6 ms a patch), 1 247.3 s
-  wall clock; 97.33 % against the labels, IoU 0.939 / 0.919 / 0.970 (`sp_unet_medium_opt_direct`: 97.32 %,
+  wall clock; 97.33 % against the labels, IoU 0.939 / 0.919 / 0.970 (`sp_unet_medium_opt`: 97.32 %,
   ~11 400× faster at 108.64 ms). In `speed_zcu104.md`.
 - 2026-10-31: golden `sp_unet_small` on the ZCU104: 416.5 s on the FPGA (626.4 ms a patch), 424.5 s wall
-  clock; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as `sp_unet_small_opt_direct`'s,
+  clock; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as `sp_unet_small_opt`'s,
   which is ~13 600× faster (30.59 ms). In `speed_zcu104.md`.
-- 2026-10-31: `sp_unet_small_opt_direct_zynq7020` again on zb05, 76.189 MHz (`load.sh`): 665.7 ms, 76 270
+- 2026-10-31: `sp_unet_small_opt_zynq7020` again on zb05, 76.189 MHz (`load.sh`): 665.7 ms, 76 270
   cycles a patch (the convs' 76 176, +0.13 %: the 2-deep FIFOs lose next to nothing), wall clock
   3.622 s; 97.48 % against the labels, IoU 0.944 / 0.914 / 0.976, the same as the ZCU104 kernel's.
   In `speed_zedboard.md`.
@@ -465,20 +466,20 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-10-31: the Winograd kernels `sp_unet_SIZE_opt` removed (only small worked; not to be used), with
   `wino_conv3x3`, `pool_blocks`, `blocks_to_rows`, `concat_blocks` and the block-order options of
   `pixel_buffer` and `pointwise`. `sp_unet_opt.hpp`, `sp_unet_opt_common.hpp` and the testbench check
-  moved to `sp_unet_small_opt_direct/`. The direct kernels bit-exact in `main.py native`.
-- 2026-11-01: `sp_unet_large_opt_direct` on the ZCU104 at 250 MHz, one start: 186.22 ms by the kernel's
+  moved to `sp_unet_small_opt/`. The direct kernels bit-exact in `main.py native`.
+- 2026-11-01: `sp_unet_large_opt` on the ZCU104 at 250 MHz, one start: 186.22 ms by the kernel's
   count (70 007 cycles a patch, 280.0 us), host timer 186.45 ms, wall clock 187.33 ms; 97.55 %, IoU
   0.945 / 0.923 / 0.973, as at 214 MHz. Logic-bound: the same cycles, 186.2 ms as predicted.
-- 2026-11-01: `sp_unet_medium_opt_direct` at 250 MHz, one start: 93.12 ms by the kernel's count (35 006
+- 2026-11-01: `sp_unet_medium_opt` at 250 MHz, one start: 93.12 ms by the kernel's count (35 006
   cycles a patch, 140.0 us), host timer 93.37 ms, wall clock 94.22 ms; 97.32 %, IoU 0.939 / 0.919 /
   0.970, as at 214 MHz. The same cycles, 93.1 ms as predicted.
-- 2026-11-01: `sp_unet_small_opt_direct` at 250 MHz, one start: 26.23 ms by the kernel's count (9 859
+- 2026-11-01: `sp_unet_small_opt` at 250 MHz, one start: 26.23 ms by the kernel's count (9 859
   cycles a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms; 97.48 %, IoU 0.944 / 0.914 /
   0.976, as at 214 MHz. The same cycles, 26.2 ms as predicted: all three sizes logic-bound.
 - 2026-11-02: routed utilization of every kernel in "Utilization" (from `tools/utilization.py`; by
   process in `utilization.md`). The direct kernels take more DSPs than their tables count: 1 549 / 1 372 /
   1 277 against 1 452 / 1 297 / 1 184, nearly all in the convs (small: `conv3x3_grouped` 1 274 against
-  1 188). `sp_unet_small_opt_direct_zynq7020` 205 against 195 (the convs 170 of 164, the z-score's 8 in
+  1 188). `sp_unet_small_opt_zynq7020` 205 against 195 (the convs 170 of 164, the z-score's 8 in
   `pixel_buffer`), 39.1 k LUTs (73.6 %) and 69 BRAM36. The golden kernels fill the UltraRAM (88 / 96 /
   96 of 96); large takes 262.5 of the 312 BRAM36.
 - 2026-11-03: shared modules merged (the answers bit for bit the same): `conv3x3_serial` is now
@@ -504,3 +505,18 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: the constants (the `sizes` table, chip variables) moved to each kernel's .hpp; those
   from the weights' fractions, `sp_unet_opt_common.hpp` and the layer macros stay in the .cpp. The same
   answers bit for bit.
+- 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
+  (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
+  rebuilt: check csynth's FIFO depths.
+- 2026-11-04: every 3x3 conv ReLUs and rounds inside (`activation::relu`), also on the ZCU104, so the
+  nine `relu_act` processes and their 32-bit FIFOs are gone; `relu_pool_skip` is now `max_pool_skip`,
+  `relu_pool_up` is `max_pool` + `upsample`, `relu_up` is `upsample`. The `CONV_LAYER` /
+  `TILED_RAM_LAYER` macros are written out at each conv. The same answers bit for bit; not built: check
+  csynth's cycles a patch (T) and LUTs (fewer processes on the ZCU104, one more for the pool/upsample).
+- 2026-11-04: `max_pool_skip` split in two: `duplicate` copies double1's output to the skip and to
+  `max_pool`, the same module as after double2 (one process and one FIFO more, 16 deep on the ZCU104,
+  2 on the 7020). The modules moved from `src/optimized/shared/` to `src/optimized/`. The same answers
+  bit for bit; not built: check csynth's T and that the new FIFO does not stall double1.
+- 2026-11-04: the kernels renamed: `sp_unet_SIZE_opt_direct` is now `sp_unet_SIZE_opt`, and
+  `sp_unet_small_opt_direct_zynq7020` is `sp_unet_small_opt_zynq7020` (files, testbench folders, tools/models.py,
+  the tests); the old Winograd version is gone, so "direct" told nothing apart. Builds go to `build/sp_unet_SIZE_opt/`.

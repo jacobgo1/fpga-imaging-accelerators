@@ -5,7 +5,7 @@
 // the image. The kernel must match a plain-loop integer reference bit for bit, and
 // stay close to the float golden kernel. A fifth of the z-scores saturate, and the
 // dropped bands hold 65535, so both must be handled right.
-#include "../../src/optimized/shared/zscore_int8.hpp"
+#include "../../src/optimized/zscore_int8.hpp"
 #include "../../src/models/2D-Justo-UNet-Simple/justounetsimple_golden/justounetsimple.cpp"
 #include <algorithm>
 #include <cmath>

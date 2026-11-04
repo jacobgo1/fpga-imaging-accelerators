@@ -3,10 +3,10 @@
 namespace weights = justoliunet_int8;
 namespace model_formats = justoliunet_formats;
 #include "justoliunet_opt_zynq7030.hpp"
-#include "../../../optimized/shared/pixel_io.hpp"
-#include "../../../optimized/shared/conv1d_map.hpp"
-#include "../../../optimized/shared/conv1d_positions.hpp"
-#include "../../../optimized/shared/count_cycles.hpp"
+#include "../../../optimized/pixel_io.hpp"
+#include "../../../optimized/conv1d_map.hpp"
+#include "../../../optimized/conv1d_positions.hpp"
+#include "../../../optimized/count_cycles.hpp"
 
 namespace shared_formats = justoliunet_opt_formats;
 
@@ -33,19 +33,15 @@ void justoliunet_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
     hls::stream<cube_word_t> cube_words[READ_PORTS];
     hls::stream<map_t<int16_t, KEPT_BANDS, 1>> zscores("zscores");
     hls::stream<vec_t<uact_t, CONV1_POSITIONS_PER_CYCLE * 6>> conv1_out("conv1_out");
-    hls::stream<vec_t<uact_t, 6>> pool1_out("pool1_out");
-    hls::stream<vec_t<uact_t, 12>> pool2_out("pool2_out");
-    hls::stream<vec_t<uact_t, 18>> pool3_out("pool3_out");
-    hls::stream<vec_t<uact_t, 24>> pool4_out("pool4_out");
-    hls::stream<vec_t<sum_t, CLASSES>> scores("scores");
-    hls::stream<bool> all_written("all_written");
     // A layer reads a pixel's first positions back to back to fill its window:
     // room for them, so the layer before does not wait.
+    hls::stream<vec_t<uact_t, 6>, 8> pool1_out("pool1_out");
+    hls::stream<vec_t<uact_t, 12>, 8> pool2_out("pool2_out");
+    hls::stream<vec_t<uact_t, 18>, 8> pool3_out("pool3_out");
+    hls::stream<vec_t<uact_t, 24>> pool4_out("pool4_out");
+    hls::stream<vec_t<sum_t, CLASSES>, 8> scores("scores");
+    hls::stream<bool> all_written("all_written");
     #pragma HLS STREAM variable=cube_words depth=64
-    #pragma HLS STREAM variable=pool1_out  depth=8
-    #pragma HLS STREAM variable=pool2_out  depth=8
-    #pragma HLS STREAM variable=pool3_out  depth=8
-    #pragma HLS STREAM variable=scores     depth=8
 
     read_pixels<WORDS_PER_PIXEL, BLOCK_PIXELS, READ_PORTS, 0>(din0, cube_words[0], height, width);
     zscore_pixels<WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, BLOCK_PIXELS, READ_PORTS,

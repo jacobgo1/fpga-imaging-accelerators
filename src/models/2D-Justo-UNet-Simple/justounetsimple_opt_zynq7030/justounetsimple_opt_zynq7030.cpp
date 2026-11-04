@@ -1,12 +1,11 @@
 #include "justounetsimple_opt_zynq7030.hpp"
-#include "../../../optimized/shared/read_patch_rows.hpp"
-#include "../../../optimized/shared/patch_buffer.hpp"
-#include "../../../optimized/shared/conv3x3_2mul.hpp"
-#include "../../../optimized/shared/conv3x3_tiled.hpp"
-#include "../../../optimized/shared/relu_pool.hpp"
-#include "../../../optimized/shared/relu_pool_up.hpp"
-#include "../../../optimized/shared/relu_up.hpp"
-#include "../../../optimized/shared/store_scores.hpp"
+#include "../../../optimized/read_patch_rows.hpp"
+#include "../../../optimized/patch_buffer.hpp"
+#include "../../../optimized/conv3x3_2mul.hpp"
+#include "../../../optimized/conv3x3_tiled.hpp"
+#include "../../../optimized/max_pool.hpp"
+#include "../../../optimized/upsample.hpp"
+#include "../../../optimized/store_scores.hpp"
 
 #include "../../../../weights/quantized/justounetsimple/justounetsimple_int8.hpp"
 
@@ -49,23 +48,20 @@ void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
     #pragma HLS DATAFLOW
 
+    // The FIFOs between the processes, each with its depth: deep enough that no layer
+    // waits for a slower one's bursts. The conv outputs keep the default 2, as before
+    // the split (the convs here are far slower than the pools after them).
     hls::stream<cube_word_t> cube_words[READ_PORTS];
-    hls::stream<vec_t<act8_t, CONV1_BANDS_PER_CYCLE>> zscores("zscores");
-    hls::stream<vec_t<sum_t, BASE_CHANNELS>> conv1_sums("conv1_sums");
-    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv1_pooled("conv1_pooled");
-    hls::stream<vec_t<sum_t, 2 * BASE_CHANNELS>> conv2_sums("conv2_sums");
-    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_pooled_upsampled("conv2_pooled_upsampled");
-    hls::stream<vec_t<sum_t, BASE_CHANNELS>> conv3_sums("conv3_sums");
-    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv3_upsampled("conv3_upsampled");
-    hls::stream<vec_t<sum_t, CLASSES>> conv4_sums("conv4_sums");
-
-    // Deep enough that no layer waits for a slower one's bursts.
-    #pragma HLS STREAM variable=cube_words             depth=64
-    #pragma HLS STREAM variable=zscores                depth=64
-    #pragma HLS STREAM variable=conv1_pooled           depth=256
-    #pragma HLS STREAM variable=conv2_pooled_upsampled depth=32
-    #pragma HLS STREAM variable=conv3_upsampled        depth=64
-    #pragma HLS STREAM variable=conv4_sums             depth=32
+    #pragma HLS STREAM variable=cube_words depth=64
+    hls::stream<vec_t<act8_t, CONV1_BANDS_PER_CYCLE>, 64> zscores("zscores");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv1_act("conv1_act");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>, 256> conv1_pooled("conv1_pooled");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_act("conv2_act");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>> conv2_pooled("conv2_pooled");
+    hls::stream<vec_t<act_t, 2 * BASE_CHANNELS>, 32> conv2_upsampled("conv2_upsampled");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>> conv3_act("conv3_act");
+    hls::stream<vec_t<act_t, BASE_CHANNELS>, 64> conv3_upsampled("conv3_upsampled");
+    hls::stream<vec_t<sum_t, CLASSES>, 32> scores("scores");
 
     read_patch_rows<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 0, PIXELS_PER_BURST, BURSTS_IN_FLIGHT>(
         din0, cube_words[0], height, width);
@@ -82,30 +78,28 @@ void justounetsimple_opt_zynq7030(hls::burst_maxi<cube_word_t> din0, hls::burst_
     // conv1: 110 -> 6 at 32 x 32, 12 bands a cycle, two multiplies per DSP.
     conv3x3_2mul<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
                  CONV1_BANDS_PER_CYCLE, CONV1_BIAS_SHIFT, weights::conv1_weight, weights::conv1_bias,
-                 DSP_PACK_SHIFT, DSP_PACK_GROUP>(zscores, conv1_sums, height, width);
-    relu_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, CONV1_OUTPUT_SHIFT>(
-        conv1_sums, conv1_pooled, height, width);
+                 DSP_PACK_SHIFT, DSP_PACK_GROUP, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
+    max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
-    // conv2: 6 -> 12 at 16 x 16.
+    // conv2: 6 -> 12 at 16 x 16; ReLU; pool to 8 x 8 and upsample back.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, BASE_CHANNELS, 2 * BASE_CHANNELS,
                   CONV2_TO_4_CHANNELS_PER_CYCLE, 1, CONV2_BIAS_SHIFT,
-                  weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS>(
-        conv1_pooled, conv2_sums, height, width);
-    relu_pool_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, CONV2_OUTPUT_SHIFT>(
-        conv2_sums, conv2_pooled_upsampled, height, width);
+                  weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  CONV2_OUTPUT_SHIFT>(conv1_pooled, conv2_act, height, width);
+    max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv2_act, conv2_pooled, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH / 2, HALF_PATCH / 2>(conv2_pooled, conv2_upsampled, height, width);
 
-    // conv3: 12 -> 6 at 16 x 16.
+    // conv3: 12 -> 6 at 16 x 16; ReLU; upsample to 32 x 32.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 2 * BASE_CHANNELS, BASE_CHANNELS,
                   CONV2_TO_4_CHANNELS_PER_CYCLE, 1, CONV3_BIAS_SHIFT,
-                  weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS>(
-        conv2_pooled_upsampled, conv3_sums, height, width);
-    relu_up<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, CONV3_OUTPUT_SHIFT>(
-        conv3_sums, conv3_upsampled, height, width);
+                  weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  CONV3_OUTPUT_SHIFT>(conv2_upsampled, conv3_act, height, width);
+    upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv3_act, conv3_upsampled, height, width);
 
     // conv4: 6 -> 3 at 32 x 32, the scores.
     conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, BASE_CHANNELS, CLASSES,
                   CONV2_TO_4_CHANNELS_PER_CYCLE, 1, CONV4_BIAS_SHIFT,
                   weights::conv4_weight, weights::conv4_bias, CONV2_TO_4_ON_DSPS>(
-        conv3_upsampled, conv4_sums, height, width);
-    store_scores<PATCH_SIZE, PATCH_SIZE, CONV4_OUTPUT_SHIFT>(conv4_sums, dout, height, width);
+        conv3_upsampled, scores, height, width);
+    store_scores<PATCH_SIZE, PATCH_SIZE, CONV4_OUTPUT_SHIFT>(scores, dout, height, width);
 }

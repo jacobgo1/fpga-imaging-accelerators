@@ -7,9 +7,9 @@ here against the labelled aegean pixels. Against it, compiled with plain g++:
  - the golden kernels sp_unet_small/medium/large (int8 weights, float activations), on
    real 32 x 32 patches;
  - the integer model's plain-loop C++
-   (tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp), bit for bit against
+   (tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp), bit for bit against
    classify_fixed's arithmetic, so it can be an optimized kernel's reference.
-Then the optimized kernels sp_unet_SIZE_opt_direct (integer fixed point),
+Then the optimized kernels sp_unet_SIZE_opt (integer fixed point),
 compiled with plain g++, bit for bit against classify_fixed on a real raw crop that is not
 whole patches. The board notebooks, shared by every model, are tests/test_notebooks.py's.
 """
@@ -243,7 +243,7 @@ class SpecPWUNetTests(unittest.TestCase):
                     weights = m.quantized_path(size).with_suffix('.hpp')
                     compile_and_run(FIXED_DRIVER.format(size=size, weights=weights.as_posix(), in_frac=m.IN_FRAC,
                                                         act_frac=m.ACT_FRAC, out_frac=m.OUT_FRAC),
-                                    tmp, f'fixed_{size}', [ROOT / 'tb/sp_unet_small_opt_direct'], [],
+                                    tmp, f'fixed_{size}', [ROOT / 'tb/sp_unet_small_opt'], [],
                                     [tmp / 'in.bin', tmp / 'out.bin', len(inputs), m.ACT_MAX])
                     for act_max in (m.ACT_MAX, 2047):
                         subprocess.run([str(tmp / f'fixed_{size}.exe'), str(tmp / 'in.bin'), str(tmp / 'out.bin'),
@@ -257,7 +257,7 @@ class SpecPWUNetTests(unittest.TestCase):
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_optimized_kernels_match_classify_fixed_bit_for_bit(self):
-        """The whole raw-cube kernels, direct (_opt_direct) and the Zynq-7020's, on a real crop of
+        """The whole raw-cube kernels, direct (_opt) and the Zynq-7020's, on a real crop of
         45 x 70 pixels (2 x 3 patches, the edge ones partly outside): what classify_fixed and
         the class say, every value."""
         m = self.model
@@ -265,7 +265,7 @@ class SpecPWUNetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
-            for name, size in [(f'{m.name(size)}_opt_direct{kind}', size) for size in m.SIZES
+            for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES
                                for kind in ('', '_zynq7020')
                                if kind == '' or size == 'small']:   # the 7020 fits small only
                 with self.subTest(kernel=name):

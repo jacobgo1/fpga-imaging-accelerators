@@ -6,10 +6,10 @@
 #include "../../../../weights/quantized/spectralpointwise1d/spectralpointwise1d_int8.hpp"
 #include "../../1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt_formats.hpp"
 #include "spectralpointwise1d_opt_formats.hpp"
-#include "../../../optimized/shared/pixel_io.hpp"
-#include "../../../optimized/shared/zscore_pointwise.hpp"
-#include "../../../optimized/shared/pointwise1d.hpp"
-#include "../../../optimized/shared/count_cycles.hpp"
+#include "../../../optimized/pixel_io.hpp"
+#include "../../../optimized/zscore_pointwise.hpp"
+#include "../../../optimized/pointwise1d.hpp"
+#include "../../../optimized/count_cycles.hpp"
 
 namespace weights = spectralpointwise1d_int8;
 namespace shared_formats = justoliunet_opt_formats;    // the input and the scores, as 1D-Justo-LiuNet's

@@ -22,7 +22,7 @@ What the times are:
 | `justounetsimple_opt_zynq7020` | ~16 480 a patch | **143.8 ms** (216.3 us a patch) | 1.320 s | 0.926 s | 3.599 s | 4.5 M | 96.20 % |
 | `justoliunet_opt_zynq7020` | 108.0 a pixel | **925.7 ms** (1.418 us a pixel) | 1.120 s | 1.363 s | 3.449 s | 0.71 M | 97.00 % |
 | `justoliunet_bn_opt_zynq7020` | 108.0 a pixel | **925.7 ms** (1.418 us a pixel) | 2.032 s | 2.820 s | 5.913 s | 0.71 M | 96.46 % |
-| `sp_unet_small_opt_direct_zynq7020` | 76 270 a patch | **665.7 ms** (1 001.1 us a patch) | 1.449 s | 1.484 s | 3.622 s | 0.98 M | 97.48 % |
+| `sp_unet_small_opt_zynq7020` | 76 270 a patch | **665.7 ms** (1 001.1 us a patch) | 1.449 s | 1.484 s | 3.622 s | 0.98 M | 97.48 % |
 | `spectralpointwise1d_opt_zynq7020` | 15.75 a pixel | **135.0 ms** (0.207 us a pixel) | 0.796 s | 0.900 s | 1.852 s | 4.8 M | 97.32 % |
 | `waveletcnn_opt_zynq7020` | 29 721 a patch | **259.4 ms** (390.1 us a patch) | 2.284 s | 0.391 s | 2.974 s | 2.5 M | 97.22 % |
 
@@ -44,7 +44,7 @@ Expected: each kernel's cycle model (T, from its model's file) at 76.189 MHz, as
 | `justounetsimple_opt_zynq7020` | 15 360 a patch | 134.1 ms | 143.8 ms | **+7 %: DDR** (1.14 GB/s of the 1.22 T needs) |
 | `justoliunet_opt_zynq7020` | 108 a pixel | 925.7 ms | 925.7 ms | as expected |
 | `justoliunet_bn_opt_zynq7020` | 108 a pixel | 925.7 ms | 925.7 ms | as expected |
-| `sp_unet_small_opt_direct_zynq7020` | 76 176 a patch | 664.9 ms | 665.7 ms | +0.13 % (`sp_unet.md` had allowed ~7 % for the 2-deep FIFOs: ~694 ms) |
+| `sp_unet_small_opt_zynq7020` | 76 176 a patch | 664.9 ms | 665.7 ms | +0.13 % (`sp_unet.md` had allowed ~7 % for the 2-deep FIFOs: ~694 ms) |
 | `spectralpointwise1d_opt_zynq7020` | 15 a pixel | 128.6 ms | 135.0 ms | **+5 %: DDR** (1.16 GB/s of the 1.22 T needs) |
 | `waveletcnn_opt_zynq7020` | 29 696 a patch | 259.2 ms | 259.4 ms | as expected |
 
@@ -59,7 +59,7 @@ What the runs show:
   15 360 (134 ms predicted at 76.189 MHz, 143.8 measured). It is the read ports' limit (1.25 GB/s of
   2 × 0.62 at T); it got 1.14 GB/s (245 760 bytes a patch ÷ 216.3 us), so the extra is DDR not
   quite keeping the two 64-bit ports busy, as on the ZCU104.
-- **sp_unet_small_opt_direct_zynq7020 and waveletcnn_opt_zynq7020 are logic-bound:** within 0.13 %
+- **sp_unet_small_opt_zynq7020 and waveletcnn_opt_zynq7020 are logic-bound:** within 0.13 %
   and 0.08 % of their cycle models (waveletcnn: 29 721 cycles a patch for T = 29 696, 259.2 ms
   predicted at 76.189 MHz, 259.4 measured; it reads only 0.63 GB/s).
 - **Every kernel gives the ZCU104's answers:** accuracy and IoU the same to the last digit for all
@@ -100,10 +100,10 @@ Where it goes:
 ## Changes
 
 - 2026-10-30: `justounetsimple_opt_zynq7020`, `justoliunet_opt_zynq7020` and
-  `justoliunet_bn_opt_zynq7020` on zb05 at 76.189 MHz; `sp_unet_small_opt_direct_zynq7020`'s run from
+  `justoliunet_bn_opt_zynq7020` on zb05 at 76.189 MHz; `sp_unet_small_opt_zynq7020`'s run from
   `sp_unet.md`.
 - 2026-10-30: routed utilization of the three builds.
-- 2026-10-31: `sp_unet_small_opt_direct_zynq7020` again on zb05 at 76.189 MHz: 665.7 ms, 76 270 cycles a
+- 2026-10-31: `sp_unet_small_opt_zynq7020` again on zb05 at 76.189 MHz: 665.7 ms, 76 270 cycles a
   patch (76 176 predicted), wall clock 3.622 s, 97.48 %, as the ZCU104's.
 - 2026-10-31: `spectralpointwise1d_opt_zynq7020` on zb05 at 76.189 MHz: 135.0 ms, 15.75 cycles a pixel
   (T = 15; DDR, 1.16 GB/s), wall clock 1.852 s, 97.32 %, as the ZCU104's.

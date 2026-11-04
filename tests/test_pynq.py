@@ -69,7 +69,7 @@ class PackageTests(unittest.TestCase):
 
     def test_optimized_packages_take_the_shared_notebook_and_say_their_model(self):
         for kernel, model in (('justounetsimple_opt_zynq7020', 'justounetsimple'),
-                              ('sp_unet_small_opt_direct', 'sp_unet_small'), ('justoliunet_bn_opt', 'justoliunet_bn')):
+                              ('sp_unet_small_opt', 'sp_unet_small'), ('justoliunet_bn_opt', 'justoliunet_bn')):
             with self.subTest(kernel=kernel):
                 run = make_build(self.dir / kernel, kernel, f'#define X{kernel.upper()}_CONTROL_ADDR_AP_CTRL 0x0\n')
                 out, _ = self.package(run, kernel)

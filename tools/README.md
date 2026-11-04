@@ -29,7 +29,7 @@ quantize_weights.py     The same, quantized: BatchNorm folded into its conv, the
 preprocessing.py          what every model shares: keep raw bands 8-117 and z-score them with
                           mu_sd.txt, in float (the golden notebooks) and in integers (the
                           optimized kernels, bit for bit). Also writes the 2D kernels' integer
-                          z-score constants, src/optimized/shared/zscore_int8.hpp:
+                          z-score constants, src/optimized/zscore_int8.hpp:
                           python tools/preprocessing.py
 justounetsimple_model.py  numpy model of the justounetsimple kernels: float forward pass
                           (the reference scores) and the bit-exact integer version of
@@ -56,7 +56,7 @@ specpw_unet_model.py      numpy model of SpecPW-UNet (sp_unet_small/medium/large
                           model in float (the reference of tb/sp_unet_small/specpw_unet_golden.hpp),
                           the int8-weight network the golden kernels run (forward_patch,
                           classify), and classify_fixed, the integer arithmetic of an optimized
-                          kernel bit for bit (also tb/sp_unet_small_opt_direct/specpw_unet_fixed_golden.hpp).
+                          kernel bit for bit (also tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp).
                           python tools/specpw_unet_model.py prints each size's accuracy on the
                           labelled aegean pixels.
 models.py                 every model in one table (its patch size, its scores' format), which

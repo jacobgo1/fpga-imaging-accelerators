@@ -1,7 +1,7 @@
 """Every network the kernels implement, in one table, and the PC's answers for a cube.
 
 A kernel belongs to the model whose name it starts with: justounetsimple_opt_zynq7020 is
-justounetsimple's, sp_unet_small_opt_direct sp_unet_small's. The kernel named like its
+justounetsimple's, sp_unet_small_opt sp_unet_small's. The kernel named like its
 model is the golden one, the rest are optimized. main.py packs MODELS' entry with the
 board's notebook (kernel.json), so one notebook serves every model: the golden kernels
 share software/pynq/classify_golden.ipynb, the optimized ones classify.ipynb.

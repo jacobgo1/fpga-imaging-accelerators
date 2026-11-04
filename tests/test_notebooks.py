@@ -323,7 +323,7 @@ class NotebookTests(unittest.TestCase):
                 model = self.models.model_of(name)
                 if model is None:
                     self.assertTrue((ROOT / 'software/pynq' / name).is_dir(), 'no notebook for it')
-        self.assertEqual(self.models.model_of('sp_unet_small_opt_direct_zynq7020'), 'sp_unet_small')
+        self.assertEqual(self.models.model_of('sp_unet_small_opt_zynq7020'), 'sp_unet_small')
         self.assertEqual(self.models.model_of('justoliunet_bn_opt'), 'justoliunet_bn')
         self.assertEqual(self.models.model_of('justoliunet_opt'), 'justoliunet')
 

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
-#include "../../common/hls_burst_maxi_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
+#include "../common/hls_burst_maxi_shim.hpp"
 #include "patch_grid.hpp"
 
 // DDR to stream: rows PORT, PORT + READ_PORTS, ... of each patch, WORDS_PER_PIXEL

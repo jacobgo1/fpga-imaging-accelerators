@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
-#include "../../../optimized/shared/zscore_int8.hpp"
+#include "../../../optimized/zscore_int8.hpp"
 
 namespace zscore = zscore_int8;
 

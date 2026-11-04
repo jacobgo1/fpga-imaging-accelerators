@@ -1,7 +1,7 @@
-// sp_unet_small_opt_direct_zynq7020_tb.cpp  --  testbench for the Zynq-7020 direct
-// SpecPW-UNet, small: the checks of the ZCU104 kernels (sp_unet_small_opt_direct/sp_unet_opt_check.hpp),
+// sp_unet_small_opt_zynq7020_tb.cpp  --  testbench for the Zynq-7020 direct
+// SpecPW-UNet, small: the checks of the ZCU104 kernels (sp_unet_small_opt/sp_unet_opt_check.hpp),
 // the same answers.
-#include "sp_unet_small_opt_direct_zynq7020.hpp"
+#include "sp_unet_small_opt_zynq7020.hpp"
 // The golden kernel: the float reference, and the weights as namespace weights (floats).
 #include "../../src/models/SpecPW-UNet/Small/sp_unet_small_golden/sp_unet_small.cpp"
 #include <cstdio>
@@ -9,7 +9,7 @@
 static void run_kernel(cube_word_t *din, score_word_t *dout, int height, int width) {
     // hls::burst_maxi takes a plain (not const) pointer; cycles counts only in the RTL.
     uint32_t cycles = 0;
-    sp_unet_small_opt_direct_zynq7020(din, dout, height, width, cycles);
+    sp_unet_small_opt_zynq7020(din, dout, height, width, cycles);
     std::printf("cycles register: %u\n", (unsigned)cycles);
 }
 
@@ -17,7 +17,7 @@ static void run_golden(const float *din, float *dout, int n) {
     sp_unet_small(din, dout, n);
 }
 
-#include "../sp_unet_small_opt_direct/sp_unet_opt_check.hpp"
+#include "../sp_unet_small_opt/sp_unet_opt_check.hpp"
 
 int main()
 {

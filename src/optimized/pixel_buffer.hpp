@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "../../common/hls_stream_shim.hpp"
+#include "../common/hls_stream_shim.hpp"
 #include "patch_buffer.hpp"
 
 // The z-score and a ping-pong buffer of one strip (READ_PORTS rows of a patch),

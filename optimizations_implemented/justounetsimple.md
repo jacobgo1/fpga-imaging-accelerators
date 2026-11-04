@@ -45,7 +45,7 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
 | conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
-| ReLU fused with pooling / upsampling (`relu_pool`, `relu_pool_up`, `relu_up`); else ReLU in the conv (`activation::relu`), pool and upsample one process each (`max_pool`, `upsample`) | in the conv (on trial, 2026-11-03) | ✓ | ✓ |
+| ReLU in the conv (`activation::relu`), pool and upsample one process each (`max_pool`, `upsample`); before 2026-11-04 fused (`relu_pool`, `relu_pool_up`, `relu_up`) | ✓ | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | FIFO depths from a cycle model (`s_a` 256, `s_b` 32, `s_c` 64) | ✓ | not checked | not checked |
 | Memory bank chosen by a constant index (avoids II 5 in the patch buffer) | ✓ | ✓ | ✓ |
@@ -118,10 +118,10 @@ Routed, kernel alone (without the interconnects); by process in
   conv2-4 on DSPs, 4 read ports (the writer shares HP3): 28 705 → 10 273 cycles/patch, 191 → 68 ms.
 - 2026-10-21: Zynq-7030 and 7020: `s_b`/`s_c` FIFO depths (32 and 64, matching ZCU104 so `relu_pool_up`
   and `relu_up` never stall on the default 2-deep FIFOs) and `read_rows_ahead` (4 bursts of 8 pixels =
-  240 words per row, 2 in flight per port); shared `patch_buffer_run` in `src/optimized/shared/patch_buffer.hpp`.
+  240 words per row, 2 in flight per port); shared `patch_buffer_run` in `src/optimized/patch_buffer.hpp`.
 - 2026-10-27: ZCU104 measured 6 707 cycles a patch, 17.8 ms at 250 MHz (conv1: 4 129). Not the FIFOs
   between the stages: a cycle model with HLS's pipeline stalls (the one that matched
-  sp_unet_small_opt_direct within 0.3 %) gives 4 140 with ideal memory, as built, because every
+  sp_unet_small_opt within 0.3 %) gives 4 140 with ideal memory, as built, because every
   stage after conv1 has time to spare. With DDR in the model, the kernel takes exactly as long as the
   read-only kernel (`patch_buffer` hides nothing and loses nothing; deeper `cube_words` changes nothing):
   6 707 cycles at 250 MHz is DDR giving the four ports ~9.2 GB/s together. conv1's 4 129 would need
@@ -130,9 +130,9 @@ Routed, kernel alone (without the interconnects); by process in
   (removed 2026-10-29; it is in git before then).
   Repeated runs give 6 700-7 000 cycles a patch, different each time: what a memory-bound kernel does
   (DDR is shared with the ARM, refresh, page conflicts that depend on where the buffer lies); a
-  logic-bound one gives the same count every run (sp_unet_small_opt_direct: 11 503 twice, at two clocks).
+  logic-bound one gives the same count every run (sp_unet_small_opt: 11 503 twice, at two clocks).
 - 2026-10-29: the read-only test kernel `justounetsimple_opt_readonly` removed (an experiment, not part of
-  the flow). The integer z-score constants are now `src/optimized/shared/zscore_int8.hpp`, shared with
+  the flow). The integer z-score constants are now `src/optimized/zscore_int8.hpp`, shared with
   waveletcnn_opt and sp_unet_*_opt, written by `python tools/preprocessing.py` (was
   justounetsimple_prep.hpp); the same values, the kernels unchanged.
 - 2026-10-29: the board notebooks are now two for every model, `software/pynq/shared/classify.ipynb`
@@ -172,7 +172,7 @@ Routed, kernel alone (without the interconnects); by process in
   `read_rows_ahead` -> `read_patch_rows`, `acc_t` / `wgt_t` -> `sum_t` / `weight_t`, and others;
   `RELU_SHIFT` is now `bool RELU, int ROUND_BITS`. `tools/utilization.py` maps the old names in older
   reports to the new ones.
-- 2026-11-03: ZCU104 on trial with `read_patch_rows_simple` (`src/optimized/shared/`): the same words in
+- 2026-11-03: ZCU104 on trial with `read_patch_rows_simple` (`src/optimized/`): the same words in
   the same order, but from a plain `m_axi` pointer, one burst a patch row that HLS infers, no requests
   ahead; the readers' code reads like a plain loop. Each row now waits for DDR's first word, 8 rows a
   patch a port; estimate (not measured) +5-15 %, ~19-20.5 ms against 17.87. The 7030 and 7020 keep
@@ -180,7 +180,7 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: the ZCU104 measured 20 ms with `read_patch_rows_simple` (17.87 ms with the read-ahead):
   kept, for the simpler readers.
 - 2026-11-03: ZCU104 on trial with ReLU, max pool and upsample as one process each (`relu_act`,
-  `max_pool`, `upsample`; the last two new in `src/optimized/shared/`) instead of `relu_pool`,
+  `max_pool`, `upsample`; the last two new in `src/optimized/`) instead of `relu_pool`,
   `relu_pool_up` and `relu_up`; the chain reads like the model. The same answers bit for bit. Each
   process runs a pixel a cycle, far under T, so the cycles a patch should not change; the cost is 4
   more processes and FIFOs (16 deep, SRL), an estimated 150-500 LUTs each. Not yet built: compare
@@ -213,3 +213,11 @@ Routed, kernel alone (without the interconnects); by process in
   in passing: every process has its own 16 x 16 multiplier for `patch_count` (height x width patches),
   263-345 LUTs each, ~4.5 k LUTs over the kernel; and the 2-deep FIFOs of the conv sums cost 270-548
   LUTs each (registers), more than the 16-deep SRL ones.
+- 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
+  (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
+  rebuilt: check csynth's FIFO depths.
+- 2026-11-04: Zynq-7030 and 7020 split like the ZCU104: the ReLU in each conv (`conv3x3_2mul`,
+  `conv3x3_tiled` with `activation::relu`), then `max_pool` / `upsample` one process each, instead of
+  `relu_pool`, `relu_pool_up`, `relu_up` (deleted, with `relu_act` and `to_act`). The new conv-output
+  FIFOs keep the default depth 2. The same answers bit for bit; not built: check csynth's LUTs and the
+  cycles a patch against the fused version.
