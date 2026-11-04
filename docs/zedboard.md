@@ -88,7 +88,7 @@ The folder must have:
 | --- | --- |
 | `$K.bit.bin`, `$K.bit.bin.md5sum` | the build failed: see `$RUN/vivado-console.log` |
 | `$K.dtbo` | no `dtc` on the server: install it (above), then `fpga_pynq $K $RUN` packs it again, no rebuild |
-| `classify` | no ARM compiler (install it, then `fpga_pynq $K $RUN`), or the kernel has no program in `software/opu/$K/` (see [Another kernel](#another-kernel)) |
+| `classify` | no ARM compiler (install it, then `fpga_pynq $K $RUN`), or `$K` is a golden kernel, which has none (see [Another kernel](#another-kernel)) |
 | `load.sh`, `$K.dtsi`, `x${K}_hw.h`, `kernel_regs.h` | always there |
 
 ### 3. Check that the board is free
@@ -201,15 +201,12 @@ ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd
 
 ## Another kernel
 
-`load.sh` works for any kernel built with `--board zedboard`. `classify` is
-`justounetsimple_opt`'s program (`software/opu/justounetsimple_opt/classify.c`) and works
-for a kernel with the same interface: AXI-Lite registers `din0`, `din1`, ... (the raw
-cube), `dout` (H x W x 4 int32 scores), `height` and `width`, and at most 4 `m_axi` ports
-(the Zynq-7000's HP ports). For a new kernel like that, a folder
-`software/opu/NEWKERNEL/` with an `include.txt` holding the line
-`software/opu/justounetsimple_opt/classify.c` gives it the same program (see
-`software/opu/justounetsimple_opt_zynq7020/include.txt`). A kernel with another interface
-needs its own `.c` program in `software/opu/NEWKERNEL/`.
+`load.sh` works for any kernel built with `--board zedboard`. `classify`
+(`software/opu/classify.c`) is the one program every optimized kernel of a model in
+`tools/models.py` gets, as they share a PYNQ notebook. It works for any kernel with that
+interface: AXI-Lite registers `din0`, `din1`, ... (the raw cube), `dout` (H x W x 4 int32
+scores), `height` and `width`, and at most 4 `m_axi` ports (the Zynq-7000's HP ports). A
+kernel with another interface needs its own `.c` program in `software/opu/NEWKERNEL/`.
 
 `fpga_ip $K --board zedboard` stops at the IP and makes nothing `load.sh` can load: it is
 for putting the kernel into a Vivado design of your own.

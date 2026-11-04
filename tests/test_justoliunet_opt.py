@@ -1,37 +1,25 @@
 """justoliunet_opt and justoliunet_bn_opt (ZCU104) and their Zynq-7020 versions: the integer
 model against the trained model, every optimized C++ kernel against the integer model (the
-same answers on both chips) on the labelled aegean pixels, and the OPU program. The board
-notebook, shared by every model, is tests/test_notebooks.py's.
+same answers on both chips) on the labelled aegean pixels. The board notebook, shared by every
+model, is tests/test_notebooks.py's.
 
 classify_fixed (tools/justoliunet_model.py) is what the kernels must write, bit for bit;
 here it is checked against the trained fp32 model on real pixels, and the kernels,
 compiled with plain g++, against it on the same pixels. The kernels' testbenches check
 them against a plain-loop integer reference of their own and the float golden network.
 """
-import contextlib
-import gc
-import importlib.util
-import io
-import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tempfile
-import types
 import unittest
-import zipfile
 
-from kernels import kernel_dir
+from helpers import CXX, ROOT, load_module, run_kernel, skip_without_aegean
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
-CXX = shutil.which('g++') or shutil.which('clang++')
 KERNELS = {'justoliunet': 'justoliunet_opt', 'justoliunet_bn': 'justoliunet_bn_opt'}
 # Every optimized kernel: (model, its call on din, dout, height, width, cycles). The ZCU104's
 # read the cube through two ports, the Zynq-7000s' through one.
@@ -44,19 +32,11 @@ OPTIMIZED = {'justoliunet_opt': ('justoliunet', 'justoliunet_opt(d, d, dout.data
 # Register offsets for the fake kernel, in the layout Vitis HLS gives the kernel.
 
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @unittest.skipUnless(np is not None, 'needs numpy')
 class JustoLiuNetOptTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not (ROOT / 'aegean').is_dir():
-            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
+        skip_without_aegean()
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('justoliunet_model', ROOT / 'tools/justoliunet_model.py')
         cls.raw, cls.labels = cls.model.aegean_pixels()
@@ -102,9 +82,7 @@ class JustoLiuNetOptTests(unittest.TestCase):
             cube.tofile(tmp / 'in.bin')
             for kernel, (model, call) in OPTIMIZED.items():
                 with self.subTest(kernel=kernel):
-                    source_dir = kernel_dir(kernel)
-                    source = tmp / f'run_{kernel}.cpp'
-                    source.write_text(f"""
+                    cpp = run_kernel(tmp, kernel, f"""
 #include "{kernel}.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -121,24 +99,8 @@ int main(int, char** argv) {{
     {call};
     f = fopen(argv[2], "wb"); fwrite(dout.data(), sizeof(score_word_t), dout.size(), f); fclose(f);
 }}
-""")
-                    exe = tmp / f'run_{kernel}.exe'
-                    subprocess.run([CXX, '-std=c++14', '-O2', f'-I{source_dir}', f'-I{ROOT / "src/common"}',
-                                    str(source), str(source_dir / f'{kernel}.cpp'), '-o', str(exe)], check=True)
-                    out = tmp / f'out_{kernel}.bin'
-                    subprocess.run([str(exe), str(tmp / 'in.bin'), str(out), str(n)], check=True)
-                    cpp = np.fromfile(out, dtype=np.int32).reshape(n, 4)
+""", tmp / 'in.bin', np.int32, (n, 4))
                     np.testing.assert_array_equal(cpp, self.model.classify_fixed(self.raw, model))
-
-    def test_zynq7020_kernels_have_the_opu_program(self):
-        """A zedboard build packs software/opu/KERNEL/ (main.py): the generic classify.c."""
-        for kernel in ('justoliunet_opt_zynq7020', 'justoliunet_bn_opt_zynq7020'):
-            with self.subTest(kernel=kernel):
-                include = ROOT / 'software/opu' / kernel / 'include.txt'
-                files = [line.split('#')[0].strip() for line in include.read_text().splitlines()]
-                files = [f for f in files if f]
-                self.assertEqual(files, ['software/opu/justounetsimple_opt/classify.c'])
-                self.assertTrue((ROOT / files[0]).is_file())
 
 
 if __name__ == '__main__':

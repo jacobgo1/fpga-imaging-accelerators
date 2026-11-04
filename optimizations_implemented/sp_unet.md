@@ -56,7 +56,7 @@ pixels the fixed point keeps 99.85 / 99.85 / 99.94 % of the int8 model's classes
 
 The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt/sp_unet_opt.hpp`; the DATAFLOW chain and each
 size's table of layer widths (PI x PO, DSP or LUTs): its `.cpp`. On the board, the notebook every optimized kernel shares
-(`software/pynq/shared/classify.ipynb`), and on the ZedBoard `classify`, both checked
+(`software/pynq/classify.ipynb`), and on the ZedBoard `classify`, both checked
 against the image's labels.
 
 ## Golden kernels: what they do
@@ -301,7 +301,7 @@ made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 
   not tried here.
 
 On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) the build packs
-`K_opu.zip` with the generic `classify` program (`software/opu/justounetsimple_opt/classify.c`):
+`K_opu.zip` with the generic `classify` program (`software/opu/classify.c`):
 `classify cube.npy scores.npy`, against the image's labels.
 
 ## Integer formats (the bit-exact model)

@@ -13,31 +13,19 @@ Then the optimized kernels sp_unet_SIZE_opt_direct (integer fixed point),
 compiled with plain g++, bit for bit against classify_fixed on a real raw crop that is not
 whole patches. The board notebooks, shared by every model, are tests/test_notebooks.py's.
 """
-import contextlib
-import gc
-import importlib.util
-import io
-import json
-import os
-import re
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
-import types
 import unittest
-import zipfile
 
-from kernels import kernel_dir
+from helpers import CXX, ROOT, compile_cpp, kernel_dir, load_module, skip_without_aegean
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
-CXX = shutil.which('g++') or shutil.which('clang++')
 PATCH = 32
 # two classes in the first patch, all three in the second
 CORNERS = ((0, 0), (40, 104))
@@ -132,19 +120,8 @@ int main(int, char** argv) {{
 """
 
 
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def compile_and_run(source_text, tmp, stem, include_dirs, sources, args):
-    source = tmp / f'{stem}.cpp'
-    source.write_text(source_text)
-    exe = tmp / f'{stem}.exe'
-    subprocess.run([CXX, '-std=c++14', '-O2', *[f'-I{d}' for d in include_dirs], str(source),
-                    *[str(s) for s in sources], '-o', str(exe)], check=True)
+    exe = compile_cpp(tmp, stem, source_text, include_dirs, sources)
     subprocess.run([str(exe), *[str(a) for a in args]], check=True)
 
 
@@ -152,8 +129,7 @@ def compile_and_run(source_text, tmp, stem, include_dirs, sources, args):
 class SpecPWUNetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if not (ROOT / 'aegean').is_dir():
-            raise unittest.SkipTest('no aegean/ (not in git): copy the labelled test image in to run these')
+        skip_without_aegean()
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.model = load_module('specpw_unet_model', ROOT / 'tools/specpw_unet_model.py')
         cls.x, cls.labels = cls.model.aegean_image()
@@ -240,7 +216,7 @@ class SpecPWUNetTests(unittest.TestCase):
                     name = self.model.name(size)
                     source_dir = kernel_dir(name)
                     compile_and_run(KERNEL_DRIVER.format(name=name), tmp, f'run_{name}',
-                                    [source_dir, ROOT / 'src/common'], [source_dir / f'{name}.cpp'],
+                                    [source_dir], [source_dir / f'{name}.cpp'],
                                     [tmp / 'in.bin', tmp / 'out.bin', len(patches)])
                     cpp = np.fromfile(tmp / 'out.bin', dtype=np.float32).reshape(len(patches), PATCH, PATCH, 3)
                     for got, patch in zip(cpp, patches):
@@ -296,7 +272,7 @@ class SpecPWUNetTests(unittest.TestCase):
                     source_dir = kernel_dir(name)
                     ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports
                     compile_and_run(OPT_DRIVER.format(name=name, ports=ports), tmp, f'run_{name}',
-                                    [source_dir, ROOT / 'src/common'], sorted(source_dir.glob('*.cpp')),
+                                    [source_dir], sorted(source_dir.glob('*.cpp')),
                                     [tmp / 'cube.bin', tmp / 'out.bin', 45, 70])
                     got = np.fromfile(tmp / 'out.bin', dtype=np.int32).reshape(45, 70, 4)
                     want = m.kernel_reference(cube, self.quantized(size))

@@ -5,7 +5,6 @@ only that they are valid and what goes into the package next to them.
 """
 import contextlib
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -17,21 +16,14 @@ import tempfile
 import unittest
 import zipfile
 
-from kernels import kernel_dirs
+from helpers import ROOT, kernel_dirs, load_module
 
-ROOT = Path(__file__).resolve().parents[1]
+
 BASH = shutil.which('bash')
 HEADER = '#define XJUSTOUNETSIMPLE_CONTROL_ADDR_AP_CTRL 0x0\n'
 # a golden kernel's package: the shared golden notebook, which model it is, and mu_sd.txt
 PACKAGE = ['justounetsimple.bit', 'justounetsimple.hwh', 'xjustounetsimple_hw.h',
            'classify_golden.ipynb', 'kernel.json', 'mu_sd.txt']
-
-
-def load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 flow = load_module('flow', ROOT / 'main.py')
@@ -85,7 +77,7 @@ class PackageTests(unittest.TestCase):
                                  sorted([f'{kernel}.bit', f'{kernel}.hwh', f'x{kernel}_hw.h', 'classify.ipynb',
                                          'kernel.json']))
                 self.assertEqual((out / 'classify.ipynb').read_bytes(),
-                                 (ROOT / 'software/pynq/shared/classify.ipynb').read_bytes())
+                                 (ROOT / 'software/pynq/classify.ipynb').read_bytes())
                 info = json.loads((out / 'kernel.json').read_text())
                 self.assertEqual(info, {'kernel': kernel, 'model': model, **flow.MODELS.MODELS[model]})
 
@@ -108,7 +100,7 @@ class PackageTests(unittest.TestCase):
 
     def test_every_notebook_is_valid_and_its_code_parses(self):
         import ast
-        notebooks = sorted((ROOT / 'software/pynq').glob('*/*.ipynb'))
+        notebooks = sorted((ROOT / 'software/pynq').glob('**/*.ipynb'))
         self.assertEqual(len(notebooks), 2, 'the two shared notebooks')
         for path in notebooks:
             with self.subTest(notebook=path.relative_to(ROOT).as_posix()):
@@ -250,6 +242,15 @@ class OpuPackageTests(unittest.TestCase):
         self.assertEqual(calls, [['/usr/bin/dtc', '-@', '-q', '-I', 'dts', '-O', 'dtb',
                                   '-o', str(out / f'{self.KERNEL}.dtbo'), str(out / f'{self.KERNEL}.dtsi')]])
 
+    def test_every_optimized_kernel_gets_the_shared_program(self):
+        shared = ROOT / 'software/opu/classify.c'
+        self.assertTrue(shared.is_file())
+        for kernel in kernel_dirs():
+            with self.subTest(kernel=kernel):
+                model = flow.MODELS.model_of(kernel)
+                want = [shared] if model and kernel != model else []   # the golden kernels have no program
+                self.assertEqual(flow.opu_programs(kernel), want)
+
     def test_classify_is_built_for_the_board_with_the_kernels_registers(self):
         calls = []
         saved = flow.subprocess.run
@@ -259,7 +260,7 @@ class OpuPackageTests(unittest.TestCase):
         finally:
             flow.subprocess.run = saved
         out = self.run / f'{self.KERNEL}_opu'
-        source = ROOT / 'software/opu/justounetsimple_opt/classify.c'    # the 7020's include.txt
+        source = ROOT / 'software/opu/classify.c'
         self.assertEqual(calls, [['/usr/bin/arm-linux-gnueabihf-gcc', '-O2', '-Wall', '-static', f'-I{out}',
                                   str(source), '-o', str(out / 'classify')]])
         self.assertEqual((out / 'classify.c').read_bytes(), source.read_bytes())

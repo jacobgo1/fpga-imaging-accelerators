@@ -2,20 +2,18 @@
 
 These check our control flow, not AMD command availability or hardware results.
 """
-import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+
+from helpers import ROOT, load_module
 
 try:
     import tkinter
 except ImportError:
     tkinter = None
 
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('flow', ROOT / 'main.py')
-flow = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(flow)
+flow = load_module('flow', ROOT / 'main.py')
 
 
 def braced(path):

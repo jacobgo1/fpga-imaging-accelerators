@@ -4,7 +4,7 @@ A kernel belongs to the model whose name it starts with: justounetsimple_opt_zyn
 justounetsimple's, sp_unet_small_opt_direct sp_unet_small's. The kernel named like its
 model is the golden one, the rest are optimized. main.py packs MODELS' entry with the
 board's notebook (kernel.json), so one notebook serves every model: the golden kernels
-share software/pynq/shared/classify_golden.ipynb, the optimized ones classify.ipynb.
+share software/pynq/classify_golden.ipynb, the optimized ones classify.ipynb.
 
 The board is checked against the image's labels only. The PC's answers, for the tests
 (tests/test_notebooks.py): golden_scores, what the golden kernel answers (float32

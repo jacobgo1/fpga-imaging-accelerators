@@ -48,9 +48,10 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
                      DSP, HAS_URAM for patch_buffer) and passes them to the modules
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
-software/pynq/shared/  the board notebooks every model shares: classify_golden.ipynb (golden
+software/pynq/        the board notebooks every model shares: classify_golden.ipynb (golden
                      kernels), classify.ipynb (optimized); main.py packs one with kernel.json
-software/opu/K/      the C program for kernel K on the OPU system's PetaLinux (no PYNQ)
+software/opu/        classify.c: the C program every optimized kernel runs on the OPU system's
+                     PetaLinux (no PYNQ); main.py builds it with the kernel's registers
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does

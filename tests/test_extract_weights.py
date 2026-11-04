@@ -1,20 +1,18 @@
 """tools/extract_weights.py on the real checkpoints in weights/."""
-import importlib.util
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from helpers import CXX, ROOT, load_module
 
 try:
     import numpy as np
 except ImportError:
     np = None
 
-ROOT = Path(__file__).resolve().parents[1]
 CHECKPOINTS = sorted((ROOT / 'weights').rglob('*.pt'))
-CXX = shutil.which('g++') or shutil.which('clang++')
 
 
 @unittest.skipIf(np is None, 'the extractor needs numpy')
@@ -23,9 +21,7 @@ class ExtractWeightsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         sys.path.insert(0, str(ROOT / 'tools'))
-        spec = importlib.util.spec_from_file_location('extract_weights', ROOT / 'tools/extract_weights.py')
-        cls.tool = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(cls.tool)
+        cls.tool = load_module('extract_weights', ROOT / 'tools/extract_weights.py')
         cls.tmp = tempfile.TemporaryDirectory()
         cls.out = Path(cls.tmp.name)
         result = subprocess.run([sys.executable, str(ROOT / 'tools/extract_weights.py'), '--out', str(cls.out)],
