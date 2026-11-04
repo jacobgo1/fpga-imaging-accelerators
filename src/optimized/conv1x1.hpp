@@ -3,15 +3,16 @@
 #include "fixed_point.hpp"
 #include "patch_grid.hpp"
 
-// A 1x1 conv on int16 activations: IN_PER_CYCLE input channels times OUT_PER_CYCLE
-// output channels a cycle, so a layer with time to spare uses fewer multipliers.
-// A: its activation (conv_out): ReLU'd and rounded to activations, or the sums,
-// for the scores.
-template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
+// A 1x1 conv: IN_PER_CYCLE input channels times OUT_PER_CYCLE output channels a
+// cycle, so a layer with time to spare uses fewer multipliers. A: its activation
+// (conv_out), or the sums for the scores. PIXELS_OF: the pixels it walks, a 2D
+// network's patches (patch_pixels) or a 1D one's lane (pixel_lane). IN_T: the
+// activations' type, int16 or uint8, multiplied as it is.
+template<typename PIXELS_OF, int IN_CHANNELS, int OUT_CHANNELS, int OUT_PER_CYCLE,
          activation A, int BIAS_SHIFT, int ROUND_BITS,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
-         int IN_PER_CYCLE = IN_CHANNELS>
-void conv1x1(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
+         int IN_PER_CYCLE = IN_CHANNELS, typename IN_T>
+void conv1x1(hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
              hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
              int height, int width) {
     typedef typename conv_out<A, ROUND_BITS>::type out_t;
@@ -31,21 +32,21 @@ void conv1x1(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
         bias[o / OUT_PER_CYCLE][o % OUT_PER_CYCLE] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
     }
 
-    act_t pixel[IN_CHANNELS];
+    IN_T pixel[IN_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=pixel type=complete
     sum_t running[OUT_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=running type=complete
     out_t outputs[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=outputs type=complete
-    const int pixels = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * PIXELS;
+    const uint32_t pixels = PIXELS_OF::count(height, width);
     int out_group = 0, in_group = 0;
-    constexpr int TRIPS = PIXELS * STEPS, MAX_TRIPS = 665 * TRIPS;
-    (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
-    px: for (int t = 0; t < pixels * STEPS; t++) {
+    constexpr int MIN_TRIPS = PIXELS_OF::MIN * STEPS, MAX_TRIPS = PIXELS_OF::MAX * STEPS;
+    (void)MIN_TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
+    px: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
+        #pragma HLS LOOP_TRIPCOUNT min=MIN_TRIPS max=MAX_TRIPS
         if (out_group == 0 && in_group == 0) {
-            const vec_t<act_t, IN_CHANNELS> value = in.read();
+            const vec_t<IN_T, IN_CHANNELS> value = in.read();
             for (int i = 0; i < IN_CHANNELS; i++) {
                 #pragma HLS UNROLL
                 pixel[i] = value.v[i];

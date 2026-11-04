@@ -28,6 +28,9 @@ constexpr int CONV4_OUT_PER_CYCLE = 6;
 constexpr int DENSE_FEATURES_PER_CYCLE = 3;
 constexpr bool ZSCORE_ON_DSPS = true;
 
+// Chip variables for implementation:
+constexpr int DSP_PACK_SHIFT = 18;   // DSP48E2, 27-bit input: two weights 18 bits apart (dsp_pack.hpp)
+
 typedef hls::vector<uint16_t, BANDS_PER_WORD> cube_word_t;
 typedef hls::vector<int32_t, 4> score_word_t;   // 3 scores and the class
 

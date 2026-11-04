@@ -51,26 +51,26 @@ void justoliunet_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi
     // conv1: 1 -> 6, 102 outputs, in LUTs (the 12-bit input cannot be packed).
     conv1d_map<KEPT_BANDS, 1, 6, KERNEL_SIZE, 102, CONV1_POSITIONS_PER_CYCLE, 6,
                CONV1_SUM_FRAC_BITS - weights::conv1_bias_frac, CONV1_SUM_FRAC_BITS - model_formats::ACT_FRAC1,
-               shared_formats::ACT_MAX, weights::conv1_weight, weights::conv1_bias, false, false>(
+               shared_formats::ACT_MAX, weights::conv1_weight, weights::conv1_bias, false, false, DSP_PACK_SHIFT>(
         zscores, conv1_out, height, width);
     pool1d<102, 6>(conv1_out, pool1_out, height, width);
 
     // conv2: 6 -> 12, 46 outputs; 51 positions in, 23 out.
     conv1d_positions<51, 6, 12, KERNEL_SIZE, 46, CONV2_OUT_PER_CYCLE, CONV2_IN_PER_CYCLE,
                      CONV2_SUM_FRAC_BITS - weights::conv2_bias_frac, CONV2_SUM_FRAC_BITS - model_formats::ACT_FRAC2,
-                     shared_formats::ACT_MAX, weights::conv2_weight, weights::conv2_bias, CONV2_PACKED, CONV2_PACKED>(
+                     shared_formats::ACT_MAX, weights::conv2_weight, weights::conv2_bias, CONV2_PACKED, CONV2_PACKED, DSP_PACK_SHIFT>(
         pool1_out, pool2_out, height, width);
 
     // conv3: 12 -> 18, 18 outputs; 23 in, 9 out.
     conv1d_positions<23, 12, 18, KERNEL_SIZE, 18, CONV3_OUT_PER_CYCLE, CONV3_IN_PER_CYCLE,
                      CONV3_SUM_FRAC_BITS - weights::conv3_bias_frac, CONV3_SUM_FRAC_BITS - model_formats::ACT_FRAC3,
-                     shared_formats::ACT_MAX, weights::conv3_weight, weights::conv3_bias, CONV3_PACKED, CONV3_PACKED>(
+                     shared_formats::ACT_MAX, weights::conv3_weight, weights::conv3_bias, CONV3_PACKED, CONV3_PACKED, DSP_PACK_SHIFT>(
         pool2_out, pool3_out, height, width);
 
     // conv4: 18 -> 24, 4 outputs; 9 in, 2 out.
     conv1d_positions<9, 18, 24, KERNEL_SIZE, 4, CONV4_OUT_PER_CYCLE, CONV4_IN_PER_CYCLE,
                      CONV4_SUM_FRAC_BITS - weights::conv4_bias_frac, CONV4_SUM_FRAC_BITS - model_formats::ACT_FRAC4,
-                     shared_formats::ACT_MAX, weights::conv4_weight, weights::conv4_bias, CONV4_PACKED, CONV4_PACKED>(
+                     shared_formats::ACT_MAX, weights::conv4_weight, weights::conv4_bias, CONV4_PACKED, CONV4_PACKED, DSP_PACK_SHIFT>(
         pool3_out, pool4_out, height, width);
 
     // flatten and dense: 2 positions x 24 -> 3, the scores.

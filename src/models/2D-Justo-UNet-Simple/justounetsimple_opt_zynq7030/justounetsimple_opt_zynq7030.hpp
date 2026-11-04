@@ -37,7 +37,7 @@ constexpr bool ZSCORE_ON_DSPS = false;
 constexpr bool CONV2_TO_4_ON_DSPS = true;   // 54 of the 76 DSPs conv1 leaves
 
 // Chip variables for implementation:
-constexpr int DSP_PACK_SHIFT = 16, DSP_PACK_GROUP = 2;   // DSP48E1, 25-bit input: two int8 weights 16 bits apart, groups of 2
+constexpr int DSP_PACK_SHIFT = 16;   // DSP48E1, 25-bit input: two weights 16 bits apart (dsp_pack.hpp)
 constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
 
 // The argument names become the kernel's register names: keep them.

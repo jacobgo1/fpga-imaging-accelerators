@@ -157,3 +157,35 @@ The first accelerator, `justoliunet` (a per-pixel 1D network, since removed;
 it is in the git history), matched the PC reference on every pixel of a real
 capture (`aegean/overview.png`). The JTAG/xsdb scripts used for that run are
 under the git tag `pre-simplify`.
+
+## 6. The conv modules
+
+The golden kernels compute each conv with one plain loop (`src/golden/layers.hpp`): what is
+computed. An optimized conv must also say *when* its input arrives, *where* its window is kept,
+and *how much* it does a cycle; those depend on the layer and the chip, so `src/optimized/` has
+one conv module per window and input order, and everything else is a template option they all
+take the same way:
+
+- how much a cycle: `IN_PER_CYCLE`, `OUT_PER_CYCLE` (and window rows or taps a step), sized so
+  no process waits for another;
+- the multiplier: `DSP` (a DSP or LUTs, `mul<DSP>`), or two products per DSP (`dsp_pack.hpp`,
+  `DSP_PACK_SHIFT` the chip's spacing). Packing needs two outputs sharing an 8-bit
+  activation: in the 2D networks only the first layer has that (int8 z-scores; later
+  activations are int16), in the 1D networks every layer (uint8);
+- the activation: `activation::none` (sums, for a head), `relu`, `relu8`, `leaky`,
+  `leaky_scores`, inside the conv's own process (`fixed_point.hpp`).
+
+| Module | Window and input order | Why it is its own module |
+| --- | --- | --- |
+| `conv3x3_tiled` | 3×3, window in registers; a pixel with all its channels at a time | the general 3×3 (`IN_PER_CYCLE = IN_CHANNELS` for a small layer) |
+| `conv3x3_tiled_ram` | 3×3, window in three row memories | the Zynq-7020 has too few flip-flops for the window registers; a memory gives one column a step, so it cannot replace tiled's 9 taps a cycle |
+| `conv3x3_2mul` | 3×3 on the raw bands: a patch's bands in chunks, the sums held per pixel | a 112-channel pixel would need a line buffer far too wide; the 2D layer that can pack |
+| `conv1x1` | a pixel with all its channels at a time (2D patches or 1D lanes, `patch_pixels` / `pixel_lane`) | the general 1×1, every head |
+| `pointwise_packed` | 1×1 on the raw bands, a pixel's bands in chunks | as `conv3x3_2mul`, for 1×1 |
+| `conv1d_map` | 1D along the bands, the whole map of a pixel at once | the ZCU104's 1D layers, many positions a cycle |
+| `conv1d_positions` | 1D, one band position at a time, folded | the 7020/7030's 1D layers: too few DSPs for a whole map |
+
+Two first layers are fused with what comes before them, as the design of their network:
+`zscore_pointwise` (1D-SpectralPointwise is DDR-bound, so the z-score and convsp1 work on each
+raw word as it comes) and `dwt_proj` (WaveletCNN's wavelet and projection, so its 226 channels
+are never stored).

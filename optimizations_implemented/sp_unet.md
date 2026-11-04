@@ -520,3 +520,9 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-04: the kernels renamed: `sp_unet_SIZE_opt_direct` is now `sp_unet_SIZE_opt`, and
   `sp_unet_small_opt_direct_zynq7020` is `sp_unet_small_opt_zynq7020` (files, testbench folders, tools/models.py,
   the tests); the old Winograd version is gone, so "direct" told nothing apart. Builds go to `build/sp_unet_SIZE_opt/`.
+- 2026-11-04: the two-multiplies-per-DSP code is in one place, `src/optimized/dsp_pack.hpp` (pack at load,
+  the DSP multiply, the split), used by pointwise_packed (convsp1); the kernel sets only `DSP_PACK_SHIFT`, the
+  group size follows from it (8 on the ZCU104, 2 on the 7020, as before). The same expressions, the same answers bit for bit;
+  not built: check csynth's DSP count and the Bind Op Report.
+- 2026-11-04: `conv1x1` takes which pixels it walks as a type, `patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>`,
+  so the 1D networks use it too. The same hardware and answers; nothing to rebuild for it alone.

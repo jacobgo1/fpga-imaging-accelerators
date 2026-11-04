@@ -1,45 +1,15 @@
 #pragma once
 
 #include "fixed_point.hpp"
+#include "dsp_pack.hpp"
 #include "window3x3.hpp"
 #include "patch_grid.hpp"
 
-// A 3x3 conv on int8 activations with two multiplies per DSP (AMD WP486). Output
-// channels 2j and 2j + 1 share the activation a, so their weights are packed
-//     (w_high * 2^SHIFT + w_low) * a = w_high * a * 2^SHIFT + w_low * a
-// and a sum of GROUP such products still holds both sums, as long as the low one
-// fits SHIFT signed bits (|a| <= 127, never -128). Exact, bit for bit.
-//   ZCU104, DSP48E2 (27 bits): SHIFT 18, groups of 8.
-//   7-series, DSP48E1 (25 bits): SHIFT 16, groups of 2.
-//
-// The weights are packed once, at load: packed next to the multiply, HLS put the
-// addition in the DSP's pre-adder and the RTL came out wrong (cosim failed).
+// A 3x3 conv on int8 activations, two multiplies per DSP (dsp_pack.hpp): output
+// channels 2j and 2j + 1 share each activation. SHIFT: the chip's packing.
 //
 // IN_PER_CYCLE input channels a cycle, chunk by chunk: a pixel's sums are done
 // in the last chunk, the earlier chunks' wait in partial.
-
-#if defined(__VITIS_HLS__) || defined(__SYNTHESIS__)
-#include <ap_int.h>
-template<int SHIFT> using packed_weight_t = ap_int<SHIFT + 9>;
-typedef ap_int<48> packed_sum_t;                 // the DSP's accumulator
-#else
-template<int SHIFT> using packed_weight_t = int64_t;
-typedef int64_t packed_sum_t;
-#endif
-
-// A group's sum to the low channel's part: its bottom SHIFT bits, sign-extended.
-template<int SHIFT>
-sum_t low_sum(int64_t sum) {
-    #pragma HLS INLINE
-    return (sum_t)((uint32_t)(uint64_t)sum << (32 - SHIFT)) >> (32 - SHIFT);
-}
-
-// ... and the high channel's: the rest, plus the 1 the low part borrowed when negative.
-template<int SHIFT>
-sum_t high_sum(int64_t sum) {
-    #pragma HLS INLINE
-    return (sum_t)(sum >> SHIFT) + (sum_t)((sum >> (SHIFT - 1)) & 1);
-}
 
 // Packs channels 2j and 2j + 1 into packed[j]; input channels past IN_CHANNELS get
 // zero weights, up to PADDED_IN.
@@ -55,8 +25,7 @@ void load_packed_weights(const weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3],
                     const int source = in < IN_CHANNELS ? in : IN_CHANNELS - 1;   // never read past the array
                     const weight_t high = in < IN_CHANNELS ? weight[2 * j + 1][source][ky][kx] : (weight_t)0;
                     const weight_t low = in < IN_CHANNELS ? weight[2 * j][source][ky][kx] : (weight_t)0;
-                    packed[j][in][ky][kx] = (packed_weight_t<SHIFT>)high * (packed_weight_t<SHIFT>)(1 << SHIFT)
-                                          + (packed_weight_t<SHIFT>)low;
+                    packed[j][in][ky][kx] = pack_weights<SHIFT>(high, low);
                 }
     load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
@@ -65,7 +34,7 @@ void load_packed_weights(const weight_t weight[OUT_CHANNELS][IN_CHANNELS][3][3],
 }
 
 template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
-         activation A, int ROUND_BITS, int SHIFT, int GROUP>
+         activation A, int ROUND_BITS, int SHIFT>
 void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
                         const packed_weight_t<SHIFT> packed[OUT_CHANNELS / 2][IN_CHANNELS][3][3],
                         const sum_t bias[OUT_CHANNELS],
@@ -73,6 +42,8 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
     typedef conv_out<A, ROUND_BITS> output;
     constexpr int CHUNKS = IN_CHANNELS / IN_PER_CYCLE;
     constexpr int INPUTS = CHUNKS * MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
+    constexpr int GROUP = pack_group<SHIFT, 127>();
+    static_assert(IN_PER_CYCLE % GROUP == 0, "whole groups a cycle");
 
     sum_t partial[CHUNKS > 1 ? MAP_HEIGHT : 1][CHUNKS > 1 ? MAP_WIDTH : 1][OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=partial type=complete dim=3
@@ -117,12 +88,9 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
                             for (int ch = first; ch < first + GROUP; ch++) {
                                 #pragma HLS UNROLL
                                 const act8_t a = (row_inside[ky] && col_inside[kx]) ? window[ky][kx][ch] : (act8_t)0;
-                                const packed_sum_t prod = packed[j][chunk * IN_PER_CYCLE + ch][ky][kx] * a;
-                                #pragma HLS BIND_OP variable=prod op=mul impl=dsp
-                                sum += prod;
+                                sum += packed_mul<SHIFT>(packed[j][chunk * IN_PER_CYCLE + ch][ky][kx], a);
                             }
-                            low += low_sum<SHIFT>((int64_t)sum);
-                            high += high_sum<SHIFT>((int64_t)sum);
+                            unpack_add<SHIFT>(sum, low, high);
                         }
                     }
                 }
@@ -151,7 +119,7 @@ void conv3x3_2mul_patch(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS],
-         int SHIFT, int GROUP, activation A = activation::none, int ROUND_BITS = 0>
+         int SHIFT, activation A = activation::none, int ROUND_BITS = 0>
 void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
                   hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                   int height, int width) {
@@ -168,8 +136,7 @@ void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
         #pragma HLS LOOP_TRIPCOUNT min=1 max=665
-        conv3x3_2mul_patch<MAP_HEIGHT, MAP_WIDTH, PADDED_IN, OUT_CHANNELS, IN_PER_CYCLE, A, ROUND_BITS,
-                           SHIFT, GROUP>(
+        conv3x3_2mul_patch<MAP_HEIGHT, MAP_WIDTH, PADDED_IN, OUT_CHANNELS, IN_PER_CYCLE, A, ROUND_BITS, SHIFT>(
             in, packed, bias, out);
     }
 }

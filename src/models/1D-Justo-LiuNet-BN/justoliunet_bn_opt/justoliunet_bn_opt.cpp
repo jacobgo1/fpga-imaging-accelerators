@@ -57,28 +57,28 @@ void justoliunet_bn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_
     // conv1: 1 -> 6, 102 outputs. The 12-bit input cannot be packed.
     conv1d_map<KEPT_BANDS, 1, 6, KERNEL_SIZE, 102, CONV1_POSITIONS_PER_CYCLE, 6,
                CONV1_SUM_FRAC_BITS - weights::conv1_bias_frac, CONV1_SUM_FRAC_BITS - model_formats::ACT_FRAC1,
-               shared_formats::ACT_MAX, weights::conv1_weight, weights::conv1_bias, false, CONV1_ON_DSPS>(
+               shared_formats::ACT_MAX, weights::conv1_weight, weights::conv1_bias, false, CONV1_ON_DSPS, DSP_PACK_SHIFT>(
         zscores, conv1_out, height, width);
     pool_to_map<102, CONV1_POSITIONS_PER_CYCLE, 6, 6, 51>(conv1_out, pool1_out, height, width);
 
     // conv2: 6 -> 12, 46 outputs.
     conv1d_map<51, 6, 12, KERNEL_SIZE, 46, CONV2_POSITIONS_PER_CYCLE, 12,
                CONV2_SUM_FRAC_BITS - weights::conv2_bias_frac, CONV2_SUM_FRAC_BITS - model_formats::ACT_FRAC2,
-               shared_formats::ACT_MAX, weights::conv2_weight, weights::conv2_bias, CONV2_PACKED, CONV2_PACKED>(
+               shared_formats::ACT_MAX, weights::conv2_weight, weights::conv2_bias, CONV2_PACKED, CONV2_PACKED, DSP_PACK_SHIFT>(
         pool1_out, conv2_out, height, width);
     pool_to_map<46, CONV2_POSITIONS_PER_CYCLE, 12, 12, 23>(conv2_out, pool2_out, height, width);
 
     // conv3: 12 -> 18, 18 outputs.
     conv1d_map<23, 12, 18, KERNEL_SIZE, 18, CONV3_POSITIONS_PER_CYCLE, 18,
                CONV3_SUM_FRAC_BITS - weights::conv3_bias_frac, CONV3_SUM_FRAC_BITS - model_formats::ACT_FRAC3,
-               shared_formats::ACT_MAX, weights::conv3_weight, weights::conv3_bias, CONV3_PACKED, CONV3_PACKED>(
+               shared_formats::ACT_MAX, weights::conv3_weight, weights::conv3_bias, CONV3_PACKED, CONV3_PACKED, DSP_PACK_SHIFT>(
         pool2_out, conv3_out, height, width);
     pool_to_map<18, CONV3_POSITIONS_PER_CYCLE, 18, 18, 9>(conv3_out, pool3_out, height, width);
 
     // conv4: 18 -> 24, 4 outputs.
     conv1d_map<9, 18, 24, KERNEL_SIZE, 4, CONV4_POSITIONS_PER_CYCLE, CONV4_OUT_PER_CYCLE,
                CONV4_SUM_FRAC_BITS - weights::conv4_bias_frac, CONV4_SUM_FRAC_BITS - model_formats::ACT_FRAC4,
-               shared_formats::ACT_MAX, weights::conv4_weight, weights::conv4_bias, CONV4_PACKED, CONV4_PACKED>(
+               shared_formats::ACT_MAX, weights::conv4_weight, weights::conv4_bias, CONV4_PACKED, CONV4_PACKED, DSP_PACK_SHIFT>(
         pool3_out, conv4_out, height, width);
     pool_to_map<4, CONV4_POSITIONS_PER_CYCLE, CONV4_OUT_PER_CYCLE, 24, 2>(conv4_out, pool4_out, height, width);
 

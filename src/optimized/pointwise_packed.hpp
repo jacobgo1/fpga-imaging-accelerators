@@ -1,21 +1,23 @@
 #pragma once
 
-#include "conv3x3_2mul.hpp"
+#include "dsp_pack.hpp"
 #include "patch_grid.hpp"
 
-// A 1x1 conv on int8 inputs (the z-scored bands), two multiplies per DSP as in
-// conv3x3_2mul.hpp, then ReLU and ROUND_BITS bits rounded off. A pixel's bands come
+// A 1x1 conv on int8 inputs (the z-scored bands), two multiplies per DSP
+// (dsp_pack.hpp), then ReLU and ROUND_BITS bits rounded off. A pixel's bands come
 // in chunks of IN_PER_CYCLE, the last padded with zeros; its activations leave
 // after the last chunk. OUTPUT_PASSES > 1 splits the channel pairs over that many
-// passes per chunk, for a chip with few DSPs. PACK_SHIFT and GROUP: the board's packing.
+// passes per chunk, for a chip with few DSPs. PACK_SHIFT: the chip's packing.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
          int BIAS_SHIFT, int ROUND_BITS,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS],
-         int PACK_SHIFT, int GROUP, int OUTPUT_PASSES = 1>
+         int PACK_SHIFT, int OUTPUT_PASSES = 1>
 void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec_t<act_t, OUT_CHANNELS> >& out,
                       int height, int width) {
     constexpr int CHUNKS = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE, PADDED_IN = CHUNKS * IN_PER_CYCLE;
     constexpr int PAIRS_PER_PASS = OUT_CHANNELS / 2 / OUTPUT_PASSES;
+    constexpr int GROUP = pack_group<PACK_SHIFT, 127>();
+    static_assert(IN_PER_CYCLE % GROUP == 0, "whole groups a cycle");
 
     // Pair pass * PAIRS_PER_PASS + p at packed[p][chunk * OUTPUT_PASSES + pass][band].
     packed_weight_t<PACK_SHIFT> packed[PAIRS_PER_PASS][CHUNKS * OUTPUT_PASSES][IN_PER_CYCLE];
@@ -30,8 +32,7 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
             const weight_t high = in_ch < IN_CHANNELS ? WEIGHT[2 * j + 1][source][0][0] : (weight_t)0;
             const weight_t low = in_ch < IN_CHANNELS ? WEIGHT[2 * j][source][0][0] : (weight_t)0;
             packed[j % PAIRS_PER_PASS][(in_ch / IN_PER_CYCLE) * OUTPUT_PASSES + j / PAIRS_PER_PASS][in_ch % IN_PER_CYCLE] =
-                (packed_weight_t<PACK_SHIFT>)high * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
-                + (packed_weight_t<PACK_SHIFT>)low;
+                pack_weights<PACK_SHIFT>(high, low);
         }
     load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
@@ -66,12 +67,9 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
                 packed_sum_t sum = 0;
                 for (int b = first; b < first + GROUP; b++) {
                     #pragma HLS UNROLL
-                    const packed_sum_t prod = packed[p][chunk * OUTPUT_PASSES + pass][b] * chunk_bands[b];
-                    #pragma HLS BIND_OP variable=prod op=mul impl=dsp
-                    sum += prod;
+                    sum += packed_mul<PACK_SHIFT>(packed[p][chunk * OUTPUT_PASSES + pass][b], chunk_bands[b]);
                 }
-                low += low_sum<PACK_SHIFT>((int64_t)sum);
-                high += high_sum<PACK_SHIFT>((int64_t)sum);
+                unpack_add<PACK_SHIFT>(sum, low, high);
             }
             // One adder and one rounding a lane whatever the passes; the result is
             // written by the pass whose turn it is.

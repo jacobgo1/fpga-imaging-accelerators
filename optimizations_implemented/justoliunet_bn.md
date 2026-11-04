@@ -75,3 +75,8 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
   (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
   rebuilt: check csynth's FIFO depths.
+- 2026-11-04: the two-multiplies-per-DSP code is in one place, `src/optimized/dsp_pack.hpp` (pack at
+  load, the DSP multiply, the split), used by conv1d_map / conv1d_positions (conv2, conv3). Each kernel
+  sets `DSP_PACK_SHIFT` (18 / 16) and passes it; the group size follows (4 / 1, as before).
+  The same expressions, the same answers bit for bit; not built: check csynth's DSP count and the
+  Bind Op Report.

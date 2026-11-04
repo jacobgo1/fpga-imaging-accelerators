@@ -58,7 +58,7 @@ the shared ones, `software/pynq/classify_golden.ipynb` and `classify.ipynb`; on 
 | BatchNorm folded into convsp1 (no BatchNorm in hardware) | ✓ | ✓ | ✓ |
 | **Lanes: the whole network copied once per read port**, each on its port's blocks; the store merges them in pixel order (`pixel_lane`, `store_pixels_lanes`) | 4 lanes (HP0-3), store on HPC0 | 4 lanes (HP0-3), store shares HP3 | 2 lanes (HP0-1), store on HP2 |
 | **convsp1 fused with the z-score, word by word** (`zscore_pointwise`): each raw word's bands z-scored and multiplied into all 24 sums; no spectrum ever assembled | 8 bands × 24 a cycle | 4 bands × 24 | 4 bands × 24 |
-| convsp2, convsp3: all inputs at once, one output channel a cycle (`pointwise1d`) | ✓ | ✓ | ✓ |
+| convsp2, convsp3: all inputs at once, one output channel a cycle (`conv1x1`, `activation::relu8` / `none`) | ✓ | ✓ | ✓ |
 | DATAFLOW: every layer a process, activations never leave the chip | ✓ | ✓ | ✓ |
 | Loop flattening (pixels × steps in one II=1 loop) | ✓ | ✓ | ✓ |
 | Weights loaded once into small ROMs, run-time index only in the address | ✓ | ✓ | ✓ |
@@ -196,3 +196,7 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-03: kernels moved to `src/models/`. The golden layers are one file, `src/golden/layers.hpp`
   (one template each for float and quantized weights); the golden kernels compute the same, not
   rebuilt yet.
+- 2026-11-04: `pointwise1d` is gone: convsp2 and convsp3 are `conv1x1` (uint8 inputs, a lane's pixels,
+  `activation::relu8`). The head sends its sums; `store_pixels_lanes` shifts them to the scores'
+  fraction bits (`SCORE_SHIFT`), as `store_scores` rounds the 2D heads'. The same answers bit for bit;
+  not built: check csynth's T and LUTs (`pointwise1d` was 148).

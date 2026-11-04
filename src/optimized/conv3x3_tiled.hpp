@@ -4,12 +4,17 @@
 #include "window3x3.hpp"
 #include "patch_grid.hpp"
 
-// A 3x3 conv sized for any time a pixel: IN_PER_CYCLE input channels times
-// OUT_PER_CYCLE output channels times ROWS_PER_STEP rows of the window a cycle
-// (1 for a chip with few DSPs, 3 for the whole window). The smallest, one output
-// channel a cycle, is IN_PER_CYCLE x 9 multipliers whatever the layer's size. The
-// same streams as conv3x3_narrow; out the sums, or with activation::relu ReLU'd and
-// rounded off ROUND_BITS bits to activations, so no ReLU module is needed after it.
+// A same-padded 3x3 conv of one map, streamed: a pixel with all its channels in,
+// raster order; its outputs out, the same order. Two lines of input are kept on
+// chip, the window in registers; its centre trails the input by a row and a
+// pixel, so the loop runs W + 1 pixels past the last input, and taps outside the
+// map are zeroed by the centre's position.
+//
+// Sized for any time a pixel: IN_PER_CYCLE input channels times OUT_PER_CYCLE
+// output channels times ROWS_PER_STEP rows of the window a cycle (1 for a chip
+// with few DSPs, 3 for the whole window; IN_PER_CYCLE = IN_CHANNELS for a small
+// layer). Out the sums, or with activation::relu ReLU'd and rounded off
+// ROUND_BITS bits to activations, so no ReLU module is needed after it.
 //
 // A pixel's steps: output group outer, then input group, then window rows.
 // The weights are one wide memory word a step: one memory a layer, since a

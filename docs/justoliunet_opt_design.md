@@ -123,7 +123,7 @@ read-ahead bursts) and the same formats, so the same answers bit for bit. What h
   $\mathit{OCP}$ output channels and $\mathit{ICP}$ input channels a cycle, all 6 taps, the
   input-channel chunks summed in an accumulator (`conv1d_positions.hpp`).
 - **Spectral streaming.** From conv1 on, a layer's input arrives one position at a time
-  and the layer keeps a window of the last 6 (a 1D line buffer, as `conv3x3_all_in_patch` keeps
+  and the layer keeps a window of the last 6 (a 1D line buffer, as `conv3x3_tiled_patch` keeps
   two image lines). Whole feature maps in wide FIFOs and registers, as on the ZCU104,
   would have cost ~15 k of the 7020's 53 k LUTs (estimate); positions cost ~2 k.
 - **Packing on the DSP48E1** (25 × 18 bits): shift 16, so with uint8 every product is

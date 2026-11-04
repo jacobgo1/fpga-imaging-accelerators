@@ -17,7 +17,7 @@ namespace weights = sp_unet_small_int8;
 #include "../sp_unet_small_opt/sp_unet_opt_common.hpp"
 
 void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<score_word_t> dout,
-                                       int height, int width, uint32_t& cycles)
+                                int height, int width, uint32_t& cycles)
 {
     // depth is for co-simulation only.
     #pragma HLS INTERFACE mode=m_axi port=din0 bundle=gmem0 offset=slave depth=60000 max_read_burst_length=256 num_read_outstanding=4
@@ -68,11 +68,11 @@ void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_ma
     // The spectral stem, 1x1 convs; the later layers a few inputs a step, on a few DSPs.
     pointwise_packed<PATCH_SIZE, PATCH_SIZE, PIXELS, MODEL_BANDS, STEM1, sizes::CONVSP1_BANDS_PER_CYCLE,
                      CONVSP1_FRACS::BIAS_SHIFT, CONVSP1_FRACS::SHIFT, weights::convsp1_weight, weights::convsp1_bias,
-                     DSP_PACK_SHIFT, DSP_PACK_GROUP, sizes::CONVSP1_PASSES>(zscores, convsp1_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, activation::relu,
+                     DSP_PACK_SHIFT, sizes::CONVSP1_PASSES>(zscores, convsp1_out, height, width);
+    conv1x1<patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>, STEM1, STEM2, sizes::CONVSP2_OUT_PER_CYCLE, activation::relu,
             CONVSP2_FRACS::BIAS_SHIFT, CONVSP2_FRACS::SHIFT, weights::convsp2_weight, weights::convsp2_bias,
             sizes::CONVSP2_ON_DSPS, sizes::CONVSP2_IN_PER_CYCLE>(convsp1_out, convsp2_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, activation::relu,
+    conv1x1<patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>, STEM2, STEM3, sizes::CONVSP3_OUT_PER_CYCLE, activation::relu,
             CONVSP3_FRACS::BIAS_SHIFT, CONVSP3_FRACS::SHIFT, weights::convsp3_weight, weights::convsp3_bias,
             sizes::CONVSP3_ON_DSPS, sizes::CONVSP3_IN_PER_CYCLE>(convsp2_out, stem_out, height, width);
 
@@ -128,7 +128,7 @@ void sp_unet_small_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_ma
                       sizes::DOUBLE4_CONV2::IN_PER_CYCLE, sizes::DOUBLE4_CONV2::OUT_PER_CYCLE, DOUBLE4_CONV2_FRACS::BIAS_SHIFT,
                       weights::double4_block_3_weight, weights::double4_block_3_bias, sizes::DOUBLE4_CONV2::DSP, sizes::DOUBLE4_CONV2::TAPS_PER_STEP,
                       activation::relu, DOUBLE4_CONV2_FRACS::SHIFT>(double4_relu1, double4_out, height, width);
-    conv1x1<PATCH_SIZE, PATCH_SIZE, PIXELS, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
+    conv1x1<patch_pixels<PATCH_SIZE, PATCH_SIZE, PIXELS>, DOUBLE4, CLASSES, sizes::FINAL_OUT_PER_CYCLE, activation::none,
             FINAL_FRACS::BIAS_SHIFT, FINAL_FRACS::SHIFT, weights::final_weight, weights::final_bias,
             sizes::FINAL_ON_DSPS, sizes::FINAL_IN_PER_CYCLE>(double4_out, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, FINAL_FRACS::SHIFT>(scores, dout, height, width, all_written);

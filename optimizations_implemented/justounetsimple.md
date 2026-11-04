@@ -41,7 +41,7 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | Ping-pong patch buffer: fill patch k+1 while conv1 reads patch k | UltraRAM | BRAM | BRAM |
 | Read ports, each every n-th patch row | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
 | Read bursts requested ahead (`read_patch_rows`, `burst_maxi`); else one burst a row from a plain pointer (`read_patch_rows_simple`) | plain pointer (on trial, 2026-11-03) | ✓ (2 in flight) | ✓ (2 in flight) |
-| Line buffers + 3×3 shift-register window (`conv3x3_all_in_patch`) | ✓ | ✓ | ✓ |
+| Line buffers + 3×3 shift-register window (`conv3x3_tiled_patch`; conv1 `conv3x3_2mul`) | ✓ | ✓ | ✓ |
 | conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
 | conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
@@ -221,3 +221,11 @@ Routed, kernel alone (without the interconnects); by process in
   `relu_pool`, `relu_pool_up`, `relu_up` (deleted, with `relu_act` and `to_act`). The new conv-output
   FIFOs keep the default depth 2. The same answers bit for bit; not built: check csynth's LUTs and the
   cycles a patch against the fused version.
+- 2026-11-04: the two-multiplies-per-DSP code is in one place, `src/optimized/dsp_pack.hpp` (pack at load,
+  the DSP multiply, the split), used by conv3x3_2mul; the kernel sets only `DSP_PACK_SHIFT`, the
+  group size follows from it (8 on the ZCU104, 2 on the 7020/7030, as before). The same expressions, the same answers bit for bit;
+  not built: check csynth's DSP count (conv1: about 864 / 216 / 324) and the Bind Op Report.
+- 2026-11-04: `conv3x3_all_in` is gone: conv2-conv4 on the ZCU104 are `conv3x3_tiled` with every input
+  channel a cycle and one output channel a step, as before. Its weights are a LUTRAM word a step instead
+  of registers, and it rounds one channel at a time instead of all. The same answers bit for bit; not
+  built: check csynth's cycles a patch and LUTs for conv2-conv4.

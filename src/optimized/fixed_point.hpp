@@ -8,6 +8,7 @@
 
 typedef int16_t act_t;   // an activation
 typedef int8_t  act8_t;  // an int8 activation, -127 .. 127
+typedef uint8_t uact_t;  // a uint8 activation after ReLU, 0 .. 255 (the 1D networks)
 typedef int8_t  weight_t;   // a quantized weight
 typedef int32_t sum_t;   // a sum of products, or a bias at the same scale
 
@@ -24,6 +25,15 @@ act_t requant_relu(sum_t sum) {
     if (sum <= 0) return 0;
     const sum_t rounded = (sum + ((sum_t)1 << (ROUND_BITS - 1))) >> ROUND_BITS;
     return rounded > 32767 ? (act_t)32767 : (act_t)rounded;
+}
+
+// The same to a uint8 activation, saturated at ACT_MAX.
+template<int ROUND_BITS, int ACT_MAX>
+uact_t requant_relu8(sum_t sum) {
+    #pragma HLS INLINE
+    if (sum <= 0) return 0;
+    const sum_t rounded = (sum + ((sum_t)1 << (ROUND_BITS - 1))) >> ROUND_BITS;
+    return rounded > ACT_MAX ? (uact_t)ACT_MAX : (uact_t)rounded;
 }
 
 // Round off ROUND_BITS bits, half up.
@@ -59,10 +69,12 @@ act_t requant_leaky_relu(sum_t sum) {
     return leaked > 32767 ? (act_t)32767 : leaked < -32768 ? (act_t)-32768 : (act_t)leaked;
 }
 
-// The activation after a layer, as in the PyTorch model: none sends the sums on
-// (the scores, or a ReLU module after it), relu ReLUs them and rounds off
-// ROUND_BITS bits to activations, inside the layer's own process.
-enum class activation { none, relu };
+// The activation after a layer, as in the PyTorch model, inside the layer's own
+// process: none sends the sums on (the scores); relu and leaky round off
+// ROUND_BITS bits to int16 activations, relu8 to uint8 ones (the 1D networks);
+// leaky_scores rounds and leaks but keeps 32 bits, for a head whose scores are
+// LeakyReLU'd.
+enum class activation { none, relu, relu8, leaky, leaky_scores };
 
 template<activation A, int ROUND_BITS> struct conv_out {
     typedef act_t type;
@@ -76,6 +88,27 @@ template<int ROUND_BITS> struct conv_out<activation::none, ROUND_BITS> {
     static type of(sum_t sum) {
         #pragma HLS INLINE
         return sum;
+    }
+};
+template<int ROUND_BITS> struct conv_out<activation::relu8, ROUND_BITS> {
+    typedef uact_t type;
+    static type of(sum_t sum) {
+        #pragma HLS INLINE
+        return requant_relu8<ROUND_BITS, 255>(sum);
+    }
+};
+template<int ROUND_BITS> struct conv_out<activation::leaky, ROUND_BITS> {
+    typedef act_t type;
+    static type of(sum_t sum) {
+        #pragma HLS INLINE
+        return requant_leaky_relu<ROUND_BITS>(sum);
+    }
+};
+template<int ROUND_BITS> struct conv_out<activation::leaky_scores, ROUND_BITS> {
+    typedef sum_t type;
+    static type of(sum_t sum) {
+        #pragma HLS INLINE
+        return leaky_relu<>(round_shift<ROUND_BITS>(sum));
     }
 };
 

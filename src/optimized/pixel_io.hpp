@@ -20,6 +20,7 @@ static inline uint32_t pixel_count(int height, int width) {
 // image's last block may be shorter). pixel_lane<BLOCK, 1, 0> is the whole image.
 template<int BLOCK, int LANES, int LANE>
 struct pixel_lane {
+    static constexpr int MIN = 1, MAX = 653016;   // for HLS's reports: the largest capture
     static uint32_t count(int height, int width) {
         #pragma HLS INLINE
         const uint32_t pixels = pixel_count(height, width);
@@ -174,8 +175,9 @@ void store_pixels(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_
 }
 
 // store_pixels for a network in LANES lanes: the lanes are taken in turn, BLOCK
-// pixels each, the order their readers read the image in.
-template<int CLASSES, int LANES, int BLOCK, int BURST, int BURSTS_IN_FLIGHT, typename WORD_T>
+// pixels each, the order their readers read the image in. The head's sums are
+// shifted left SCORE_SHIFT bits, to the scores' fraction bits.
+template<int CLASSES, int LANES, int BLOCK, int BURST, int BURSTS_IN_FLIGHT, int SCORE_SHIFT, typename WORD_T>
 void store_pixels_lanes(hls::stream<vec_t<sum_t, CLASSES> > in[LANES], hls::burst_maxi<WORD_T> dout,
                         int height, int width, hls::stream<bool>& finished) {
     const uint32_t pixels = pixel_count(height, width);
@@ -194,6 +196,10 @@ void store_pixels_lanes(hls::stream<vec_t<sum_t, CLASSES> > in[LANES], hls::burs
             for (int r = 0; r < LANES; r++) {
                 #pragma HLS UNROLL
                 if (lane == r) scores = in[r].read();
+            }
+            for (int c = 0; c < CLASSES; c++) {
+                #pragma HLS UNROLL
+                scores.v[c] = scores.v[c] * ((sum_t)1 << SCORE_SHIFT);
             }
             dout.write(pixel_scores_and_class<CLASSES, WORD_T>(scores));
             if (pixel_of_block == BLOCK - 1) { pixel_of_block = 0; lane = lane == LANES - 1 ? 0 : lane + 1; }

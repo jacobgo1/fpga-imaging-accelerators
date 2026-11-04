@@ -26,11 +26,11 @@ typedef layer_size< 8, 1, true> DOUBLE4_CONV2;  // 8 -> 8     1 x 8 = 8      x 1
 }
 
 // Chip variables for implementation:
-constexpr int DSP_PACK_SHIFT = 18, DSP_PACK_GROUP = 8;   // DSP48E2, 27-bit input: two int8 weights 18 bits apart, groups of 8
+constexpr int DSP_PACK_SHIFT = 18;   // DSP48E2, 27-bit input: two weights 18 bits apart (dsp_pack.hpp)
 
 // The argument names become the kernel's register names: keep them.
 void sp_unet_small_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word_t> din1,
-                             hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
-                             hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
+                       hls::burst_maxi<cube_word_t> din2, hls::burst_maxi<cube_word_t> din3,
+                       hls::burst_maxi<score_word_t> dout, int height, int width, uint32_t& cycles);
 
 #endif

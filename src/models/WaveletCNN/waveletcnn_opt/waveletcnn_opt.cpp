@@ -2,8 +2,8 @@
 #include "../../../optimized/read_patch_rows.hpp"
 #include "../../../optimized/pixel_buffer.hpp"
 #include "../../../optimized/dwt_proj.hpp"
-#include "../../../optimized/conv3x3_all_in.hpp"
-#include "../../../optimized/leaky_conv1x1.hpp"
+#include "../../../optimized/conv3x3_tiled.hpp"
+#include "../../../optimized/conv1x1.hpp"
 #include "../../../optimized/store_scores.hpp"
 #include "../../../optimized/count_cycles.hpp"
 
@@ -42,7 +42,7 @@ void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word
     hls::stream<cube_word_t> cube_words[READ_PORTS];
     hls::stream<vec_t<act8_t, DWT_BANDS_PER_CYCLE>, 64> zscores("zscores");
     hls::stream<vec_t<act_t, MID_CHANNELS>, 64> projected("projected");
-    hls::stream<vec_t<sum_t, MID_CHANNELS>, 32> conv_sums("conv_sums");
+    hls::stream<vec_t<act_t, MID_CHANNELS>, 32> conv_act("conv_act");
     hls::stream<vec_t<sum_t, CLASSES>, 32> scores("scores");
     hls::stream<bool> all_written("all_written");
     #pragma HLS STREAM variable=cube_words depth=64
@@ -61,15 +61,16 @@ void waveletcnn_opt(hls::burst_maxi<cube_word_t> din0, hls::burst_maxi<cube_word
              PROJECTION_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS, weights::dwt_spectral_h0, weights::dwt_spectral_h1,
              weights::projection_weight, weights::projection_bias, false, true>(zscores, projected, height, width);
 
-    // The 3x3 conv, 12 -> 12.
-    conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, MID_CHANNELS,
-                   CONV_SUM_FRAC_BITS - weights::conv_block_0_bias_frac, weights::conv_block_0_weight,
-                   weights::conv_block_0_bias, true, CONV_OUT_PER_CYCLE>(projected, conv_sums, height, width);
+    // The 3x3 conv, 12 -> 12, and its LeakyReLU.
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, MID_CHANNELS, MID_CHANNELS,
+                  CONV_OUT_PER_CYCLE, CONV_SUM_FRAC_BITS - weights::conv_block_0_bias_frac, weights::conv_block_0_weight,
+                  weights::conv_block_0_bias, true, 3,
+                  activation::leaky, CONV_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS>(projected, conv_act, height, width);
 
-    // LeakyReLU, the 1x1 head 12 -> 3, LeakyReLU: a pixel a cycle.
-    leaky_conv1x1<PATCH_SIZE, PATCH_SIZE, MID_CHANNELS, CLASSES, CONV_SUM_FRAC_BITS - ACTIVATION_FRAC_BITS,
-                  HEAD_SUM_FRAC_BITS - weights::seg_head_0_bias_frac, HEAD_SUM_FRAC_BITS - SCORE_FRAC_BITS,
-                  weights::seg_head_0_weight, weights::seg_head_0_bias, true>(conv_sums, scores, height, width);
+    // The 1x1 head 12 -> 3 and its LeakyReLU: a pixel a cycle.
+    conv1x1<patch_pixels<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE * PATCH_SIZE>, MID_CHANNELS, CLASSES, CLASSES, activation::leaky_scores,
+            HEAD_SUM_FRAC_BITS - weights::seg_head_0_bias_frac, HEAD_SUM_FRAC_BITS - SCORE_FRAC_BITS,
+            weights::seg_head_0_weight, weights::seg_head_0_bias, true>(conv_act, scores, height, width);
 
     store_scores<PATCH_SIZE, PATCH_SIZE, 0>(scores, dout, height, width, all_written);
 

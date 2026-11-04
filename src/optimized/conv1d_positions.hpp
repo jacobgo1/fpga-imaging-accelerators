@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
-#include "conv3x3_2mul.hpp"
+#include "dsp_pack.hpp"
 #include "conv1d_map.hpp"
 
 // The layers of a per-pixel (1D) network for the small chips: the input arrives
@@ -65,12 +65,11 @@ void pool1d_wide(hls::stream<vec_t<uact_t, 2 * CHANNELS> >& in, hls::stream<vec_
 // window; the last output position's free steps read the next pixel's first
 // positions ahead, so its fill steps are hidden.
 //
-// PACKED: two output channels per DSP as in conv3x3_2mul.hpp. uint8 products
-// are at most 32 640: groups of 1 on the 7-series (PACK_SHIFT 16), 4 on the ZCU104 (18).
+// PACKED: two output channels per DSP (dsp_pack.hpp); PACK_SHIFT the chip's packing.
 template<int IN_LENGTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL, int OUT_LENGTH, int OUT_PER_CYCLE,
          int IN_PER_CYCLE, int BIAS_SHIFT, int ROUND_BITS, int ACT_MAX,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][KERNEL], const weight_t (&BIAS)[OUT_CHANNELS],
-         bool PACKED, bool DSP, int PACK_SHIFT = 16, int GROUP = 1>
+         bool PACKED, bool DSP, int PACK_SHIFT>
 void conv1d_positions(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<vec_t<uact_t, OUT_CHANNELS> >& out,
                       int height, int width) {
     constexpr int GROUPS = OUT_CHANNELS / OUT_PER_CYCLE, CHUNKS = IN_CHANNELS / IN_PER_CYCLE;
@@ -81,6 +80,8 @@ void conv1d_positions(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<
     constexpr int READ_AHEAD = TRAILING == 0 ? (FREE_STEPS < FILL ? FREE_STEPS : FILL) : 0;
     constexpr int FILL_NEXT = FILL - READ_AHEAD;      // fill steps left, every pixel after the first
     constexpr int STEPS_PER_PIXEL = FILL_NEXT + COMPUTE_STEPS + TRAILING;
+    constexpr int GROUP = pack_group<PACK_SHIFT, 255>();   // uint8 inputs
+    static_assert(!PACKED || TAPS % GROUP == 0, "whole groups");
 
     weight_t weight[GROUPS * CHUNKS][OUT_PER_CYCLE][TAPS];
     packed_weight_t<PACK_SHIFT> packed[GROUPS * CHUNKS][OUT_PER_CYCLE / 2 > 0 ? OUT_PER_CYCLE / 2 : 1][TAPS];
@@ -98,9 +99,7 @@ void conv1d_positions(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<
                     const int o = g * OUT_PER_CYCLE + j, i = c * IN_PER_CYCLE + tap / KERNEL, k = tap % KERNEL;
                     weight[g * CHUNKS + c][j][tap] = WEIGHT[o][i][k];
                     if (PACKED && j % 2 == 1)
-                        packed[g * CHUNKS + c][j / 2][tap] =
-                            (packed_weight_t<PACK_SHIFT>)WEIGHT[o][i][k] * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
-                            + (packed_weight_t<PACK_SHIFT>)WEIGHT[o - 1][i][k];
+                        packed[g * CHUNKS + c][j / 2][tap] = pack_weights<PACK_SHIFT>(WEIGHT[o][i][k], WEIGHT[o - 1][i][k]);
                     if (c == 0 && tap == 0) bias[g][j] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
                 }
 
@@ -177,12 +176,10 @@ void conv1d_positions(hls::stream<vec_t<uact_t, IN_CHANNELS> >& in, hls::stream<
                         packed_sum_t sum = 0;
                         for (int tap = first; tap < first + GROUP; tap++) {
                             #pragma HLS UNROLL
-                            const packed_sum_t prod = packed[weight_step][pair][tap] * window_chunk[tap % KERNEL][tap / KERNEL];
-                            #pragma HLS BIND_OP variable=prod op=mul impl=dsp
-                            sum += prod;
+                            sum += packed_mul<PACK_SHIFT>(packed[weight_step][pair][tap],
+                                                          window_chunk[tap % KERNEL][tap / KERNEL]);
                         }
-                        low += low_sum<PACK_SHIFT>((int64_t)sum);
-                        high += high_sum<PACK_SHIFT>((int64_t)sum);
+                        unpack_add<PACK_SHIFT>(sum, low, high);
                     }
                     sums[2 * pair] = (chunk == 0 ? bias[group][2 * pair] : sums[2 * pair]) + low;
                     sums[2 * pair + 1] = (chunk == 0 ? bias[group][2 * pair + 1] : sums[2 * pair + 1]) + high;

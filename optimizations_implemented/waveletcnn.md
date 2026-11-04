@@ -52,8 +52,8 @@ for the quantized float model).
 | Strip ping-pong buffer (`pixel_buffer`): only `PORTS` rows × 32 pixels in BRAM (8×–16× smaller than a full patch buffer) | 4-row BRAM | 4-row BRAM | 2-row BRAM |
 | Fused 1D DWT + 1×1 projection (`dwt_proj`): 8-band sliding window accumulates `x[2m]`, `x[2m+1]`, `low[m]`, `high[m]` directly into the 12 projection channels; the 226-channel tensor is never stored | `DWT_STEPS_PER_CYCLE = 8` | `DWT_STEPS_PER_CYCLE = 4` | `DWT_STEPS_PER_CYCLE = 2` |
 | Read ports, each every n-th patch row (`read_patch_rows`, `burst_maxi`) | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
-| `conv_block` (12 → 12, 3×3): line buffers + 3×3 shift-register window | `conv3x3_all_in` (2 out/cycle) | `conv3x3_all_in` (1 out/cycle) | `conv3x3_tiled` (`P2 = 6` in × 1 out/cycle) |
-| Fused `LeakyReLU` + 1×1 `seg_head` (12 → 3) + `LeakyReLU` (`leaky_conv1x1`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
+| `conv_block` (12 → 12, 3×3) and its `LeakyReLU` (`activation::leaky`): line buffers + 3×3 shift-register window (`conv3x3_tiled`) | 12 in × 2 out/cycle | 12 in × 1 out/cycle | `P2 = 6` in × 1 out/cycle |
+| 1×1 `seg_head` (12 → 3) and its `LeakyReLU` (`conv1x1`, `activation::leaky_scores`, 1 cycle/pixel) | ✓ | ✓ | ✓ |
 | Score writes with acknowledgements collected later (`store_scores`) | ✓ | ✓ | ✓ |
 | Cycle counter register | ✓ | – | – |
 
@@ -63,7 +63,7 @@ Each stage runs at II = 1:
 - `read_patch_rows`: `(32 / PORTS)` rows × 32 pixels × words per pixel.
 - `pixel_buffer` and `dwt_proj`: `ceil(58 / DWT_STEPS_PER_CYCLE)` steps/pixel × 1 024 pixels.
 - `conv_block`: `STEPS` cycles/pixel × (1 024 + 33) pixels.
-- `leaky_conv1x1` and `store_scores`: 1 024 cycles/patch.
+- `seg_head` (`conv1x1`) and `store_scores`: 1 024 cycles/patch.
 
 | Stage | ZCU104 (`DWT_STEPS_PER_CYCLE = 8`) | Zynq-7030 (`DWT_STEPS_PER_CYCLE = 4`) | Zynq-7020 (`DWT_STEPS_PER_CYCLE = 2`) |
 |---|---|---|---|
@@ -71,7 +71,7 @@ Each stage runs at II = 1:
 | `pixel_buffer` | **8 192** | **15 360** | **29 696** |
 | `dwt_proj` | **8 192** | **15 360** | **29 696** |
 | `conv_block` (3×3, 12→12) | 6 342 (2 out/cycle) | 12 684 (1 out/cycle) | 25 368 (`P2 = 6`) |
-| `leaky_conv1x1` (1×1, 12→3) | 1 024 | 1 024 | 1 024 |
+| `seg_head` (`conv1x1`, 12→3) | 1 024 | 1 024 | 1 024 |
 | `store_scores` | 1 024 | 1 024 | 1 024 |
 | **T** | **8 192** (`dwt_proj`) | **15 360** (`dwt_proj`) | **29 696** (`dwt_proj`) |
 | DSPs | 668 of 1 728 (z-score 32, proj 384, conv 216, head 36) | 336 of 400 (proj 192, conv 108, head 36) | 186 of 220 (proj 96, conv 54, head 36) |
@@ -95,7 +95,7 @@ Each stage runs at II = 1:
 | DSPs / LUTs | 1 728 / 230 k | 400 / 79 k | 220 / 53 k |
 | `dwt_proj` width | 8 subband steps/cycle (16 bands, 384 DSPs) | 4 subband steps/cycle (8 bands, 192 DSPs) | 2 subband steps/cycle (4 bands, 96 DSPs) |
 | `conv_block` (12→12) | 2 out ch/cycle (216 DSPs) | 1 out ch/cycle (108 DSPs) | 6 in × 1 out ch/cycle (54 DSPs) |
-| `leaky_conv1x1` (12→3) | 36 DSPs | 36 DSPs | 36 DSPs |
+| `seg_head` (`conv1x1`, 12→3) | 36 DSPs | 36 DSPs | 36 DSPs |
 | Strip buffer | 4-row ping-pong in BRAM | 4-row ping-pong in BRAM | 2-row ping-pong in BRAM |
 | Ports | 4 read + 1 write, 128 bit | 4 read + 1 write sharing HP3, 64 bit | 2 read + 1 write, 64 bit |
 
@@ -161,3 +161,9 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-04: the FIFO depths moved from `#pragma HLS STREAM` into the stream types, `hls::stream<T, D>`
   (the same depths); arrays of streams (`cube_words`) keep the pragma. The same answers bit for bit; not
   rebuilt: check csynth's FIFO depths.
+- 2026-11-04: fewer conv modules, the same answers bit for bit. `conv3x3_all_in` is gone: the ZCU104 and
+  7030 conv_block is `conv3x3_tiled` with all 12 input channels a cycle (its weights a LUTRAM word a
+  step, not registers; rounding for 2 / 1 channels, not 12). Its LeakyReLU moved into the conv
+  (`activation::leaky`), so `leaky_conv1x1` is gone too: the head is `conv1x1` with
+  `activation::leaky_scores`, and the FIFO between them is 16 bits a channel instead of 32. Not built:
+  check csynth's T, DSPs (216 / 108 / 54 conv, 36 head) and LUTs.

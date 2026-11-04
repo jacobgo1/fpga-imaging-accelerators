@@ -3,7 +3,8 @@
 #include <stdint.h>
 #include "../common/hls_stream_shim.hpp"
 #include "fixed_point.hpp"
-#include "conv3x3_2mul.hpp"
+#include <type_traits>
+#include "dsp_pack.hpp"
 #include "pixel_io.hpp"
 
 // The layers of a per-pixel (1D) network, one pixel after another. A layer is
@@ -13,27 +14,16 @@
 // index is a constant (shift registers), so there are no multiplexers in front
 // of the multipliers.
 
-typedef uint8_t uact_t;   // an activation after ReLU, 0 .. 255
-
-// ReLU, round off ROUND_BITS bits, saturate at ACT_MAX.
-template<int ROUND_BITS, int ACT_MAX>
-uact_t requant_relu8(sum_t sum) {
-    #pragma HLS INLINE
-    if (sum <= 0) return 0;
-    const sum_t rounded = (sum + ((sum_t)1 << (ROUND_BITS - 1))) >> ROUND_BITS;
-    return rounded > ACT_MAX ? (uact_t)ACT_MAX : (uact_t)rounded;
-}
-
 // Conv1d without padding, the first OUT_LENGTH outputs of each pixel (the pools
 // drop the rest), then ReLU and requantization to uint8. Input positions past
 // IN_LENGTH count as zero. Step s sends positions (s / GROUPS) * POSITIONS_PER_CYCLE
 // + p, channels (s % GROUPS) * OUT_PER_CYCLE + j, at [p * OUT_PER_CYCLE + j].
-// PACKED: two channels per DSP as in conv3x3_2mul.hpp; uint8 products are at most
-// 32 640, so groups of 4 fit 18 bits. Otherwise one multiply each, DSP or LUTs.
+// PACKED: two channels per DSP (dsp_pack.hpp), uint8 inputs only; PACK_SHIFT the
+// chip's packing. Otherwise one multiply each, DSP or LUTs.
 template<int IN_LENGTH, int IN_CHANNELS, int OUT_CHANNELS, int KERNEL, int OUT_LENGTH, int POSITIONS_PER_CYCLE,
          int OUT_PER_CYCLE, int BIAS_SHIFT, int ROUND_BITS, int ACT_MAX,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][KERNEL], const weight_t (&BIAS)[OUT_CHANNELS],
-         bool PACKED, bool DSP, typename IN_T>
+         bool PACKED, bool DSP, int PACK_SHIFT, typename IN_T>
 void conv1d_map(hls::stream<map_t<IN_T, IN_LENGTH, IN_CHANNELS> >& in,
                 hls::stream<vec_t<uact_t, POSITIONS_PER_CYCLE * OUT_PER_CYCLE> >& out,
                 int height, int width) {
@@ -42,7 +32,9 @@ void conv1d_map(hls::stream<map_t<IN_T, IN_LENGTH, IN_CHANNELS> >& in,
     constexpr int STEPS = POSITION_STEPS * GROUPS;
     constexpr int WINDOW_LENGTH = POSITION_STEPS * POSITIONS_PER_CYCLE + KERNEL - 1;
     constexpr int TAPS = IN_CHANNELS * KERNEL;
-    constexpr int PACK_SHIFT = 18, GROUP = 4;   // DSP48E2
+    constexpr int GROUP = pack_group<PACK_SHIFT, 255>();
+    static_assert(!PACKED || std::is_same<IN_T, uact_t>::value, "packed: uint8 inputs");
+    static_assert(!PACKED || TAPS % GROUP == 0, "whole groups");
 
     weight_t weight[GROUPS][OUT_PER_CYCLE][TAPS];
     packed_weight_t<PACK_SHIFT> packed[GROUPS][OUT_PER_CYCLE / 2 > 0 ? OUT_PER_CYCLE / 2 : 1][TAPS];
@@ -59,10 +51,8 @@ void conv1d_map(hls::stream<map_t<IN_T, IN_LENGTH, IN_CHANNELS> >& in,
                 const int o = g * OUT_PER_CYCLE + j;
                 weight[g][j][tap] = WEIGHT[o][tap / KERNEL][tap % KERNEL];
                 if (PACKED && j % 2 == 1)
-                    packed[g][j / 2][tap] =
-                        (packed_weight_t<PACK_SHIFT>)WEIGHT[o][tap / KERNEL][tap % KERNEL]
-                            * (packed_weight_t<PACK_SHIFT>)(1 << PACK_SHIFT)
-                        + (packed_weight_t<PACK_SHIFT>)WEIGHT[o - 1][tap / KERNEL][tap % KERNEL];
+                    packed[g][j / 2][tap] = pack_weights<PACK_SHIFT>(WEIGHT[o][tap / KERNEL][tap % KERNEL],
+                                                                     WEIGHT[o - 1][tap / KERNEL][tap % KERNEL]);
                 if (tap == 0) bias[g][j] = (sum_t)BIAS[o] * ((sum_t)1 << BIAS_SHIFT);
             }
 
@@ -100,13 +90,9 @@ void conv1d_map(hls::stream<map_t<IN_T, IN_LENGTH, IN_CHANNELS> >& in,
                         packed_sum_t sum = 0;
                         for (int tap = first; tap < first + GROUP; tap++) {
                             #pragma HLS UNROLL
-                            // The uint8 as it is: widened first, it would need a 27 x 48 multiplier.
-                            const packed_sum_t prod = packed[g][pair][tap] * window[p + tap % KERNEL][tap / KERNEL];
-                            #pragma HLS BIND_OP variable=prod op=mul impl=dsp
-                            sum += prod;
+                            sum += packed_mul<PACK_SHIFT>(packed[g][pair][tap], window[p + tap % KERNEL][tap / KERNEL]);
                         }
-                        low += low_sum<PACK_SHIFT>((int64_t)sum);
-                        high += high_sum<PACK_SHIFT>((int64_t)sum);
+                        unpack_add<PACK_SHIFT>(sum, low, high);
                     }
                     outputs.v[p * OUT_PER_CYCLE + 2 * pair] = requant_relu8<ROUND_BITS, ACT_MAX>(low);
                     outputs.v[p * OUT_PER_CYCLE + 2 * pair + 1] = requant_relu8<ROUND_BITS, ACT_MAX>(high);

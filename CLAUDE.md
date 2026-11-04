@@ -44,7 +44,7 @@ src/golden/          layers.hpp: the plain-loop layers the golden kernels are bu
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file, for every board; each kernel sets
                      its chip's facts in its .hpp ("Chip variables for
-                     implementation": DSP_PACK_SHIFT / DSP_PACK_GROUP for 2 multiplies per
+                     implementation": DSP_PACK_SHIFT for 2 multiplies per
                      DSP, HAS_URAM for patch_buffer) and passes them to the modules
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
@@ -126,8 +126,9 @@ image folder (labels required).
 3. Write the kernel as a DATAFLOW chain from `src/optimized/` blocks:
    - read the raw cube from DDR and do the preprocessing in hardware;
    - integer fixed point throughout;
-   - give each conv its weights, bias, shifts and activation (`activation::relu` / `none`)
-     as template arguments, instead of a ReLU process;
+   - give each conv its weights, bias, shifts and activation (`activation::relu`, `relu8`,
+     `leaky`, `leaky_scores` or `none`) as template arguments, instead of an activation process;
+     choose the conv module by its window and input order (docs/framework.md, "The conv modules");
    - the constants in the kernel's .hpp (sizes, chip variables, which multipliers on DSPs);
      those derived from the weights' fractions stay in the .cpp, since the testbench
      includes the .hpp with the golden kernel's float weights;
@@ -162,9 +163,10 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/conv3x3_2mul.hpp`, AMD WP486): it needs activations in
-  -127..127. The DSP's wide input sets the spacing: 18 bits on the UltraScale+
-  DSP48E2 (27-bit input), 16 on the 7-series DSP48E1 (25-bit). Check the DSP
+  (`src/optimized/dsp_pack.hpp`, AMD WP486; used by conv3x3_2mul, pointwise_packed and
+  the 1D convs): int8 activations in -127..127, or uint8. The DSP's wide input sets the
+  spacing, the kernel's DSP_PACK_SHIFT: 18 bits on the UltraScale+ DSP48E2 (27-bit input),
+  16 on the 7-series DSP48E1 (25-bit); how many products a DSP chain adds follows from it. Check the DSP
   count in the csynth report: about 864 for the ZCU104's conv1, 324 for the 7030's, 216 for the
   7020's, means the packing mapped.
   Pack the weights once at load, not next to the multiply: HLS put that addition

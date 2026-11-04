@@ -2,7 +2,7 @@
 #include "../../../optimized/read_patch_rows_simple.hpp"
 #include "../../../optimized/patch_buffer.hpp"
 #include "../../../optimized/conv3x3_2mul.hpp"
-#include "../../../optimized/conv3x3_all_in.hpp"
+#include "../../../optimized/conv3x3_tiled.hpp"
 #include "../../../optimized/max_pool.hpp"
 #include "../../../optimized/upsample.hpp"
 #include "../../../optimized/store_scores.hpp"
@@ -78,25 +78,26 @@ void justounetsimple_opt(const cube_word_t* din0, const cube_word_t* din1,
     // conv1: 110 -> 6 at 32 x 32, 32 bands a cycle, two multiplies per DSP; ReLU; pool.
     conv3x3_2mul<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
                  CONV1_BANDS_PER_CYCLE, CONV1_BIAS_SHIFT, weights::conv1_weight, weights::conv1_bias,
-                 DSP_PACK_SHIFT, DSP_PACK_GROUP, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
+                 DSP_PACK_SHIFT, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
     // conv2: 6 -> 12 at 16 x 16; ReLU; pool to 8 x 8 and upsample back.
-    conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, BASE_CHANNELS, 2 * BASE_CHANNELS, CONV2_BIAS_SHIFT,
-                   weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS, 1, activation::relu,
-                   CONV2_OUTPUT_SHIFT>(conv1_pooled, conv2_act, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, BASE_CHANNELS, 2 * BASE_CHANNELS, BASE_CHANNELS, 1,
+                  CONV2_BIAS_SHIFT, weights::conv2_weight, weights::conv2_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  CONV2_OUTPUT_SHIFT>(conv1_pooled, conv2_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv2_act, conv2_pooled, height, width);
     upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH / 2, HALF_PATCH / 2>(conv2_pooled, conv2_upsampled, height, width);
 
     // conv3: 12 -> 6 at 16 x 16; ReLU; upsample to 32 x 32.
-    conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 2 * BASE_CHANNELS, BASE_CHANNELS, CONV3_BIAS_SHIFT,
-                   weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS, 1, activation::relu,
-                   CONV3_OUTPUT_SHIFT>(conv2_upsampled, conv3_act, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH, 2 * BASE_CHANNELS, BASE_CHANNELS, 2 * BASE_CHANNELS, 1,
+                  CONV3_BIAS_SHIFT, weights::conv3_weight, weights::conv3_bias, CONV2_TO_4_ON_DSPS, 3, activation::relu,
+                  CONV3_OUTPUT_SHIFT>(conv2_upsampled, conv3_act, height, width);
     upsample<PATCH_SIZE, PATCH_SIZE, HALF_PATCH, HALF_PATCH>(conv3_act, conv3_upsampled, height, width);
 
     // conv4: 6 -> 3 at 32 x 32, the scores.
-    conv3x3_all_in<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, BASE_CHANNELS, CLASSES, CONV4_BIAS_SHIFT,
-                   weights::conv4_weight, weights::conv4_bias, CONV2_TO_4_ON_DSPS>(conv3_upsampled, scores, height, width);
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, BASE_CHANNELS, CLASSES, BASE_CHANNELS, 1,
+                  CONV4_BIAS_SHIFT, weights::conv4_weight, weights::conv4_bias, CONV2_TO_4_ON_DSPS>(
+        conv3_upsampled, scores, height, width);
     store_scores<PATCH_SIZE, PATCH_SIZE, CONV4_OUTPUT_SHIFT>(scores, dout, height, width, all_written);
 
     count_cycles(all_written, cycles);   // last: C simulation runs the processes in order

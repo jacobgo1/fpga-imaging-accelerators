@@ -34,7 +34,7 @@ void spectralpointwise1d_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::bu
     lane_convsp1<1>(cube_words[1], convsp1_out[1], height, width);
     lane_convsp2<1>(convsp1_out[1], convsp2_out[1], height, width);
     lane_convsp3<1>(convsp2_out[1], scores[1], height, width);
-    store_pixels_lanes<CLASSES, LANES, BLOCK_PIXELS, 64, 8>(scores, dout, height, width, all_written);
+    store_pixels_lanes<CLASSES, LANES, BLOCK_PIXELS, 64, 8, SCORE_SHIFT>(scores, dout, height, width, all_written);
 
     count_cycles(all_written, cycles);   // last: C simulation runs the processes in order
 }

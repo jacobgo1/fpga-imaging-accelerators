@@ -69,7 +69,7 @@ void justounetsimple_opt_zynq7020(hls::burst_maxi<cube_word_t> din0, hls::burst_
     // conv1: 110 -> 6 at 32 x 32, 8 bands a cycle, two multiplies per DSP.
     conv3x3_2mul<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
                  CONV1_BANDS_PER_CYCLE, CONV1_BIAS_SHIFT, weights::conv1_weight, weights::conv1_bias,
-                 DSP_PACK_SHIFT, DSP_PACK_GROUP, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
+                 DSP_PACK_SHIFT, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
     // conv2: 6 -> 12 at 16 x 16; ReLU; pool to 8 x 8 and upsample back.
