@@ -4,16 +4,20 @@
 #include "patch_grid.hpp"
 
 // A 1x1 conv on int8 inputs (the z-scored bands), two multiplies per DSP
-// (dsp_pack.hpp), then ReLU and ROUND_BITS bits rounded off. A pixel's bands come
+// (dsp_pack.hpp), then its activation A (conv_out: relu to int16, relu8 to uint8) with
+// ROUND_BITS bits rounded off. A pixel's bands come
 // in chunks of IN_PER_CYCLE, the last padded with zeros; its activations leave
 // after the last chunk. OUTPUT_PASSES > 1 splits the channel pairs over that many
 // passes per chunk, for a chip with few DSPs. PACK_SHIFT: the chip's packing.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int PIXELS, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE,
          int BIAS_SHIFT, int ROUND_BITS,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][1][1], const weight_t (&BIAS)[OUT_CHANNELS],
-         int PACK_SHIFT, int OUTPUT_PASSES = 1>
-void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream<vec_t<act_t, OUT_CHANNELS> >& out,
+         int PACK_SHIFT, int OUTPUT_PASSES = 1, activation A = activation::relu>
+void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
+                      hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                       int height, int width) {
+    typedef conv_out<A, ROUND_BITS> output;
+    typedef typename output::type out_t;
     constexpr int CHUNKS = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE, PADDED_IN = CHUNKS * IN_PER_CYCLE;
     constexpr int PAIRS_PER_PASS = OUT_CHANNELS / 2 / OUTPUT_PASSES;
     constexpr int GROUP = pack_group<PACK_SHIFT, 127>();
@@ -41,7 +45,7 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
 
     sum_t sums[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=sums type=complete
-    act_t activations[OUT_CHANNELS];
+    out_t activations[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=activations type=complete
     act8_t chunk_bands[IN_PER_CYCLE];
     #pragma HLS ARRAY_PARTITION variable=chunk_bands type=complete
@@ -73,8 +77,8 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
             const int j = pass * PAIRS_PER_PASS + p;
             const sum_t low_total = (chunk == 0 ? bias[2 * j] : sums[2 * j]) + low;
             const sum_t high_total = (chunk == 0 ? bias[2 * j + 1] : sums[2 * j + 1]) + high;
-            const act_t low_activation = requant_relu<ROUND_BITS>(low_total);
-            const act_t high_activation = requant_relu<ROUND_BITS>(high_total);
+            const out_t low_activation = output::of(low_total);
+            const out_t high_activation = output::of(high_total);
             for (int k = 0; k < OUTPUT_PASSES; k++) {
                 #pragma HLS UNROLL
                 if (pass == k) {
@@ -88,7 +92,7 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
             }
         }
         if (chunk == CHUNKS - 1 && pass == OUTPUT_PASSES - 1) {
-            vec_t<act_t, OUT_CHANNELS> pixel;
+            vec_t<out_t, OUT_CHANNELS> pixel;
             for (int o = 0; o < OUT_CHANNELS; o++) {
                 #pragma HLS UNROLL
                 pixel.v[o] = activations[o];

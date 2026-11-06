@@ -83,3 +83,5 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-04: `conv1d` with `map_windows` / `position_windows` replaces `conv1d_map` / `conv1d_positions`,
   as in justoliunet.md (the same chain). The same answers bit for bit; not built: predicted 18 / 72 / 108
   cycles a pixel on the ZCU104 / 7030 / ZedBoard.
+- 2026-11-06: `justoliunet_bn_opt` with `conv1d` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"): 18.00
+  cycles a pixel, 47.02 ms, as before. 92.90 % against the labels, as classify_fixed on the images checked.

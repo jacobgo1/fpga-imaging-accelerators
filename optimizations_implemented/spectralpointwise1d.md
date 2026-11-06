@@ -200,3 +200,6 @@ Routed, kernel alone (without the interconnects); by process in
   `activation::relu8`). The head sends its sums; `store_pixels_lanes` shifts them to the scores'
   fraction bits (`SCORE_SHIFT`), as `store_scores` rounds the 2D heads'. The same answers bit for bit;
   not built: check csynth's T and LUTs (`pointwise1d` was 148).
+- 2026-11-06: `spectralpointwise1d_opt` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"): 4.66 cycles a pixel,
+  12.16 ms, DDR-bound as before. 93.93 % against the labels, the most accurate of the models on
+  these images, as classify_fixed on the images checked.

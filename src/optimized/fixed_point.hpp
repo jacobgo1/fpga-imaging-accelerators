@@ -36,11 +36,15 @@ uact_t requant_relu8(sum_t sum) {
     return rounded > ACT_MAX ? (uact_t)ACT_MAX : (uact_t)rounded;
 }
 
-// Round off ROUND_BITS bits, half up.
+// Round off ROUND_BITS bits, half up. A negative ROUND_BITS gives that many bits more,
+// exactly (a shift left): sp_unet_SIZE_opt_u8's last sums have fewer fraction bits than
+// the scores.
 template<int ROUND_BITS>
 sum_t round_shift(sum_t sum) {
     #pragma HLS INLINE
-    return ROUND_BITS == 0 ? sum : (sum + ((sum_t)1 << (ROUND_BITS > 0 ? ROUND_BITS - 1 : 0))) >> ROUND_BITS;
+    return ROUND_BITS == 0 ? sum
+         : ROUND_BITS < 0 ? (sum_t)((uint32_t)sum << (ROUND_BITS < 0 ? -ROUND_BITS : 0))
+         : (sum + ((sum_t)1 << (ROUND_BITS > 0 ? ROUND_BITS - 1 : 0))) >> (ROUND_BITS > 0 ? ROUND_BITS : 0);
 }
 
 // A sum to a signed activation, no ReLU: round off ROUND_BITS bits, saturate to int16.
@@ -112,7 +116,8 @@ template<int ROUND_BITS> struct conv_out<activation::leaky_scores, ROUND_BITS> {
     }
 };
 
-static inline act_t max2(act_t a, act_t b) {
+template<typename T>
+T max2(T a, T b) {
     #pragma HLS INLINE
     return a > b ? a : b;
 }

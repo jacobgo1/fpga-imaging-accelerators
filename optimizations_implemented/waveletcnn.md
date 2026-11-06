@@ -178,3 +178,6 @@ Routed, kernel alone (without the interconnects); by process in
   read-ahead `burst_maxi` reader) is kept but unused. Each row now waits for DDR's first word: on
   `justounetsimple_opt` that cost 17.87 → 20 ms. Not built: check hls.log for the inferred read
   bursts (no "could not be inferred") and compare the cycles a patch with the last run.
+- 2026-11-06: `waveletcnn_opt` with `read_patch_rows_simple` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"):
+  8 219 cycles a patch (8 213-8 227), 21.86 ms, against 8 238 before: no cost. 93.72 % against
+  the labels, as classify_fixed on the images checked.

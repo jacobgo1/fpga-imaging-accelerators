@@ -1,9 +1,11 @@
 // sp_unet_opt_check.hpp  --  the testbench of the optimized SpecPW-UNet kernels
-// (sp_unet_SIZE_opt and the Zynq-7020's): the same checks for each.
+// (sp_unet_SIZE_opt, sp_unet_SIZE_opt_u8 and the Zynq-7020's): the same checks for each.
 // A testbench includes its kernel's header, then its golden kernel's .cpp
 // (src/models/SpecPW-UNet/SIZE/sp_unet_SIZE_golden/: the float reference, and its weights as namespace weights,
 // held as floats with integer values), defines run_kernel(din, dout, height,
-// width) and run_golden(din, dout, n), then includes this for check_kernel().
+// width) and run_golden(din, dout, n), then includes this for check_kernel(): with no
+// arguments the int16 arithmetic (every layer ACTIVATION_FRAC_BITS, up to 32767); a uint8
+// kernel calls check_kernel_u8 with its layers' fraction bits (SPECPW_UNET_FRACS_GOLDEN(act8)).
 //
 // A small raw cube (40 x 50 pixels x 120 bands, uint16 like a capture): 2 x 2
 // patches, the bottom and right ones partly outside the image, so the edge
@@ -29,6 +31,12 @@
 constexpr int IMG_H = 40, IMG_W = 50;      // matches the m_axi depth pragmas
 constexpr int FIRST_BAND = zscore_int8::FIRST_BAND;
 constexpr float SCORE_TOLERANCE = 0.02f;   // fixed point against float, in score units
+// uint8 activations round to 1/16 in the widest layers, so they stay near float, not as
+// near (on a real capture 0.14 at most). z-scores of -4 .. 4 in every band, unlike any
+// capture, drive ~1 500 activations past the ranges chosen on real data, where they
+// saturate and the scores move by several units: so the uint8 kernels are checked bit for
+// bit on those (the saturation exercised), and against float on -1 .. 1 (none saturate).
+constexpr float U8_SCORE_TOLERANCE = 0.25f, U8_FLOAT_SPREAD = 1.0f;
 constexpr int LANES = 4;                   // a pixel of dout: 3 scores and the class
 static_assert(PATCH_SIZE == GOLDEN_PATCH_SIZE && MODEL_BANDS == GOLDEN_BANDS && CLASSES == GOLDEN_CLASSES,
               "the optimized and golden kernels must have the same geometry");
@@ -69,13 +77,14 @@ static score_word_t dout[IMG_H * IMG_W];
 static int32_t exact[IMG_H][IMG_W][CLASSES];
 static float golden_scores[IMG_H][IMG_W][CLASSES];
 
-static int check_kernel()
+// Raw values whose z-scores are uniform in -spread .. spread; tolerance < 0: bit for bit only.
+static int check_kernel(const specpw_unet_fracs_golden &fracs, int32_t act_max, float spread, float tolerance)
 {
     load_qparams(qparams);
 
     // Raw values whose z-score is uniform in -4 .. 4.
     std::mt19937 rng(1);
-    std::uniform_real_distribution<float> dist(-4.0f, 4.0f);
+    std::uniform_real_distribution<float> dist(-spread, spread);
     for (int y = 0; y < IMG_H; y++)
         for (int x = 0; x < IMG_W; x++)
             for (int r = 0; r < CUBE_BANDS; r++) {
@@ -104,7 +113,7 @@ static int check_kernel()
                         xf[y][x][k] = std::ldexp((float)xq[y][x][k], -ZSCORE_FRAC_BITS);
                     }
                 }
-            specpw_unet_fixed_golden<PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, CLASSES, model_size>(xq, qparams, ZSCORE_FRAC_BITS, ACTIVATION_FRAC_BITS, SCORE_FRAC_BITS, 32767, ps);
+            specpw_unet_fixed_golden<PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, CLASSES, model_size>(xq, qparams, ZSCORE_FRAC_BITS, fracs, SCORE_FRAC_BITS, act_max, ps);
             run_golden(&xf[0][0][0], &pf[0][0][0], 1);
             for (int y = 0; y < PATCH_SIZE && y0 + y < IMG_H; y++)
                 for (int x = 0; x < PATCH_SIZE && x0 + x < IMG_W; x++)
@@ -139,17 +148,32 @@ static int check_kernel()
             for (int o = 0; o < CLASSES; o++) {
                 const float diff = std::fabs(a[o] * out_scale - golden_scores[y][x][o]);
                 if (diff > worst) worst = diff;
-                if (diff > SCORE_TOLERANCE) far++;
+                if (tolerance >= 0 && diff > tolerance) far++;
             }
             classes_differ += best != golden_best;
         }
     constexpr int count = IMG_H * IMG_W * LANES;
     const bool pass = errors == 0 && far == 0;
     if (pass)
-        printf("PASS  (%d x %d raw image, %d outputs bit-exact; against float: worst difference %g, "
-               "%d of %d classes differ)\n", IMG_H, IMG_W, count, (double)worst, classes_differ, IMG_H * IMG_W);
+        printf("PASS  (%d x %d raw image, z-scores -%g .. %g, %d outputs bit-exact; against float%s: worst "
+               "difference %g, %d of %d classes differ)\n", IMG_H, IMG_W, (double)spread, (double)spread, count,
+               tolerance >= 0 ? "" : " (not checked)", (double)worst, classes_differ, IMG_H * IMG_W);
     else
         printf("FAIL  (%d mismatches with the exact reference, %d scores further than %g from float, worst %g)\n",
-               errors, far, (double)SCORE_TOLERANCE, (double)worst);
+               errors, far, (double)tolerance, (double)worst);
     return pass ? 0 : 1;
+}
+
+// The int16 kernels.
+inline int check_kernel()
+{
+    return check_kernel(specpw_unet_same_fracs_golden(ACTIVATION_FRAC_BITS), 32767, 4.0f, SCORE_TOLERANCE);
+}
+
+// The uint8 kernels (sp_unet_SIZE_opt_u8): saturated at 255, see U8_SCORE_TOLERANCE.
+inline int check_kernel_u8(const specpw_unet_fracs_golden &fracs)
+{
+    const int saturating = check_kernel(fracs, 255, 4.0f, -1.0f);
+    const int near_float = check_kernel(fracs, 255, U8_FLOAT_SPREAD, U8_SCORE_TOLERANCE);
+    return saturating || near_float;
 }

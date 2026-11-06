@@ -237,3 +237,6 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-04: the 7030 and 7020 kernels read with `read_patch_rows_simple` too (`PIXELS_PER_BURST`,
   `BURSTS_IN_FLIGHT` gone); `read_patch_rows` is kept but unused. Not built: check hls.log for the
   inferred read bursts and compare the cycles a patch with the last runs.
+- 2026-11-06: `justounetsimple_opt` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"): 7 563 cycles a
+  patch (7 535-7 601), 20.12 ms, against 6 718 and 17.87 ms with the read-ahead reader: the simple
+  reader costs it 12.6 %, as predicted. 92.11 % against the labels (mIoU 0.853), as classify_fixed on the images checked.

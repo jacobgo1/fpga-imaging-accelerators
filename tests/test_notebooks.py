@@ -47,6 +47,7 @@ class FakeBuffer(np.ndarray if np is not None else object):
 
     def flush(self): pass
     def invalidate(self): pass
+    def freebuffer(self): pass
 
 
 class FakeKernel:
@@ -54,8 +55,9 @@ class FakeKernel:
     computes its n units with golden_forward, the optimized one the whole cube with
     fixed_scores. Allocations larger than max_bytes fail, as when PYNQ's CMA is short."""
 
-    def __init__(self, models, model, golden, regs, max_bytes=None):
+    def __init__(self, models, model, golden, regs, max_bytes=None, kernel=None):
         self.models, self.model, self.golden, self.regs, self.max_bytes = models, model, golden, regs, max_bytes
+        self.kernel = kernel   # the optimized kernel's name, for fixed_scores
         self.forward = models.golden_forward(model) if golden else None
         self.patch = models.MODELS[model]['patch']
         self.words, self.buffers, self.done, self.runs = {}, {}, False, []
@@ -105,7 +107,8 @@ class FakeKernel:
             dins = [name for name in self.regs if name.startswith('DIN')]
             assert len({self.address(d) for d in dins}) == 1, 'all input ports read the same cube'
             h, w = self.words[self.regs['HEIGHT_DATA']], self.words[self.regs['WIDTH_DATA']]
-            out = self.models.fixed_scores(self.model, self.view(self.address('DIN0_DATA'), (h, w, 120), np.uint16))
+            out = self.models.fixed_scores(self.model, self.view(self.address('DIN0_DATA'), (h, w, 120), np.uint16),
+                                           self.kernel)
             self.view(self.address('DOUT_DATA'), (h, w, 4), np.int32)[:] = out
             if 'CYCLES_DATA' in self.regs:
                 self.words[self.regs['CYCLES_DATA']] = CYCLES_PER_PIXEL * h * w
@@ -167,11 +170,13 @@ class NotebookTests(unittest.TestCase):
         shutil.copy2(ROOT / 'mu_sd.txt', board)
         return board
 
-    def run_notebook(self, notebook, board, kernel):
-        """Every code cell of the notebook, in order, with fake pynq and matplotlib."""
+    def run_notebook(self, notebook, board, kernel, overlays=None):
+        """Every code cell of the notebook, in order, with fake pynq and matplotlib. overlays:
+        a bitstream's path -> its kernel, for a notebook that loads several; kernel allocates."""
         overlay = types.SimpleNamespace(kernel=kernel)
         pynq = types.ModuleType('pynq')
-        pynq.Overlay = lambda path: overlay
+        pynq.Overlay = ((lambda path: types.SimpleNamespace(kernel=overlays(path))) if overlays
+                        else (lambda path: overlay))
         pynq.allocate = kernel.allocate
         pynq.Clocks = types.SimpleNamespace(fclk0_mhz=MHZ)
         pyplot = types.ModuleType('matplotlib.pyplot')
@@ -208,11 +213,12 @@ class NotebookTests(unittest.TestCase):
         kernel = FakeKernel(self.models, model, True, regs, max_bytes)
         return (*self.run_notebook(SHARED / 'classify_golden.ipynb', board, kernel), kernel, board)
 
-    def optimized(self, model, h=40, w=50, ports=4, counter=True, max_bytes=None, labels=True):
+    def optimized(self, model, h=40, w=50, ports=4, counter=True, max_bytes=None, labels=True, name=None):
         regs = {k: v for k, v in OPT_REGS.items()
                 if not (k.startswith('DIN') and int(k[3]) >= ports) and (counter or k != 'CYCLES_DATA')}
-        board = self.prepare(model, f'{model}_opt', regs, h, w, labels)
-        kernel = FakeKernel(self.models, model, False, regs, max_bytes)
+        name = name or f'{model}_opt'
+        board = self.prepare(model, name, regs, h, w, labels)
+        kernel = FakeKernel(self.models, model, False, regs, max_bytes, name)
         return (*self.run_notebook(SHARED / 'classify.ipynb', board, kernel), kernel, board)
 
     def assert_golden_answer(self, ns, model):
@@ -221,9 +227,9 @@ class NotebookTests(unittest.TestCase):
         np.testing.assert_allclose(ns['scores'], want, rtol=1e-5, atol=1e-5)
         np.testing.assert_array_equal(ns['classes'], ns['scores'].argmax(-1))
 
-    def assert_fixed_answer(self, ns, model):
+    def assert_fixed_answer(self, ns, model, kernel=None):
         """What the optimized kernel wrote, read back whole: the PC's fixed_scores for the cube."""
-        np.testing.assert_array_equal(ns['raw_scores'], self.models.fixed_scores(model, self.cube))
+        np.testing.assert_array_equal(ns['raw_scores'], self.models.fixed_scores(model, self.cube, kernel))
         np.testing.assert_array_equal(ns['classes'], ns['raw_scores'][..., 3])
 
     def assert_checked_against_the_labels(self, ns, printed):
@@ -283,6 +289,16 @@ class NotebookTests(unittest.TestCase):
                 self.assertTrue((board / f'aegean_unet_{model}_opt_fpga_scores.npy').is_file())
                 self.assert_checked_against_the_labels(ns, printed)
 
+    def test_optimized_notebook_classifies_a_uint8_kernel_bit_for_bit(self):
+        """sp_unet_small_opt_u8 shares the notebook; it answers with uint8 activations, not
+        what the int16 kernels answer."""
+        ns, printed, _, board = self.optimized('sp_unet_small', name='sp_unet_small_opt_u8')
+        self.assert_fixed_answer(ns, 'sp_unet_small', 'sp_unet_small_opt_u8')
+        self.assertFalse((ns['raw_scores'] == self.models.fixed_scores('sp_unet_small', self.cube)).all(),
+                         'the uint8 arithmetic is not the int16 one')
+        self.assertTrue((board / 'aegean_unet_sp_unet_small_opt_u8_fpga_scores.npy').is_file())
+        self.assert_checked_against_the_labels(ns, printed)
+
     def test_optimized_notebook_runs_a_board_version_without_the_counter(self):
         """The Zynq-7000 versions: fewer read ports, no cycles register."""
         ns, _, _, _ = self.optimized('waveletcnn', ports=2, counter=False)
@@ -314,6 +330,95 @@ class NotebookTests(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, 'no labels.npy'):
             self.run_notebook(SHARED / 'classify.ipynb', board, kernel)
         self.assertEqual(kernel.runs, [], 'stopped before the first start')
+
+    # ---- the benchmark notebook ----
+
+    def benchmark_board(self, models, h=20, w=24):
+        """The Jupyter folder: KERNEL_pynq/ for MODEL_opt of each of models, and the benchmark's
+        five images as zips. Returns (the folder, the fake kernels by name with the allocator
+        under None, each image's cube and labels)."""
+        top = self.dir / 'jupyter'
+        top.mkdir()
+        allocator = FakeKernel(self.models, models[0], False, OPT_REGS)
+        kernels = {None: allocator}
+        for model in models:
+            name = f'{model}_opt'
+            folder = top / f'{name}_pynq'
+            folder.mkdir()
+            (folder / f'{name}.bit').write_bytes(b'')
+            (folder / f'x{name}_hw.h').write_text(''.join(
+                f'#define X{name.upper()}_CONTROL_ADDR_{reg} 0x{offset:02x}\n' for reg, offset in OPT_REGS.items()))
+            (folder / 'kernel.json').write_text(json.dumps({'kernel': name, 'model': model, **self.models.MODELS[model]}))
+            kernels[name] = FakeKernel(self.models, model, False, OPT_REGS, kernel=name)
+            kernels[name].buffers = allocator.buffers     # one DDR: every kernel sees every buffer
+        images = {}
+        rng = np.random.default_rng(2)
+        for name in ('trondheim', 'hawkebay', 'lakealexandria', 'saldanha', 'maputo'):
+            cube = rng.integers(0, 4000, (h, w, 120)).astype(np.uint16)
+            labels = rng.integers(0, 4, (h, w)).astype(np.uint8)
+            with zipfile.ZipFile(top / f'{name}.zip', 'w') as z:
+                for file, array in (('cube.npy', cube), ('labels.npy', labels)):
+                    data = io.BytesIO()
+                    np.save(data, array)
+                    z.writestr(f'{name}/{file}', data.getvalue())
+                z.writestr(f'{name}/meta.json', json.dumps({'rgb_bands': [56, 67, 86]}))
+            images[name] = (cube, labels)
+        return top, kernels, images
+
+    def benchmark(self, top, kernels):
+        return self.run_notebook(SHARED / 'benchmark.ipynb', top, kernels[None],
+                                 overlays=lambda path: kernels[Path(path).stem])
+
+    def test_benchmark_notebook_runs_each_kernel_on_each_image_and_writes_the_report(self):
+        top, kernels, images = self.benchmark_board(['justounetsimple', 'spectralpointwise1d'])
+        ns, _ = self.benchmark(top, kernels)
+        self.assertEqual(ns['found'], ['justounetsimple_opt', 'spectralpointwise1d_opt'])
+        for name in ns['found']:
+            self.assertEqual(kernels[name].runs, [(20, 24)] * 5, 'each image once, whole')
+        self.assertEqual(len(ns['rows']), 10)
+        for row in ns['rows']:
+            with self.subTest(image=row['image'], kernel=row['kernel']):
+                self.assertIsNone(row['error'])
+                cube, labels = images[row['image']]
+                classes = self.models.fixed_scores(self.models.model_of(row['kernel']), cube, row['kernel'])[..., 3]
+                known = labels < 3
+                self.assertEqual(row['correct'], int((classes == labels)[known].sum()), "the kernel's own classes")
+                self.assertEqual(row['labelled'], int(known.sum()))
+                self.assertAlmostEqual(row['own_ms'], 1000 * CYCLES_PER_PIXEL * 20 * 24 / (MHZ * 1e6))
+        # The report: a line per kernel with its means, every run, the kernels not uploaded.
+        reports = sorted((top / 'benchmark_results').glob('benchmark_*.md'))
+        self.assertEqual(len(reports), 1)
+        report = reports[0].read_text()
+        self.assertEqual(report, ns['report'])
+        for s in ns['summary']:
+            runs = [r for r in ns['rows'] if r['kernel'] == s['kernel']]
+            pooled = sum(r['correct'] for r in runs) / sum(r['labelled'] for r in runs)
+            self.assertIn(f'| `{s["kernel"]}` | {MHZ:.1f} | 5 |', report)
+            self.assertIn(f'{pooled:.2%}', report)
+        self.assertIn(f'{CYCLES_PER_PIXEL * 20 * 24:.2f} a patch', report)   # 20 x 24 pixels: one patch
+        self.assertIn(f'{CYCLES_PER_PIXEL:.2f} a pixel', report)
+        self.assertIn('Skipped, no `KERNEL_pynq/KERNEL.bit`: `justoliunet_opt`', report)
+        with open(reports[0].with_suffix('.csv'), newline='') as f:
+            self.assertEqual(len(f.read().strip().splitlines()), 1 + 10, 'a header and every run')
+
+    def test_benchmark_notebook_goes_on_after_a_run_fails(self):
+        top, kernels, _ = self.benchmark_board(['waveletcnn', 'justoliunet'])
+        def broken(offset, value):
+            raise TimeoutError('kernel did not finish')
+        kernels['waveletcnn_opt'].write = broken
+        ns, _ = self.benchmark(top, kernels)
+        self.assertEqual([r['kernel'] for r in ns['rows'] if r['error']], ['waveletcnn_opt'] * 5)
+        self.assertEqual(kernels['justoliunet_opt'].runs, [(20, 24)] * 5)
+        self.assertEqual([s['kernel'] for s in ns['summary']], ['justoliunet_opt'])
+        self.assertIn('failed: TimeoutError', ns['report'])
+
+    def test_benchmark_notebook_lists_every_zcu104_kernel(self):
+        cell = next(''.join(c['source']) for c in json.loads((SHARED / 'benchmark.ipynb').read_text(encoding='utf-8'))['cells']
+                    if 'KERNELS = ' in ''.join(c['source']))
+        namespace = {}
+        exec(cell[cell.index('KERNELS = '):cell.index('# The images')], namespace)
+        self.assertEqual(sorted(namespace['KERNELS']),
+                         sorted(k for k in kernel_dirs() if k.endswith(('_opt', '_opt_u8'))))
 
     # ---- the table ----
 

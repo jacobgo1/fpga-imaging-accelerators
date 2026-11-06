@@ -43,6 +43,9 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
 | `sp_unet_medium_opt` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
 | `sp_unet_large_opt` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
+| `sp_unet_small_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | uint8 activations, every 3x3 conv two multiplies per DSP; **predicted** ~6 700 cycles a patch (DDR-bound; the convs 6 552), ~17.9 ms at 250 MHz, 1 347 DSPs; not built yet |
+| `sp_unet_medium_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 17 472 cycles a patch, 46.5 ms at 250 MHz, 1 297 DSPs; not built yet |
+| `sp_unet_large_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 34 944 cycles a patch, 93.1 ms at 250 MHz, 1 184 DSPs; not built yet |
 | `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
@@ -305,6 +308,90 @@ On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) 
 `K_opu.zip` with the generic `classify` program (`software/opu/classify.c`):
 `classify cube.npy scores.npy`, against the image's labels.
 
+## The uint8 kernels (`sp_unet_SIZE_opt_u8`)
+
+The direct kernels with every activation in uint8 instead of int16, so that every 3x3 conv takes
+two multiplies per DSP48E2 (`dsp_pack.hpp`), not only convsp1. The same chain, the same FIFO
+depths and storage (each FIFO and line buffer half as wide), the skip FIFO 2 048 deep in
+UltraRAM. Bit for bit `classify_fixed(..., fracs=act8_fracs(SIZE), act_max=U8_MAX)` in
+`tools/specpw_unet_model.py`, the same as the plain C++ loops of
+`tb/sp_unet_small_opt/specpw_unet_fixed_golden.hpp` with each layer's fraction bits
+(`tests/test_specpw_unet.py`). The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt_u8/`
+(`sp_unet_opt_u8_common.hpp`, shared), each size's table in its `.hpp`. Why uint8 costs so
+little accuracy: `docs/experiments/specpw_unet_8bit_activations.md`.
+
+| | `sp_unet_SIZE_opt` | `sp_unet_SIZE_opt_u8` |
+|---|---|---|
+| Activations | int16, 10 fraction bits in every layer | **uint8 (0 .. 255), each layer its own fraction bits**, fixed for every image |
+| 3x3 convs | `conv3x3_tiled`, one multiply per DSP: 9 x PI x PO DSPs | `conv3x3_tiled` with `PACKED`: output channels 2j and 2j + 1 share each activation, **9 x PI x PO / 2 DSPs**; a pair's 9 x PI products in groups of 4 (the last shorter), each group's sum split in two |
+| convsp1 | `pointwise_packed`, int16 out | the same, `activation::relu8`: uint8 out |
+| convsp2/3, final | `conv1x1`, int16 in | `conv1x1`, uint8 in (and out, but final's sums) |
+| final's rounding | 17 fraction bits to 16 (SHIFT 1) | 12 to 16: **SHIFT -4**, a shift left, exact (`round_shift`) |
+
+**The fraction bits.** Layer L's activation a means a x 2^-F(L). F(L) is the largest that fits
+the layer's largest float activation (int8 weights) on the calibration capture (saldanha,
+p100) in 255; up2.1 and the skip (double1.block.3) share one, for the concat. They are constants,
+the same for every image, generated once (`python tools/specpw_unet_act8.py --write`) into
+`src/models/SpecPW-UNet/specpw_unet_act8_fracs.hpp` (in git, so a build needs no capture; a test
+checks it is current when the capture is there). F is 4 to 8 (ranges 0 .. 15.9 down to
+0 .. 0.996). A new image whose activations go past a layer's range saturates at 255:
+`python tools/specpw_unet_act8.py --check` measures that on every capture (below).
+
+**Tables** (DSPs per packed conv: PO / 2 x PI x 9; cycles a patch (H x W + W + 1) x IN/PI x OUT/PO;
+at equal DSPs, PI with 9 x PI a multiple of 4, so the groups come out whole):
+
+| Layer (PI x PO) | small | medium | large |
+|---|---|---|---|
+| convsp1 (P1) | 4 096 (32) | 14 336 (8) | 14 336 (8) |
+| double1 a / b | 6 342 (12×2) / 6 342 (12×2) | 16 912 (3×6) / 16 912 (6×6) | 33 824 (8×2) / 33 824 (16×2) |
+| double2 a / b | **6 552** (6×2) / **6 552** (12×2) | **17 472** (3×6) / **17 472** (6×6) | **34 944** (8×2) / **34 944** (16×2) |
+| up1 | **6 552** (12×2) | **17 472** (6×6) | **34 944** (16×2) |
+| double3 a / b | **6 552** (6×2) / **6 552** (3×2) | **17 472** (3×6) / 13 104 (6×2) | **34 944** (8×2) / **34 944** (4×2) |
+| up2 | 6 342 (12×2) | 16 912 (6×6) | 33 824 (16×2) |
+| double4 a / b | 6 342 (8×4) / 4 228 (8×2) | 16 912 (6×6) / 12 684 (6×2) | 33 824 (16×2) / 33 824 (4×2) |
+| **T (convs)** | **6 552** | **17 472** | **34 944** |
+| DSPs (convs + convsp1 + convsp2/3) | 891 + 384 + 72 = **1 347** | 1 161 + 96 + 40 = **1 297** | 1 008 + 128 + 48 = **1 184** |
+| **predicted**, 666 x T at 250 MHz | **~17.9 ms** (DDR: ~6 700 cycles a patch) | **46.5 ms** | **93.1 ms** |
+| measured today (`_opt`, 250 MHz) | 26.23 ms | 93.12 ms | 186.22 ms |
+
+- **medium, large:** the same DSPs as `_opt` at half the cycles: about 2x. Large is `_opt`'s
+  table with PO 1 → 2; its next faster table (33 824) would need 1 652 DSPs.
+- **small is DDR-bound:** 245 760 bytes a patch at the ~9.2 GB/s the four ports get
+  (justounetsimple_opt, measured) is ~26.7 us, ~6 700 cycles at 250 MHz; the convs are sized just
+  under that (6 552) and convsp1 at 32 bands (4 096). So ~1.47x, not 2x.
+- **Weight memories** are wider: a packed weight is 27 bits for two (16 unpacked), so a step's
+  word is ~1.7x wider. Estimated (not from a report): large ~176 BRAM36 (today ~52), small and
+  medium ~24 k and ~31 k LUTs as LUTRAM (today ~10 k and ~5 k + 60 BRAM36). Within the ZU7EV
+  (312 BRAM36, 230 k LUTs); to check in the csynth/route reports.
+- Every prediction is the performance model above; none is built. On the build, check: the
+  DSP count (convs as the table: 891 / 1 161 / 1 008, and the Bind Op Report's `mul` on DSPs,
+  one per packed product), Final II = 1 on every conv, and the cycles a patch with cosim.
+
+**Testbench.** `tb/sp_unet_SIZE_opt_u8/` with the shared `sp_unet_opt_check.hpp`
+(`check_kernel_u8`): every output bit for bit against the plain-loop uint8 reference, on z-scores
+-4 .. 4 (which saturate ~1 500 activations, so the clipping at 255 is checked too), and again on
+-1 .. 1, where none saturate, with every score within 0.25 of the float golden kernel (worst
+0.19 / 0.15 / 0.12). The packed conv on its own, with the worst-case weights (-128, 127) that
+the networks never come near: `tests/test_conv3x3_packed.py`. Mutation-tested: swapping a pair's
+channels, groups of 8, the borrow in the split, the padding, one layer's input fraction bits,
+the final left shift, saturating at 127 and dropping the last short group each fail.
+
+**Accuracy** (the bit-exact models, whole captures against their labels, measured 2026-11-06 with
+`python tools/specpw_unet_act8.py --check`; the int16 column is what the `_opt` boards measured).
+The run stopped (the laptop ran out of memory) after these rows; maputo, saldanha, trondheim
+and lakeAlexandria/large are still to do:
+
+| Capture | Size | int16 | uint8 | difference | same class as int16 | saturated |
+|---|---|---|---|---|---|---|
+| aegantsea1 | small | 97.48 % | 97.48 % | +0.00 pp | 99.92 % | 0.0000 % |
+| aegantsea1 | medium | 97.32 % | 97.30 % | -0.02 pp | 99.91 % | 0.0000 % |
+| aegantsea1 | large | 97.55 % | 97.54 % | -0.01 pp | 99.93 % | 0.0000 % |
+| hawkebay | small | 95.93 % | 95.92 % | -0.01 pp | 99.85 % | 0.0000 % |
+| hawkebay | medium | 96.02 % | 96.01 % | -0.01 pp | 99.86 % | 0.0000 % |
+| hawkebay | large | 96.23 % | 96.21 % | -0.02 pp | 99.87 % | 0.0000 % |
+| lakeAlexandria | small | 95.45 % | 95.44 % | -0.00 pp | 99.90 % | 0.0000 % |
+| lakeAlexandria | medium | 96.12 % | 96.11 % | -0.01 pp | 99.89 % | 0.0000 % |
+
 ## Integer formats (the bit-exact model)
 
 | Value | Format |
@@ -312,7 +399,7 @@ On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) 
 | input | z-score × 2^5, int8, saturated at ±127 (justounetsimple_opt's integer z-score) |
 | weights, biases | int8, a power-of-two scale per tensor |
 | sums | exact; at most 2^23.7 on the aegean pixels, so int32 holds them |
-| activations | int16 with 10 fraction bits (up to 32.0), ReLU, rounded half up, saturated; the largest on the aegean pixels is 9.1 |
+| activations | int16 with 10 fraction bits (up to 32.0), ReLU, rounded half up, saturated; the largest on the aegean pixels is 9.1. The `_u8` kernels: uint8, each layer its own fraction bits (4-8), saturated at 255 |
 | scores | int32 with 16 fraction bits |
 
 Fixed point gives the same class as the int8-weight float model on 99.85 / 99.85 / 99.94 % of
@@ -537,3 +624,15 @@ Routed, kernel alone (without the interconnects); by process in
   read-ahead `burst_maxi` reader) is kept but unused. Each row now waits for DDR's first word: on
   `justounetsimple_opt` that cost 17.87 → 20 ms. Not built: check hls.log for the inferred read
   bursts (no "could not be inferred") and compare the cycles a patch with the last run.
+- 2026-11-06: the three ZCU104 kernels with `read_patch_rows_simple` at 250 MHz on five other images
+  (`benchmark.ipynb`, speed_zcu104.md "Five images"): 9 856 / 34 994 / 69 976 cycles a patch (small / medium / large), against 9 859 / 35 006 /
+  70 007 before: the simple reader costs them nothing. 93.70 / 93.81 / 93.89 % against the labels,
+  as classify_fixed on the images checked.
+- 2026-11-06: `sp_unet_small_opt_u8`, `sp_unet_medium_opt_u8`, `sp_unet_large_opt_u8` (ZCU104): uint8
+  activations with each layer's fixed fraction bits (`specpw_unet_act8_fracs.hpp`, from
+  `tools/specpw_unet_act8.py --write`), every 3x3 conv two multiplies per DSP (`conv3x3_tiled`'s new
+  `PACKED` mode), the tables above: **predicted** T = 6 552 (DDR ~6 700) / 17 472 / 34 944 cycles a
+  patch, 1 347 / 1 297 / 1 184 DSPs. Bit-exact against the uint8 model (native); not built. The
+  `_opt` kernels are unchanged (bit-exact, native); the shared modules (`max_pool`, `upsample`,
+  `duplicate`, `concat_pixels`) take the element type, `pointwise_packed` its activation, and
+  `round_shift` a negative shift.

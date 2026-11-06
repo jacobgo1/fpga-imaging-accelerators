@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include "../../src/models/SpecPW-UNet/specpw_unet.hpp"   // the sizes and layers
 
@@ -9,8 +11,11 @@
 // tools/specpw_unet_model.py. Not for HLS.
 //  - din: the z-scores with in_frac fraction bits, int8 values;
 //  - each conv sums exactly in int64, its bias shifted up to the sum's fraction
-//    bits; then it rounds half up to act_frac, ReLU, saturates at act_max;
+//    bits; then it rounds half up to its layer's fraction bits, ReLU, saturates
+//    at act_max;
 //  - the final 1x1 conv rounds to out_frac, no ReLU: the int32 scores.
+// The int16 kernels give every layer act_frac (and act_max 32767); the uint8 ones
+// (sp_unet_SIZE_opt_u8) each layer its own, from specpw_unet_act8_fracs.hpp, and 255.
 
 // One conv's int8 weights and bias, value = q * 2^-frac.
 template<int OUT_CHANNELS, int IN_CHANNELS, int KERNEL>
@@ -102,15 +107,35 @@ void conv2d_same_fixed_golden(const int32_t din[HEIGHT][WIDTH][IN_CHANNELS],
             }
 }
 
+// Each layer's activations' fraction bits (the skip is double1_conv2's).
+struct specpw_unet_fracs_golden {
+    int convsp1, convsp2, convsp3, double1_conv1, double1_conv2, double2_conv1, double2_conv2,
+        up1, double3_conv1, double3_conv2, up2, double4_conv1, double4_conv2;
+};
+
+inline specpw_unet_fracs_golden specpw_unet_same_fracs_golden(int act_frac) {
+    const int a = act_frac;
+    return {a, a, a, a, a, a, a, a, a, a, a, a, a};
+}
+
+// From a namespace of specpw_unet_act8_fracs.hpp.
+#define SPECPW_UNET_FRACS_GOLDEN(ns) specpw_unet_fracs_golden{ \
+    ns::convsp1, ns::convsp2, ns::convsp3, ns::double1_block_0, ns::double1_block_3, ns::double2_block_0, \
+    ns::double2_block_3, ns::up1_1, ns::double3_block_0, ns::double3_block_3, ns::up2_1, ns::double4_block_0, \
+    ns::double4_block_3}
+
 template<int HEIGHT, int WIDTH, int BANDS, int CLASSES, typename Size>
 void specpw_unet_fixed_golden(const int32_t din[HEIGHT][WIDTH][BANDS],
                               const specpw_unet_quantized_params_golden<BANDS, CLASSES, Size> &params,
-                              int in_frac, int act_frac, int out_frac, int32_t act_max,
+                              int in_frac, const specpw_unet_fracs_golden &f, int out_frac, int32_t act_max,
                               int32_t dout[HEIGHT][WIDTH][CLASSES]) {
     constexpr int S1 = Size::STEM1, S2 = Size::STEM2, S3 = Size::STEM3;
     constexpr int D1 = Size::DOUBLE1, D2 = Size::DOUBLE2, D3 = Size::DOUBLE3, D4 = Size::DOUBLE4;
     constexpr int HALF_H = HEIGHT / 2, HALF_W = WIDTH / 2, QUARTER_H = HEIGHT / 4, QUARTER_W = WIDTH / 4;
-    const int act = act_frac;
+    if (f.up2 != f.double1_conv2) {   // the concat needs one scale
+        std::fprintf(stderr, "specpw_unet_fixed_golden: up2 and the skip have different fraction bits\n");
+        std::abort();
+    }
 
     static int32_t stem1[HEIGHT][WIDTH][S1], stem2[HEIGHT][WIDTH][S2], stem3[HEIGHT][WIDTH][S3];
     static int32_t double1_first[HEIGHT][WIDTH][D1], skip[HEIGHT][WIDTH][D1], pooled1[HALF_H][HALF_W][D1];
@@ -120,26 +145,36 @@ void specpw_unet_fixed_golden(const int32_t din[HEIGHT][WIDTH][BANDS],
     static int32_t up2_input[HEIGHT][WIDTH][D3], up2[HEIGHT][WIDTH][D3], joined[HEIGHT][WIDTH][D3 + D1];
     static int32_t double4_first[HEIGHT][WIDTH][D4], double4[HEIGHT][WIDTH][D4];
 
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, BANDS, S1, 1, true>(din, params.convsp1, in_frac, act, act_max, stem1);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, S1, S2, 1, true>(stem1, params.convsp2, act, act, act_max, stem2);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, S2, S3, 1, true>(stem2, params.convsp3, act, act, act_max, stem3);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, BANDS, S1, 1, true>(din, params.convsp1, in_frac, f.convsp1, act_max, stem1);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S1, S2, 1, true>(stem1, params.convsp2, f.convsp1, f.convsp2, act_max, stem2);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S2, S3, 1, true>(stem2, params.convsp3, f.convsp2, f.convsp3, act_max, stem3);
 
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, S3, D1, 3, true>(stem3, params.double1_conv1, act, act, act_max, double1_first);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, D1, D1, 3, true>(double1_first, params.double1_conv2, act, act, act_max, skip);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, S3, D1, 3, true>(stem3, params.double1_conv1, f.convsp3, f.double1_conv1, act_max, double1_first);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D1, D1, 3, true>(double1_first, params.double1_conv2, f.double1_conv1, f.double1_conv2, act_max, skip);
     golden::maxpool2d<HEIGHT, WIDTH, D1>(skip, pooled1);
-    conv2d_same_fixed_golden<HALF_H, HALF_W, D1, D2, 3, true>(pooled1, params.double2_conv1, act, act, act_max, double2_first);
-    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(double2_first, params.double2_conv2, act, act, act_max, double2);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D1, D2, 3, true>(pooled1, params.double2_conv1, f.double1_conv2, f.double2_conv1, act_max, double2_first);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(double2_first, params.double2_conv2, f.double2_conv1, f.double2_conv2, act_max, double2);
     golden::maxpool2d<HALF_H, HALF_W, D2>(double2, pooled2);
 
     golden::upsample2d<QUARTER_H, QUARTER_W, D2>(pooled2, up1_input);
-    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(up1_input, params.up1, act, act, act_max, up1);
-    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D3, 3, true>(up1, params.double3_conv1, act, act, act_max, double3_first);
-    conv2d_same_fixed_golden<HALF_H, HALF_W, D3, D3, 3, true>(double3_first, params.double3_conv2, act, act, act_max, double3);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D2, 3, true>(up1_input, params.up1, f.double2_conv2, f.up1, act_max, up1);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D2, D3, 3, true>(up1, params.double3_conv1, f.up1, f.double3_conv1, act_max, double3_first);
+    conv2d_same_fixed_golden<HALF_H, HALF_W, D3, D3, 3, true>(double3_first, params.double3_conv2, f.double3_conv1, f.double3_conv2, act_max, double3);
     golden::upsample2d<HALF_H, HALF_W, D3>(double3, up2_input);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3, D3, 3, true>(up2_input, params.up2, act, act, act_max, up2);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3, D3, 3, true>(up2_input, params.up2, f.double3_conv2, f.up2, act_max, up2);
 
     golden::concat<HEIGHT, WIDTH, D3, D1>(up2, skip, joined);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3 + D1, D4, 3, true>(joined, params.double4_conv1, act, act, act_max, double4_first);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, D4, 3, true>(double4_first, params.double4_conv2, act, act, act_max, double4);
-    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, CLASSES, 1, false>(double4, params.final_conv, act, out_frac, act_max, dout);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D3 + D1, D4, 3, true>(joined, params.double4_conv1, f.up2, f.double4_conv1, act_max, double4_first);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, D4, 3, true>(double4_first, params.double4_conv2, f.double4_conv1, f.double4_conv2, act_max, double4);
+    conv2d_same_fixed_golden<HEIGHT, WIDTH, D4, CLASSES, 1, false>(double4, params.final_conv, f.double4_conv2, out_frac, act_max, dout);
+}
+
+// Every layer with act_frac fraction bits: the int16 kernels.
+template<int HEIGHT, int WIDTH, int BANDS, int CLASSES, typename Size>
+void specpw_unet_fixed_golden(const int32_t din[HEIGHT][WIDTH][BANDS],
+                              const specpw_unet_quantized_params_golden<BANDS, CLASSES, Size> &params,
+                              int in_frac, int act_frac, int out_frac, int32_t act_max,
+                              int32_t dout[HEIGHT][WIDTH][CLASSES]) {
+    specpw_unet_fixed_golden<HEIGHT, WIDTH, BANDS, CLASSES, Size>(
+        din, params, in_frac, specpw_unet_same_fracs_golden(act_frac), out_frac, act_max, dout);
 }

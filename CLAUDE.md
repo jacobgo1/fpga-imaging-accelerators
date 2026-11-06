@@ -49,7 +49,9 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
 boards/B/system.tcl  one block design per board, shared by every kernel
 software/pynq/        the board notebooks every model shares: classify_golden.ipynb (golden
-                     kernels), classify.ipynb (optimized); main.py packs one with kernel.json
+                     kernels), classify.ipynb (optimized); main.py packs one with kernel.json.
+                     benchmark.ipynb, uploaded on its own to the top of the Jupyter folder: every
+                     ZCU104 optimized kernel (from its KERNEL_pynq/) on five images, one report
 software/opu/        classify.c: the C program every optimized kernel runs on the OPU system's
                      PetaLinux (no PYNQ); main.py builds it with the kernel's registers
 tools/               weights, numpy reference models, image preparation (tools/README.md)
@@ -92,6 +94,12 @@ measured 26.2 ms at 250 MHz; the design in src/models/SpecPW-UNet/Small/sp_unet_
 the chain and each size's table of PI x PO per layer in its .cpp; one testbench check,
 tb/sp_unet_small_opt/sp_unet_opt_check.hpp; a Winograd version was removed
 2026-10-31, see sp_unet.md),
+`sp_unet_small_opt_u8`, `_medium_opt_u8`, `_large_opt_u8` (the same, ZCU104, every activation uint8
+with each layer's own fixed fraction bits (src/models/SpecPW-UNet/specpw_unet_act8_fracs.hpp, generated
+in git by `python tools/specpw_unet_act8.py --write`, calibrated once on saldanha), so every 3x3 conv
+takes two multiplies per DSP (conv3x3_tiled's PACKED mode); bit for bit classify_fixed with
+act8_fracs; predicted T = 6 552 (DDR-bound, ~6 700) / 17 472 / 34 944 cycles a patch, 1 347 / 1 297 /
+1 184 DSPs; tools/models.py's fixed_scores takes the kernel's name for them),
 `sp_unet_small_opt_zynq7020` (the direct kernel for the 7020; medium and large do not
 fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_tiled_ram), a tap or a window column a step, their ReLU inside, one 64-bit read
@@ -192,6 +200,9 @@ those are the user's, on the lab server, every time.
 - Generated files must stay in sync:
   - `src/optimized/zscore_int8.hpp` (the 2D kernels' integer z-score) comes from
     `python tools/preprocessing.py`, and a test checks it;
+  - `src/models/SpecPW-UNet/specpw_unet_act8_fracs.hpp` (the uint8 kernels' fraction bits) comes
+    from `python tools/specpw_unet_act8.py --write`, and a test checks it when the saldanha
+    capture is there;
   - `weights/quantized/` comes from `quantize_weights.py` and is not in git.
 
 ## Working with the user

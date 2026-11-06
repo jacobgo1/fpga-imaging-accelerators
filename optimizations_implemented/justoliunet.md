@@ -207,3 +207,6 @@ Routed, kernel alone (without the interconnects); by process in
   72 cycles a pixel (was 74: conv3 filled 2). Not built: check csynth's Final II = 1 for each
   `conv1d` and windows process, the cycles a pixel in cosim, DSPs unchanged (1 304 / 378 / 216), and
   the LUTs/FFs of the new windows FIFOs (on the 7020: three 36-108-byte windows a FIFO).
+- 2026-11-06: `justoliunet_opt` with `conv1d` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"): 18.00 cycles
+  a pixel, 47.02 ms, as before: the merged conv costs the ZCU104 nothing. 90.82 % against the labels
+  (79.50 % on saldanha), as classify_fixed on the images checked. The 7030 and ZedBoard versions are not measured yet.

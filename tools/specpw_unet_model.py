@@ -24,6 +24,10 @@ classify_fixed       a raw cube -> int32 scores, with justounetsimple_opt's inte
                      z-score (preprocessing.preprocess_fixed)
 kernel_reference     a raw cube -> what sp_unet_SIZE_opt writes (H x W x 4 int32)
 
+The same with uint8 activations (sp_unet_SIZE_opt_u8): fracs=act8_fracs(size),
+act_max=U8_MAX. Each layer then has its own fraction bits, fixed for every image, chosen
+once by python tools/specpw_unet_act8.py --write (src/models/SpecPW-UNet/specpw_unet_act8_fracs.hpp).
+
     python tools/specpw_unet_model.py                    # each size on the aegean pixels
 
 classify and kernel_reference are what each golden and each optimized kernel answers
@@ -63,6 +67,17 @@ LAYERS = ('convsp1', 'convsp2', 'convsp3', 'double1.block.0', 'double1.block.3',
 # (adds half, shifts right) to the next layer's.
 IN_FRAC, ACT_FRAC, OUT_FRAC = preprocessing.IN_FRAC, 10, 16
 ACT_MAX = 32767
+# uint8 activations (the _u8 kernels): saturated at 255, each layer with its own fraction
+# bits (act8_fracs). A layer's sum has its input's fraction bits plus its weights'.
+U8_MAX = 255
+ACT8_FRACS = ROOT / 'src/models/SpecPW-UNet/specpw_unet_act8_fracs.hpp'
+# The layer whose activations each layer takes (double4.block.0: up2.1 and the skip,
+# which share their fraction bits).
+INPUT_OF = {'convsp2': 'convsp1', 'convsp3': 'convsp2', 'double1.block.0': 'convsp3',
+            'double1.block.3': 'double1.block.0', 'double2.block.0': 'double1.block.3',
+            'double2.block.3': 'double2.block.0', 'up1.1': 'double2.block.3',
+            'double3.block.0': 'up1.1', 'double3.block.3': 'double3.block.0', 'up2.1': 'double3.block.3',
+            'double4.block.0': 'up2.1', 'double4.block.3': 'double4.block.0', 'final': 'double4.block.3'}
 
 
 def name(size):
@@ -209,40 +224,65 @@ def _conv_fixed(x, qlayer, in_frac):
     return _conv(x.astype(np.int64), w) + (b << (sum_frac - bf)), sum_frac
 
 
-def forward_patch_fixed(xq, qlayers, stats=None, act_max=ACT_MAX):
+def int16_fracs():
+    """Every layer's activations with ACT_FRAC fraction bits: the int16 kernels (sp_unet_SIZE_opt)."""
+    return {layer: ACT_FRAC for layer in LAYERS if layer != 'final'}
+
+
+def act8_fracs(size):
+    """{layer: fraction bits} of the uint8 kernels (sp_unet_SIZE_opt_u8), from ACT8_FRACS."""
+    import re
+    text = ACT8_FRACS.read_text()
+    block = re.search(r'namespace specpw_unet_act8_%s \{(.*?)\}' % size, text, re.S)
+    if block is None:
+        raise ValueError(f'{ACT8_FRACS.name} has no fractions for {size}: python tools/specpw_unet_act8.py --write')
+    values = dict(re.findall(r'constexpr int (\w+) = (\d+);', block.group(1)))
+    return {layer: int(values[layer.replace('.', '_')]) for layer in LAYERS if layer != 'final'}
+
+
+def input_frac(layer, fracs):
+    """The fraction bits of the activations layer takes."""
+    return IN_FRAC if layer == 'convsp1' else fracs[INPUT_OF[layer]]
+
+
+def forward_patch_fixed(xq, qlayers, stats=None, act_max=ACT_MAX, fracs=None):
     """One H x W x 110 int8 patch (z-score * 2^IN_FRAC) -> H x W x 3 int32 scores
-    (score * 2^OUT_FRAC). stats, a dict, gets the largest |sum| and how many activations
-    saturated; act_max lower than int16's only to test the saturation."""
-    in_frac = {'convsp1': IN_FRAC}
+    (score * 2^OUT_FRAC). fracs: each layer's activations' fraction bits (int16_fracs by
+    default; act8_fracs with act_max=U8_MAX for the uint8 kernels). stats, a dict, gets the
+    largest |sum| and how many activations saturated."""
+    fracs = fracs if fracs is not None else int16_fracs()
+    if fracs['up2.1'] != fracs['double1.block.3']:
+        raise ValueError('up2.1 and the skip (double1.block.3) are concatenated: they need one scale')
 
     def track(s):
         if stats is not None:
             stats['max_sum'] = max(stats.get('max_sum', 0), int(np.abs(s).max()))
 
     def conv_relu(x, layer):
-        s, sum_frac = _conv_fixed(x, qlayers[layer], in_frac.get(layer, ACT_FRAC))
+        s, sum_frac = _conv_fixed(x, qlayers[layer], input_frac(layer, fracs))
         track(s)
-        y = np.maximum(_round_shift(s, sum_frac - ACT_FRAC), 0)
+        y = np.maximum(_round_shift(s, sum_frac - fracs[layer]), 0)
         if stats is not None:
             stats['saturated'] = stats.get('saturated', 0) + int((y > act_max).sum())
         return np.minimum(y, act_max)
 
     def final(x):
-        s, sum_frac = _conv_fixed(x, qlayers['final'], ACT_FRAC)
+        s, sum_frac = _conv_fixed(x, qlayers['final'], input_frac('final', fracs))
         track(s)
         return _round_shift(s, sum_frac - OUT_FRAC).astype(np.int32)
 
     return _network(np.asarray(xq, dtype=np.int64), conv_relu, final)
 
 
-def classify_fixed(cube, qlayers, prep=None):
+def classify_fixed(cube, qlayers, prep=None, fracs=None, act_max=ACT_MAX):
     """Raw cube (H x W x 120 integers) -> H x W x 3 int32 scores (score * 2^OUT_FRAC): the
-    integer z-score, then 32 x 32 patches as in classify."""
+    integer z-score, then 32 x 32 patches as in classify. fracs, act_max: as in
+    forward_patch_fixed."""
     prep = prep if prep is not None else preprocessing.prep_constants()
     scores = np.zeros(cube.shape[:2] + (3,), dtype=np.int32)
     for patch, tile in patching.iter_patches(cube, PATCH, pad_mode='edge'):
         xq = preprocessing.preprocess_fixed(patch, prep)
-        patching.place(scores, forward_patch_fixed(xq, qlayers), tile, PATCH)
+        patching.place(scores, forward_patch_fixed(xq, qlayers, act_max=act_max, fracs=fracs), tile, PATCH)
     return scores
 
 
@@ -264,10 +304,11 @@ def aegean_raw():
     return raw[:72, :136], labels[:72, :136]
 
 
-def kernel_reference(cube, qlayers, prep=None):
-    """What sp_unet_SIZE_opt writes for a raw cube: H x W x 4 int32, the scores * 2^OUT_FRAC,
-    then the class (their argmax, the first one on a tie)."""
-    return justounetsimple_model.with_class(classify_fixed(cube, qlayers, prep))
+def kernel_reference(cube, qlayers, prep=None, fracs=None, act_max=ACT_MAX):
+    """What sp_unet_SIZE_opt writes for a raw cube (sp_unet_SIZE_opt_u8 with act8_fracs and
+    U8_MAX): H x W x 4 int32, the scores * 2^OUT_FRAC, then the class (their argmax, the
+    first one on a tie)."""
+    return justounetsimple_model.with_class(classify_fixed(cube, qlayers, prep, fracs, act_max))
 
 
 def main():

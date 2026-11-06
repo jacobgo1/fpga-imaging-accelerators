@@ -213,8 +213,62 @@ cycles and about the same time.
   (18.84 ms), waveletcnn_opt (23.04 ms), sp_unet_small_opt (27.28 ms), justoliunet_opt /
   _bn_opt (48.1 ms). Each wall clock is 0.9-1.1 ms over the kernel's count.
 
+## Five images, 250 MHz (2026-11-06)
+
+Every kernel on five other captures (trondheim, hawkebay, lakealexandria, saldanha, maputo, each
+598 × 1092 and labelled throughout), from `software/pynq/benchmark.ipynb`, one start an image.
+Builds of 2026-11-04 (the `simple-reader` branch: every 2D kernel reads with
+`read_patch_rows_simple`, the 1D convs are `conv1d`). The board's count of correct pixels is the
+PC's `classify_fixed` count exactly on the 13 runs checked (every kernel on trondheim, five on
+hawkebay; the check of the rest stopped, the laptop short of memory). Times are the mean over the images.
+
+| Kernel | Cycles (own count) | FPGA, own count | Wall clock | Before (aegean, 2026-11-01) |
+|---|---|---|---|---|
+| `justounetsimple_opt` | 7 563 a patch (7 535-7 601) | **20.12 ms** | 20.52 ms | 6 718 a patch, 17.87 ms: **+12.6 %, the simple reader** |
+| `justoliunet_opt` | 18.00 a pixel | **47.02 ms** | 47.42 ms | the same: `conv1d` costs nothing |
+| `justoliunet_bn_opt` | 18.00 a pixel | **47.02 ms** | 47.34 ms | the same |
+| `sp_unet_small_opt` | 9 856 a patch | **26.22 ms** | 26.57 ms | 9 859: the simple reader costs nothing |
+| `sp_unet_medium_opt` | 34 994 a patch | **93.09 ms** | 93.55 ms | 35 006 |
+| `sp_unet_large_opt` | 69 976 a patch | **186.14 ms** | 186.63 ms | 70 007 |
+| `spectralpointwise1d_opt` | 4.66 a pixel (4.62-4.69) | **12.16 ms** | 12.54 ms | 4.60-4.68: DDR-bound, as before |
+| `waveletcnn_opt` | 8 219 a patch (8 213-8 227) | **21.86 ms** | 22.26 ms | 8 238: 19 cycles fewer |
+
+- **The simple reader costs only `justounetsimple_opt`:** 12.6 % (8.1 GB/s for its four ports, from
+  9.1), as predicted on 2026-11-03 (~20 ms). It is the one kernel held by its reads, and its time
+  varies with the image (7 535-7 601 cycles a patch), as DDR's does. The logic-bound kernels read
+  the same way at no cost: sp_unet and waveletcnn_opt take a few cycles fewer than with the
+  read-ahead reader.
+- **`conv1d` keeps the ZCU104 at 18.00 cycles a pixel**, the same as `conv1d_map`.
+- **The wall clock is 0.3-0.5 ms over the kernel's count:** the notebook's own path (register
+  writes, polling, invalidating the scores) without the float conversion `classify.ipynb` does.
+
+| Kernel | Accuracy (5 × 653 016 pixels) | IoU cloud | IoU land | IoU sea | mIoU | trondheim / hawkebay / lakealexandria / saldanha / maputo | aegean |
+|---|---|---|---|---|---|---|---|
+| `spectralpointwise1d_opt` | **93.93 %** | 0.845 | 0.918 | 0.889 | **0.884** | 93.69 / 95.89 / 96.45 / 89.59 / 94.01 | 97.32 % |
+| `sp_unet_large_opt` | 93.89 % | 0.844 | 0.922 | 0.884 | 0.883 | 95.89 / 96.23 / 95.25 / 87.52 / 94.55 | 97.55 % |
+| `sp_unet_medium_opt` | 93.81 % | 0.845 | 0.918 | 0.883 | 0.882 | 94.92 / 96.02 / 96.12 / 87.73 / 94.28 | 97.32 % |
+| `waveletcnn_opt` | 93.72 % | 0.832 | 0.915 | 0.892 | 0.880 | 94.32 / 95.77 / 95.20 / 88.66 / 94.63 | 97.22 % |
+| `sp_unet_small_opt` | 93.70 % | 0.840 | 0.917 | 0.882 | 0.880 | 95.32 / 95.93 / 95.45 / 87.51 / 94.30 | 97.48 % |
+| `justoliunet_bn_opt` | 92.90 % | 0.818 | 0.909 | 0.871 | 0.866 | 92.92 / 95.88 / 95.99 / 86.11 / 93.63 | 96.46 % |
+| `justounetsimple_opt` | 92.11 % | 0.811 | 0.881 | 0.866 | 0.853 | 93.94 / 91.92 / 95.33 / 89.07 / 90.32 | 96.20 % |
+| `justoliunet_opt` | 90.82 % | 0.766 | 0.890 | 0.833 | 0.830 | 92.79 / 94.84 / 93.60 / 79.50 / 93.39 | 97.00 % |
+
+- **Every model is 3.3-6.2 points below its aegean score**, and saldanha is the hardest image for
+  all of them (79.5-89.6 %). The five newer models stay within 0.23 points of each other.
+- **spectralpointwise1d_opt is the most accurate here and the fastest:** 93.93 % in 12.2 ms, where
+  sp_unet_large_opt needs 186 ms for 93.89 %. On aegean it was 0.23 points behind sp_unet_large.
+- **justoliunet_opt falls the most** (97.00 → 90.82 %, 79.50 % on saldanha). Its BatchNorm version
+  holds better (92.90 %): on aegean the order of the two was the other way round.
+- The two accuracy columns of the notebook's report agree, as every image is the same size and
+  labelled throughout.
+
 ## Changes
 
+- 2026-11-06: every kernel on five images at 250 MHz (`benchmark.ipynb`), builds of 2026-11-04:
+  the simple reader costs `justounetsimple_opt` 12.6 % (20.12 ms) and no other kernel anything;
+  `conv1d` keeps justoliunet at 18.00 cycles a pixel. Accuracy 90.82-93.93 % on these images,
+  spectralpointwise1d_opt the most accurate; the 13 runs checked against the PC's classify_fixed
+  give its count of correct pixels exactly.
 - 2026-10-30: 214 MHz runs of `justounetsimple_opt`, `justoliunet_opt` and `justoliunet_bn_opt`;
   the sp_unet direct kernels' 214 MHz runs from `sp_unet.md`.
 - 2026-10-30: routed utilization of the three 214 MHz builds.

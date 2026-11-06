@@ -170,14 +170,15 @@ take the same way:
   no process waits for another;
 - the multiplier: `DSP` (a DSP or LUTs, `mul<DSP>`), or two products per DSP (`dsp_pack.hpp`,
   `DSP_PACK_SHIFT` the chip's spacing). Packing needs two outputs sharing an 8-bit
-  activation: in the 2D networks only the first layer has that (int8 z-scores; later
-  activations are int16), in the 1D networks every layer (uint8);
+  activation: in the 2D networks the first layer has that (int8 z-scores; later
+  activations are int16, but every layer in the sp_unet_SIZE_opt_u8 kernels, uint8), in the
+  1D networks every layer (uint8);
 - the activation: `activation::none` (sums, for a head), `relu`, `relu8`, `leaky`,
   `leaky_scores`, inside the conv's own process (`fixed_point.hpp`).
 
 | Module | Window and input order | Why it is its own module |
 | --- | --- | --- |
-| `conv3x3_tiled` | 3×3, window in registers; a pixel with all its channels at a time | the general 3×3 (`IN_PER_CYCLE = IN_CHANNELS` for a small layer) |
+| `conv3x3_tiled` | 3×3, window in registers; a pixel with all its channels at a time | the general 3×3 (`IN_PER_CYCLE = IN_CHANNELS` for a small layer); `PACKED` on uint8 inputs: two output channels per DSP |
 | `conv3x3_tiled_ram` | 3×3, window in three row memories | the Zynq-7020 has too few flip-flops for the window registers; a memory gives one column a step, so it cannot replace tiled's 9 taps a cycle |
 | `conv3x3_2mul` | 3×3 on the raw bands: a patch's bands in chunks, the sums held per pixel | a 112-channel pixel would need a line buffer far too wide; the 2D layer that can pack |
 | `conv1x1` | a pixel with all its channels at a time (2D patches or 1D lanes, `patch_pixels` / `pixel_lane`) | the general 1×1, every head |

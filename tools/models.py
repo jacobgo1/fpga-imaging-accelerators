@@ -9,7 +9,9 @@ share software/pynq/classify_golden.ipynb, the optimized ones classify.ipynb.
 The board is checked against the image's labels only. The PC's answers, for the tests
 (tests/test_notebooks.py): golden_scores, what the golden kernel answers (float32
 H x W x 3), and fixed_scores, what every optimized kernel writes, bit for bit (int32
-H x W x 4: the scores * 2^out_frac, then the class).
+H x W x 4: the scores * 2^out_frac, then the class). Every optimized kernel of a model gives
+the same answers, except sp_unet_SIZE_opt_u8 (uint8 activations): fixed_scores takes the
+kernel's name for those.
 
 The table needs nothing but Python (main.py reads it); the answers need numpy.
 """
@@ -87,9 +89,14 @@ def golden_scores(model, cube):
     return scores
 
 
-def fixed_scores(model, cube):
+def uint8_activations(kernel):
+    """Whether the kernel keeps its activations in uint8 (sp_unet_SIZE_opt_u8), not int16."""
+    return kernel is not None and kernel.startswith('sp_unet_') and kernel.endswith('_u8')
+
+
+def fixed_scores(model, cube, kernel=None):
     """Raw cube (H x W x 120 integers) -> H x W x 4 int32: what every optimized kernel of the
-    model writes, bit for bit."""
+    model writes, bit for bit; kernel, its name, for the uint8 SpecPW-UNet ones."""
     if model == 'spectralpointwise1d':
         m = _module('spectralpointwise1d_model')
         q = m.load_quantized_int()
@@ -100,6 +107,9 @@ def fixed_scores(model, cube):
         return _per_pixel(cube, lambda p: m.classify_fixed(p, model, q))
     if model.startswith('sp_unet_'):
         m = _module('specpw_unet_model')
-        return m.kernel_reference(cube, m.load_quantized(model[len('sp_unet_'):]))
+        size = model[len('sp_unet_'):]
+        if uint8_activations(kernel):
+            return m.kernel_reference(cube, m.load_quantized(size), fracs=m.act8_fracs(size), act_max=m.U8_MAX)
+        return m.kernel_reference(cube, m.load_quantized(size))
     m = _module(f'{model}_model')
     return m.with_class(m.classify_fixed(cube))

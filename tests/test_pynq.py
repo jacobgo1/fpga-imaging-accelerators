@@ -101,7 +101,8 @@ class PackageTests(unittest.TestCase):
     def test_every_notebook_is_valid_and_its_code_parses(self):
         import ast
         notebooks = sorted((ROOT / 'software/pynq').glob('**/*.ipynb'))
-        self.assertEqual(len(notebooks), 2, 'the two shared notebooks')
+        self.assertEqual([p.name for p in notebooks], ['benchmark.ipynb', 'classify.ipynb', 'classify_golden.ipynb'],
+                         'the two shared notebooks and the benchmark')
         for path in notebooks:
             with self.subTest(notebook=path.relative_to(ROOT).as_posix()):
                 notebook = json.loads(path.read_text(encoding='utf-8'))

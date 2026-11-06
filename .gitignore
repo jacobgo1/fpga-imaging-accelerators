@@ -26,3 +26,5 @@ Thumbs.db
 
 # The labelled test image (aegean/pixels.txt alone is 6.8 MB): copied in when needed
 /aegean/
+
+.*
