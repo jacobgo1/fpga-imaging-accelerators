@@ -55,7 +55,6 @@ void patch_buffer_body(
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     int filling_second = 0;
     round: for (int patch = 0; patch <= patches; patch++) {
-        #pragma HLS LOOP_TRIPCOUNT min=2 max=666
         const bool fill = patch < patches, emit = patch > 0;
         int fill_row = 0, fill_col = 0, fill_word = 0;
         int emit_chunk = 0, emit_row = 0, emit_col = 0;

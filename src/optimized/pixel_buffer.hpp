@@ -44,7 +44,6 @@ void pixel_buffer(hls::stream<WORD_T> raw[READ_PORTS], hls::stream<vec_t<act8_t,
     const int strips = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * STRIPS_PER_PATCH;
     int filling_second = 0;
     strip: for (int s = 0; s <= strips; s++) {
-        #pragma HLS LOOP_TRIPCOUNT min=9 max=5321
         const bool fill = s < strips, emit = s > 0;
         int fill_col = 0, fill_word = 0;
         int emit_row = 0, emit_col = 0, emit_chunk = 0;

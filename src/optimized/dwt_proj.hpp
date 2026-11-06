@@ -76,7 +76,6 @@ void dwt_proj(hls::stream<vec_t<act8_t, 2 * STEPS_PER_CYCLE> >& in, hls::stream<
     int s = 0;
     pixel_step: for (int t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=8192 max=19747840
         const vec_t<act8_t, BANDS_PER_CYCLE> bands = in.read();
         act8_t window[PAD + BANDS_PER_CYCLE];
         #pragma HLS ARRAY_PARTITION variable=window type=complete

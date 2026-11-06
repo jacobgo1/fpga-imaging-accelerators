@@ -40,11 +40,8 @@ void conv1x1(hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
     #pragma HLS ARRAY_PARTITION variable=outputs type=complete
     const uint32_t pixels = PIXELS_OF::count(height, width);
     int out_group = 0, in_group = 0;
-    constexpr int MIN_TRIPS = PIXELS_OF::MIN * STEPS, MAX_TRIPS = PIXELS_OF::MAX * STEPS;
-    (void)MIN_TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
     px: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=MIN_TRIPS max=MAX_TRIPS
         if (out_group == 0 && in_group == 0) {
             const vec_t<IN_T, IN_CHANNELS> value = in.read();
             for (int i = 0; i < IN_CHANNELS; i++) {

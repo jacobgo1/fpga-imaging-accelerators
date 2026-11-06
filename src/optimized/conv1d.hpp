@@ -36,7 +36,6 @@ void map_windows(hls::stream<map_t<T, IN_LENGTH, CHANNELS> >& in,
     T held[HELD][CHANNELS];   // position 0: this window's first
     #pragma HLS ARRAY_PARTITION variable=held type=complete dim=0
     pixel: for (uint32_t px = 0; px < pixels; px++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=653016
         window: for (int w = 0; w < WINDOWS; w++) {
             #pragma HLS PIPELINE II=1
             if (w == 0) {
@@ -77,7 +76,6 @@ void position_windows(hls::stream<vec_t<uact_t, CHANNELS> >& in,
     map_t<uact_t, KERNEL, CHANNELS> window;
     #pragma HLS ARRAY_PARTITION variable=window.v type=complete dim=0
     pixel: for (uint32_t px = 0; px < pixels; px++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=653016
         position: for (int pos = 0; pos < IN_LENGTH; pos++) {
             #pragma HLS PIPELINE II=1
             const vec_t<uact_t, CHANNELS> value = in.read();
@@ -142,7 +140,6 @@ void conv1d(hls::stream<map_t<IN_T, POSITIONS + KERNEL - 1, IN_CHANNELS> >& in,
     map_t<uact_t, POSITIONS, OUT_CHANNELS> outputs;
     #pragma HLS ARRAY_PARTITION variable=outputs.v type=complete dim=0
     windows: for (uint32_t w = 0; w < pixels * WINDOWS; w++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=66607632
         groups: for (int g = 0; g < GROUPS; g++) {
             chunks: for (int c = 0; c < CHUNKS; c++) {
                 #pragma HLS PIPELINE II=1
@@ -213,7 +210,6 @@ void pool_to_map(hls::stream<map_t<uact_t, POSITIONS, CHANNELS> >& in,
     #pragma HLS ARRAY_PARTITION variable=conv type=complete dim=0
     const uint32_t pixels = pixel_count(height, width);
     pixel: for (uint32_t px = 0; px < pixels; px++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=653016
         window: for (int w = 0; w < WINDOWS; w++) {
             #pragma HLS PIPELINE II=1
             const map_t<uact_t, POSITIONS, CHANNELS> value = in.read();
@@ -250,7 +246,6 @@ void pool1d(hls::stream<map_t<uact_t, POSITIONS, CHANNELS> >& in, hls::stream<ve
     #pragma HLS ARRAY_PARTITION variable=even type=complete
     window: for (uint32_t w = 0; w < pixels * (OUT_LENGTH / POSITIONS); w++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=66607632
         const map_t<uact_t, POSITIONS, CHANNELS> value = in.read();
         const bool second = POSITIONS == 2 || w % 2 == 1;   // the pair's second position is here
         vec_t<uact_t, CHANNELS> pooled;
@@ -289,7 +284,6 @@ void dense_map(hls::stream<map_t<uact_t, LENGTH, CHANNELS> >& in, hls::stream<ve
     int s = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=16 max=10448256
         if (s == 0) {
             const map_t<uact_t, LENGTH, CHANNELS> map = in.read();
             for (int ch = 0; ch < CHANNELS; ch++)
@@ -353,7 +347,6 @@ void dense_positions(hls::stream<vec_t<uact_t, CHANNELS> >& in, hls::stream<vec_
     int s = 0;
     step: for (uint32_t t = 0; t < pixels * STEPS; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=48 max=31344768
         if (s % STEPS_PER_POSITION == 0) {
             const vec_t<uact_t, CHANNELS> value = in.read();
             for (int ch = 0; ch < CHANNELS; ch++) {

@@ -220,7 +220,6 @@ void conv3x3_tiled_ram(hls::stream<vec_t<act_t, IN_CHANNELS> >& in,
                            WEIGHT, BIAS>(weight, bias);
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_tiled_ram_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE,
                                 TAPS_PER_STEP, A, ROUND_BITS, DSP>(in, weight, bias, out);
     }

@@ -71,9 +71,7 @@ void read_patch_rows(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int 
 
     // The reading: patch by patch, this port's rows of each, a burst at a time.
     patch_row: for (int pr = 0; pr < rows; pr++) {                // each row of patches
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=19
         patch_col: for (int pc = 0; pc < cols; pc++) {            // each patch in it
-            #pragma HLS LOOP_TRIPCOUNT min=1 max=35
             line: for (int i = 0; i < ROWS_PER_PORT; i++) {       // this port's rows: patch row READ_PORTS * i + PORT
                 const int left = pc * PATCH_WIDTH;
                 const int inside = width - left < PATCH_WIDTH ? width - left : PATCH_WIDTH;  // pixels in the image
@@ -81,7 +79,6 @@ void read_patch_rows(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int 
                 #pragma HLS ARRAY_PARTITION variable=last_pixel type=complete
                 int word = 0;                                     // which word of the pixel comes next
                 burst: for (int s = 0; s * PIXELS_PER_BURST < inside; s++) {  // each burst of the row
-                    #pragma HLS LOOP_TRIPCOUNT min=1 max=2
                     // Read-ahead, steady state: one new request for every burst read,
                     // so BURSTS_AHEAD bursts stay requested ahead of the reading.
                     if (more) {
@@ -95,7 +92,6 @@ void read_patch_rows(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int 
                                                                                         : PIXELS_PER_BURST;
                     take: for (int k = 0; k < pixels * WORDS_PER_PIXEL; k++) {  // this burst's words, one a cycle
                         #pragma HLS PIPELINE II=1
-                        #pragma HLS LOOP_TRIPCOUNT min=15 max=240
                         const WORD_T value = din.read();          // read: the next word of the oldest request
                         out.write(value);                         // write: to patch_buffer
                         last_pixel[word] = value;                 // keep it, in case the edge repeats it
@@ -104,7 +100,6 @@ void read_patch_rows(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int 
                 }
                 edge: for (int k = 0; k < (PATCH_WIDTH - inside) * WORDS_PER_PIXEL; k++) {  // right of the image
                     #pragma HLS PIPELINE II=1
-                    #pragma HLS LOOP_TRIPCOUNT min=0 max=465
                     out.write(last_pixel[word]);                  // write: the last pixel again, no DDR read
                     word = (word == WORDS_PER_PIXEL - 1) ? 0 : word + 1;
                 }

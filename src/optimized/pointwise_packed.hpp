@@ -47,11 +47,8 @@ void pointwise_packed(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in, hls::stream
     #pragma HLS ARRAY_PARTITION variable=chunk_bands type=complete
     const int pixels = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width) * PIXELS;
     int chunk = 0, pass = 0;
-    constexpr int TRIPS = PIXELS * CHUNKS * OUTPUT_PASSES, MAX_TRIPS = 665 * TRIPS;
-    (void)TRIPS; (void)MAX_TRIPS;   // only the pragma uses them
     px: for (int t = 0; t < pixels * CHUNKS * OUTPUT_PASSES; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=TRIPS max=MAX_TRIPS
         if (pass == 0) {
             const vec_t<act8_t, IN_PER_CYCLE> value = in.read();
             for (int b = 0; b < IN_PER_CYCLE; b++) {

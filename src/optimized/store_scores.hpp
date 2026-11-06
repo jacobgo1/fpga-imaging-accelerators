@@ -34,9 +34,7 @@ void store_rows(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T>
     const int rows = patch_rows<PATCH_HEIGHT>(height), cols = patch_cols<PATCH_WIDTH>(width);
     int unacknowledged = 0;
     patch_row: for (int pr = 0; pr < rows; pr++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=19
         patch_col: for (int pc = 0; pc < cols; pc++) {
-            #pragma HLS LOOP_TRIPCOUNT min=1 max=35
             line: for (int r = 0; r < PATCH_HEIGHT; r++) {
                 const int y = pr * PATCH_HEIGHT + r, left = pc * PATCH_WIDTH;
                 const int inside = y >= height ? 0 : width - left < PATCH_WIDTH ? width - left : PATCH_WIDTH;
@@ -47,19 +45,16 @@ void store_rows(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_T>
                 }
                 put: for (int x = 0; x < inside; x++) {
                     #pragma HLS PIPELINE II=1
-                    #pragma HLS LOOP_TRIPCOUNT min=1 max=32
                     dout.write(scores_and_class<ROUND_BITS, CLASSES, WORD_T>(in.read()));
                 }
                 drop: for (int x = inside; x < PATCH_WIDTH; x++) {
                     #pragma HLS PIPELINE II=1
-                    #pragma HLS LOOP_TRIPCOUNT min=0 max=31
                     in.read();
                 }
             }
         }
     }
     drain: for (int k = 0; k < unacknowledged; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=8
         dout.write_response();
     }
 }

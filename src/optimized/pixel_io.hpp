@@ -20,7 +20,6 @@ static inline uint32_t pixel_count(int height, int width) {
 // image's last block may be shorter). pixel_lane<BLOCK, 1, 0> is the whole image.
 template<int BLOCK, int LANES, int LANE>
 struct pixel_lane {
-    static constexpr int MIN = 1, MAX = 653016;   // for HLS's reports: the largest capture
     static uint32_t count(int height, int width) {
         #pragma HLS INLINE
         const uint32_t pixels = pixel_count(height, width);
@@ -46,7 +45,6 @@ void read_pixels(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int heig
         }
     }
     block: for (uint32_t b = PORT; b < blocks; b += READ_PORTS) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=20408
         if (next_request < blocks) {
             const uint32_t length = pixels - next_request * BLOCK < (uint32_t)BLOCK ? pixels - next_request * BLOCK
                                                                                     : (uint32_t)BLOCK;
@@ -56,7 +54,6 @@ void read_pixels(hls::burst_maxi<WORD_T> din, hls::stream<WORD_T>& out, int heig
         const uint32_t length = pixels - b * BLOCK < (uint32_t)BLOCK ? pixels - b * BLOCK : (uint32_t)BLOCK;
         take: for (uint32_t k = 0; k < length * WORDS_PER_PIXEL; k++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS LOOP_TRIPCOUNT min=15 max=240
             out.write(din.read());
         }
     }
@@ -104,7 +101,6 @@ void zscore_pixels(hls::stream<WORD_T> raw[READ_PORTS],
     int word_of_pixel = 0, pixel_of_block = 0, port = 0;
     word: for (uint32_t t = 0; t < pixels * WORDS_PER_PIXEL; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=15 max=9795240
         WORD_T word;
         for (int r = 0; r < READ_PORTS; r++) {
             #pragma HLS UNROLL
@@ -156,19 +152,16 @@ void store_pixels(hls::stream<vec_t<sum_t, CLASSES> >& in, hls::burst_maxi<WORD_
     const uint32_t pixels = pixel_count(height, width);
     int unacknowledged = 0;
     burst: for (uint32_t first = 0; first < pixels; first += BURST) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=10204
         const uint32_t length = pixels - first < (uint32_t)BURST ? pixels - first : (uint32_t)BURST;
         if (unacknowledged == BURSTS_IN_FLIGHT) dout.write_response();
         else unacknowledged++;
         dout.write_request(first, length);
         put: for (uint32_t k = 0; k < length; k++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS LOOP_TRIPCOUNT min=1 max=64
             dout.write(pixel_scores_and_class<CLASSES, WORD_T>(in.read()));
         }
     }
     drain: for (int k = 0; k < unacknowledged; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=8
         dout.write_response();
     }
     finished.write(true);
@@ -184,14 +177,12 @@ void store_pixels_lanes(hls::stream<vec_t<sum_t, CLASSES> > in[LANES], hls::burs
     int unacknowledged = 0;
     int pixel_of_block = 0, lane = 0;
     burst: for (uint32_t first = 0; first < pixels; first += BURST) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=10204
         const uint32_t length = pixels - first < (uint32_t)BURST ? pixels - first : (uint32_t)BURST;
         if (unacknowledged == BURSTS_IN_FLIGHT) dout.write_response();
         else unacknowledged++;
         dout.write_request(first, length);
         put: for (uint32_t k = 0; k < length; k++) {
             #pragma HLS PIPELINE II=1
-            #pragma HLS LOOP_TRIPCOUNT min=1 max=64
             vec_t<sum_t, CLASSES> scores;
             for (int r = 0; r < LANES; r++) {
                 #pragma HLS UNROLL
@@ -207,7 +198,6 @@ void store_pixels_lanes(hls::stream<vec_t<sum_t, CLASSES> > in[LANES], hls::burs
         }
     }
     drain: for (int k = 0; k < unacknowledged; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=8
         dout.write_response();
     }
     finished.write(true);

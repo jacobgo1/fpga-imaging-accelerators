@@ -25,7 +25,6 @@ void sp_unet_small(const data_t *din, data_t *dout, int n)
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
 
     patches: for (int p = 0; p < n; p++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=1024
         // The stem reads the patch from DDR itself, each value once.
         static data_t scores[GOLDEN_PATCH_SIZE][GOLDEN_PATCH_SIZE][GOLDEN_CLASSES];
         specpw_unet_quant_golden<data_t, float, GOLDEN_PATCH_SIZE, GOLDEN_PATCH_SIZE, GOLDEN_BANDS, GOLDEN_CLASSES,

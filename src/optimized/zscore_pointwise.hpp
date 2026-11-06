@@ -52,7 +52,6 @@ void zscore_pointwise(hls::stream<WORD_T>& raw, hls::stream<vec_t<uact_t, OUT_CH
     int word_of_pixel = 0;
     word: for (uint32_t t = 0; t < pixels * WORDS_PER_PIXEL; t++) {
         #pragma HLS PIPELINE II=1
-        #pragma HLS LOOP_TRIPCOUNT min=15 max=9795240
         const WORD_T word = raw.read();
         vec_t<uact_t, OUT_CHANNELS> activations;
         if (word_of_pixel >= FIRST_KEPT_WORD) {

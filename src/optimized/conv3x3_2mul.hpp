@@ -135,7 +135,6 @@ void conv3x3_2mul(hls::stream<vec_t<act8_t, IN_PER_CYCLE> >& in,
     load_packed_weights<OUT_CHANNELS, IN_CHANNELS, PADDED_IN, SHIFT, BIAS_SHIFT>(WEIGHT, BIAS, packed, bias);
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_2mul_patch<MAP_HEIGHT, MAP_WIDTH, PADDED_IN, OUT_CHANNELS, IN_PER_CYCLE, A, ROUND_BITS, SHIFT>(
             in, packed, bias, out);
     }

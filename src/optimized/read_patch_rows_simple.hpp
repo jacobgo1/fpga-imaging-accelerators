@@ -17,9 +17,7 @@ void read_patch_rows_simple(const WORD_T* din, hls::stream<WORD_T>& out, int hei
     const int rows = patch_rows<PATCH_HEIGHT>(height), cols = patch_cols<PATCH_WIDTH>(width);
 
     patch_row: for (int pr = 0; pr < rows; pr++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=19
         patch_col: for (int pc = 0; pc < cols; pc++) {
-            #pragma HLS LOOP_TRIPCOUNT min=1 max=35
             // This port's rows of the patch: line i is patch row READ_PORTS * i + PORT.
             line: for (int i = 0; i < ROWS_PER_PORT; i++) {
                 const int y = pr * PATCH_HEIGHT + READ_PORTS * i + PORT;
@@ -32,7 +30,6 @@ void read_patch_rows_simple(const WORD_T* din, hls::stream<WORD_T>& out, int hei
                 int word = 0;
                 take: for (int k = 0; k < inside * WORDS_PER_PIXEL; k++) {
                     #pragma HLS PIPELINE II=1
-                    #pragma HLS LOOP_TRIPCOUNT min=15 max=480
                     const WORD_T value = row[k];
                     out.write(value);
                     last_pixel[word] = value;
@@ -40,7 +37,6 @@ void read_patch_rows_simple(const WORD_T* din, hls::stream<WORD_T>& out, int hei
                 }
                 edge: for (int k = 0; k < (PATCH_WIDTH - inside) * WORDS_PER_PIXEL; k++) {
                     #pragma HLS PIPELINE II=1
-                    #pragma HLS LOOP_TRIPCOUNT min=0 max=465
                     out.write(last_pixel[word]);
                     word = (word == WORDS_PER_PIXEL - 1) ? 0 : word + 1;
                 }

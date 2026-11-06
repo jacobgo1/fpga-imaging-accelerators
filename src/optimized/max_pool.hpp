@@ -37,7 +37,6 @@ void max_pool(hls::stream<vec_t<act_t, CHANNELS> >& in, hls::stream<vec_t<act_t,
               int height, int width) {
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         max_pool_patch<MAP_HEIGHT, MAP_WIDTH>(in, out);
     }
 }

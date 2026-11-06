@@ -27,7 +27,6 @@ void justoliunet_bn(const data_t *din, data_t *dout, int n)
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
 
     pixels: for (int p = 0; p < n; p++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=1024
         // Read the spectrum once, not once per multiply.
         data_t spectrum[JLN_BANDS][1];
         read: for (int band = 0; band < JLN_BANDS; band++)

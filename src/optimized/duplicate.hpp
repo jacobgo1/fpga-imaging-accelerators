@@ -11,7 +11,6 @@ void duplicate(hls::stream<vec_t<act_t, CHANNELS> >& in, hls::stream<vec_t<act_t
                hls::stream<vec_t<act_t, CHANNELS> >& b, int height, int width) {
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         values: for (int i = 0; i < VALUES; i++) {
             #pragma HLS PIPELINE II=1
             const vec_t<act_t, CHANNELS> value = in.read();

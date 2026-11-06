@@ -152,7 +152,6 @@ void conv3x3_tiled_layer(
     load_tiled_weights<IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE, BIAS_SHIFT, WEIGHT, BIAS>(weight, bias);
     const int patches = patch_count<PATCH_HEIGHT, PATCH_WIDTH>(height, width);
     patches: for (int k = 0; k < patches; k++) {
-        #pragma HLS LOOP_TRIPCOUNT min=1 max=665
         conv3x3_tiled_patch<MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE, OUT_PER_CYCLE,
                             A, ROUND_BITS, DSP>(in, weight, bias, out);
     }
