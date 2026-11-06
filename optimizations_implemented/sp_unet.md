@@ -636,3 +636,8 @@ Routed, kernel alone (without the interconnects); by process in
   `_opt` kernels are unchanged (bit-exact, native); the shared modules (`max_pool`, `upsample`,
   `duplicate`, `concat_pixels`) take the element type, `pointwise_packed` its activation, and
   `round_shift` a negative shift.
+- 2026-11-06: `sp_unet_small_opt_u8` and `sp_unet_large_opt_u8` built; `sp_unet_medium_opt_u8`'s csynth
+  failed (HLS 214-256: its 6 x 6 packed layers' weight words, 4 374 bits, are over HLS's 4 096-bit
+  aggregate limit). `conv3x3_tiled` now keeps a wider word as slices of its input channels, a memory
+  each (`tiled_slices`): those layers are 2 slices of 2 187 bits; every other layer is one slice, as
+  before. Same arithmetic; every `_opt` and `_opt_u8` kernel bit-exact (native). Not built.

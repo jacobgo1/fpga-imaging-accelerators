@@ -277,3 +277,8 @@ Routed, kernel alone (without the interconnects); by process in
   `src/optimized/`: `conv3x3_tiled`, packed, a pixel's bands in chunks, int8 inputs), fed by
   `pixel_buffer` instead of `patch_buffer`; the rest as `justounetsimple_opt`. **Predicted** conv1
   5 285 cycles a patch on 648 DSPs (864), the kernel still DDR-bound; bit-exact (native). Not built.
+- 2026-11-06: `justounetsimple_opt_tiled`: csynth failed (HLS 214-256: conv1's weight word, 17 496 bits,
+  is over HLS's 4 096-bit aggregate limit). `conv3x3_tiled` and `conv3x3_tiled_chunks` now keep a
+  wider word as slices of its input channels, a memory each (`tiled_slices`): conv1 is 6 slices of
+  2 916 bits; every narrower word is one slice, as before. Same arithmetic; every kernel bit-exact
+  (native). Not built.

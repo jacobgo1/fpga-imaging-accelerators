@@ -16,8 +16,9 @@ template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int I
          activation A, int ROUND_BITS, int PACK_SHIFT, typename IN_T>
 void conv3x3_tiled_chunks_patch(
     hls::stream<vec_t<IN_T, IN_PER_CYCLE> >& in,
-    const tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * ((IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE)],
+    const typename tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * ((IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE)]
+              [tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     const sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE],
     hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
     constexpr int IN_GROUPS = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
@@ -83,7 +84,8 @@ void conv3x3_tiled_chunks_patch(
                     const int y = centre / MAP_WIDTH, x = centre % MAP_WIDTH;
                     const bool row_inside[3] = {y > 0, true, y < MAP_HEIGHT - 1};
                     const bool col_inside[3] = {x > 0, true, x < MAP_WIDTH - 1};
-                    const tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> word = weight[og * IN_GROUPS + ig];
+                    const tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> word =
+                        tiled_gather<tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> >(weight[og * IN_GROUPS + ig]);
                     for (int pair = 0; pair < OUT_PER_CYCLE / 2; pair++) {
                         #pragma HLS UNROLL
                         sum_t low = 0, high = 0;
@@ -121,8 +123,9 @@ void conv3x3_tiled_chunks_patch(
 template<int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE, int PACK_SHIFT, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS]>
 void load_tiled_chunks_weights(
-    tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * ((IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE)],
+    typename tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * ((IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE)]
+              [tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE]) {
     constexpr int IN_GROUPS = (IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
     load_w: for (int og = 0; og < OUT_GROUPS; og++)
@@ -147,7 +150,7 @@ void load_tiled_chunks_weights(
                     }
                 }
             }
-            weight[og * IN_GROUPS + ig] = word;
+            tiled_scatter<tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> >(word, weight[og * IN_GROUPS + ig]);
         }
     load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
@@ -156,7 +159,7 @@ void load_tiled_chunks_weights(
 }
 
 // The layer: its weights loaded once, then every patch. The weight memory as in
-// conv3x3_tiled: block RAM when deep, LUTs when shallow.
+// conv3x3_tiled: block RAM when deep, LUTs when shallow, in slices of at most 4096 bits.
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int OUT_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS],
@@ -165,8 +168,9 @@ void conv3x3_tiled_chunks(hls::stream<vec_t<IN_T, IN_PER_CYCLE> >& in,
                           hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                           int height, int width) {
     constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * ((IN_CHANNELS + IN_PER_CYCLE - 1) / IN_PER_CYCLE);
-    typedef tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> word_t;
-    word_t weight[STEPS];
+    typedef tiled_slices<true, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> slices;
+    typename slices::slice_t weight[STEPS][slices::SLICES];
+    #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
     #pragma HLS AGGREGATE variable=weight compact=bit
     #pragma HLS BIND_STORAGE variable=weight type=ram_2p impl=lutram
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE];

@@ -25,8 +25,10 @@
 // when they do not divide; each group's sum is split into the two channels.
 // PACK_SHIFT: the chip's packing (the kernel's DSP_PACK_SHIFT).
 //
-// The weights are one wide memory word a step: one memory a layer, since a
-// thousand small ones made sp_unet_large_opt too congested to route.
+// The weights are one wide memory word a step: few memories a layer, since a
+// thousand small ones made sp_unet_large_opt too congested to route. HLS packs a
+// word at most 4096 bits wide, so a wider one is kept as a few slices of its input
+// channels, a memory each (tiled_slices).
 template<int IN_PER_CYCLE, int OUT_PER_CYCLE>
 struct tiled_word_t {
     weight_t v[OUT_PER_CYCLE][IN_PER_CYCLE][3][3];
@@ -47,6 +49,58 @@ template<int IN_PER_CYCLE, int OUT_PER_CYCLE, int SHIFT>
 struct tiled_word_of<true, IN_PER_CYCLE, OUT_PER_CYCLE, SHIFT> {
     typedef tiled_packed_word_t<IN_PER_CYCLE, OUT_PER_CYCLE, SHIFT> type;
 };
+
+// The most input channels a slice of BITS_PER_INPUT bits each can hold within HLS's
+// 4096-bit word, dividing IN_PER_CYCLE so the slices are alike.
+constexpr int tiled_slice_inputs(int in_per_cycle, int bits_per_input) {
+    int best = 1;
+    for (int d = 1; d <= in_per_cycle; d++)
+        if (in_per_cycle % d == 0 && d * bits_per_input <= 4096) best = d;
+    return best;
+}
+
+// A step's word as SLICES memories: slice s holds input channels
+// s * IN_PER_SLICE .. (s + 1) * IN_PER_SLICE - 1. One slice when the word fits.
+template<bool PACKED, int IN_PER_CYCLE, int OUT_PER_CYCLE, int SHIFT>
+struct tiled_slices {
+    static constexpr int ROWS = PACKED ? OUT_PER_CYCLE / 2 : OUT_PER_CYCLE;
+    static constexpr int WEIGHT_BITS = PACKED ? SHIFT + 9 : 8;
+    static constexpr int IN_PER_SLICE = tiled_slice_inputs(IN_PER_CYCLE, ROWS * 9 * WEIGHT_BITS);
+    static constexpr int SLICES = IN_PER_CYCLE / IN_PER_SLICE;
+    typedef typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, SHIFT>::type word_t;
+    typedef typename tiled_word_of<PACKED, IN_PER_SLICE, OUT_PER_CYCLE, SHIFT>::type slice_t;
+};
+
+// A step's word from its slices, and back; every index a constant, so only wires.
+template<typename S>
+typename S::word_t tiled_gather(const typename S::slice_t slices[S::SLICES]) {
+    #pragma HLS INLINE
+    typename S::word_t word;
+    for (int j = 0; j < S::ROWS; j++)
+        for (int i = 0; i < S::SLICES * S::IN_PER_SLICE; i++)
+            for (int ky = 0; ky < 3; ky++)
+                for (int kx = 0; kx < 3; kx++) {
+                    #pragma HLS UNROLL
+                    word.v[j][i][ky][kx] = slices[i / S::IN_PER_SLICE].v[j][i % S::IN_PER_SLICE][ky][kx];
+                }
+    return word;
+}
+template<typename S>
+void tiled_scatter(const typename S::word_t& word, typename S::slice_t slices[S::SLICES]) {
+    #pragma HLS INLINE
+    for (int s = 0; s < S::SLICES; s++) {
+        #pragma HLS UNROLL
+        typename S::slice_t slice;
+        for (int j = 0; j < S::ROWS; j++)
+            for (int i = 0; i < S::IN_PER_SLICE; i++)
+                for (int ky = 0; ky < 3; ky++)
+                    for (int kx = 0; kx < 3; kx++) {
+                        #pragma HLS UNROLL
+                        slice.v[j][i][ky][kx] = word.v[j][s * S::IN_PER_SLICE + i][ky][kx];
+                    }
+        slices[s] = slice;
+    }
+}
 
 // A tap of a step's word. Each mode has its own word, so both branches of the step
 // compile for either; the other mode's tap is never used.
@@ -109,8 +163,9 @@ template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int I
          activation A, int ROUND_BITS, bool DSP, bool PACKED, int PACK_SHIFT, typename IN_T>
 void conv3x3_tiled_patch(
     hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
-    const typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::type
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)],
+    const typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+              [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     const sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE],
     hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
     constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
@@ -154,7 +209,8 @@ void conv3x3_tiled_patch(
                     const int y = centre / MAP_WIDTH, x = centre % MAP_WIDTH;
                     const bool row_inside[3] = {y > 0, true, y < MAP_HEIGHT - 1};
                     const bool col_inside[3] = {x > 0, true, x < MAP_WIDTH - 1};
-                    const word_t word = weight[og * IN_GROUPS + ig];
+                    const word_t word = tiled_gather<tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> >(
+                        weight[og * IN_GROUPS + ig]);
                     if (PACKED) {
                         for (int pair = 0; pair < OUT_PER_CYCLE / 2; pair++) {
                             #pragma HLS UNROLL
@@ -213,8 +269,9 @@ void conv3x3_tiled_patch(
 template<bool PACKED, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE, int PACK_SHIFT,
          int BIAS_SHIFT, const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS]>
 void load_tiled_weights(
-    typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::type
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)],
+    typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+              [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE]) {
     constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
     load_w: for (int og = 0; og < OUT_GROUPS; og++)
@@ -241,7 +298,7 @@ void load_tiled_weights(
                     }
                 }
             }
-            weight[og * IN_GROUPS + ig] = word;
+            tiled_scatter<tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> >(word, weight[og * IN_GROUPS + ig]);
         }
     load_b: for (int o = 0; o < OUT_CHANNELS; o++) {
         #pragma HLS PIPELINE II=1
@@ -255,8 +312,9 @@ template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int I
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
          activation A, int ROUND_BITS, bool PACKED, int PACK_SHIFT, typename IN_T>
 void conv3x3_tiled_layer(
-    typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::type
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)],
+    typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+              [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
     hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out, int height, int width) {
     #pragma HLS INLINE
@@ -283,16 +341,19 @@ void conv3x3_tiled(hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
                    hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                    int height, int width) {
     constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE);
-    typedef typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::type word_t;
+    typedef tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> slices;
+    typedef typename slices::slice_t slice_t;
     if (STEPS > 64) {
-        word_t weight[STEPS];
+        slice_t weight[STEPS][slices::SLICES];
+        #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
         #pragma HLS AGGREGATE variable=weight compact=bit
         #pragma HLS BIND_STORAGE variable=weight type=ram_2p impl=bram
         conv3x3_tiled_layer<PATCH_HEIGHT, PATCH_WIDTH, MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE,
                             OUT_PER_CYCLE, BIAS_SHIFT, WEIGHT, BIAS, DSP, A, ROUND_BITS, PACKED, PACK_SHIFT>(
             weight, in, out, height, width);
     } else {
-        word_t weight[STEPS];
+        slice_t weight[STEPS][slices::SLICES];
+        #pragma HLS ARRAY_PARTITION variable=weight type=complete dim=2
         #pragma HLS AGGREGATE variable=weight compact=bit
         #pragma HLS BIND_STORAGE variable=weight type=ram_2p impl=lutram
         conv3x3_tiled_layer<PATCH_HEIGHT, PATCH_WIDTH, MAP_HEIGHT, MAP_WIDTH, IN_CHANNELS, OUT_CHANNELS, IN_PER_CYCLE,
