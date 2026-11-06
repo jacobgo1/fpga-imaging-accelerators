@@ -24,6 +24,7 @@ the ZCU104** (the 1D model is compute-bound).
 |---|---|---|---|
 | `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 194.4 s** for a whole capture (292.4 ms a patch), 202.3 s wall clock, 96.20 % |
 | `justounetsimple_opt` | ZCU104 | 214 MHz | **measured 18.26 ms** for a whole capture, FPGA alone (5 882 cycles a patch; memory-bound); 19.2 ms wall clock |
+| `justounetsimple_opt_tiled` | ZCU104 | 4 ns target | conv1 in raster order, no patch buffer (below); **predicted** about as fast as `justounetsimple_opt` (memory-bound, conv1 5 285 cycles a patch), 648 DSPs on conv1 instead of 864; built in C++, bit-exact; not built |
 | `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider) |
 | `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch) |
 
@@ -71,6 +72,38 @@ slowest stage sets the pace, T cycles per patch.
 conv1's DSPs: OUT / 2 pairs × P1 × 9 taps (packed), so 3 × 12 × 9 = 324 on the 7030; 16
 bands would need 432. Utilization of conv1's multipliers: u = 6.08 M / (T × 6 × P1 × 9):
 7030 91 % (the 10 zero bands of its last chunk), 7020 92 % (it waits for the readers 7 %).
+
+## `justounetsimple_opt_tiled`: conv1 in raster order, no patch buffer
+
+`justounetsimple_opt` with conv1 and what feeds it changed. `conv3x3_2mul` goes over a patch once
+per band chunk, so the whole 32 × 32 × 110 patch must wait in the ping-pong patch buffer (UltraRAM).
+`conv3x3_tiled_chunks` takes a pixel's bands as 5 chunks of 24, one a step, in raster order, so a
+strip buffer (`pixel_buffer`, as SpecPW-UNet's: one strip of 4 rows, ping-pong, BRAM) is enough; its
+line buffers hold 2 rows × 32 × 120 int8. The same arithmetic, so the same answers bit for bit
+(the same testbench checks; `tests/test_justounetsimple.py`).
+
+| | `justounetsimple_opt` | `justounetsimple_opt_tiled` |
+|---|---|---|
+| In front of conv1 | `patch_buffer`: a whole patch, ping-pong, UltraRAM; 4 096 cycles a patch | `pixel_buffer`: a strip, ping-pong, BRAM; 5 120 (8 strips × 4 rows × 32 pixels × 5 chunks) |
+| conv1 | `conv3x3_2mul`, 32 bands a step over the patch, 4 chunks: **4 129** cycles a patch | `conv3x3_tiled_chunks`, 24 bands × 6 outputs a step, 5 steps a pixel: 5 × (1 024 + 33) = **5 285** |
+| conv1's DSPs (packed, groups of 8) | 3 pairs × 32 × 9 = 864 | 3 pairs × 24 × 9 = **648** |
+| Padding | 110 bands to 128 (18 zero weights) | 110 to 120 (10 zero weights) |
+| Readers' FIFOs | 64 | 512, BRAM (the strip buffer absorbs less of the bursts' jitter) |
+| **T** | 6 718 cycles a patch measured at 250 MHz, the reads | the reads (~6 700 at 250 MHz): conv1 5 285 and the strip buffer 5 120 under them |
+
+- **Not a speed-up:** the kernel waits on DDR either way. What it saves: 216 DSPs and the patch
+  buffer's UltraRAM; conv2-4 are unchanged.
+- **To check on the build:** conv1 Final II = 1 (24 × 9 = 216 packed products a step, 27 groups of
+  8); its weight memory, 5 words of 3 × 24 × 9 × 27 = 17 496 bits, should be LUTRAM (~10 k LUTs),
+  not registers; its window (3 × 3 × 120 int8, ~8.6 k FFs) and line buffers (48 LUTRAMs of 160 × 8);
+  the DSP count (~648 + 216 + 32); and with cosim the cycles a patch against `justounetsimple_opt`'s,
+  since without a patch buffer a reader's stall reaches conv1 sooner.
+- **Tested:** `tests/test_conv3x3_tiled_chunks.py` runs the module with the worst-case weights (-128,
+  127), int8 and uint8 inputs, junk in the padded bands and shorter last groups, which the network
+  never reaches. Mutation-tested (9 bugs: chunk shifted into the wrong place, one line memory for all
+  chunks, the column advanced every chunk, groups of 16, a pair swapped, the top padding, padded
+  bands' weights not zero, the last short group dropped, the borrow): the testbench catches 5, the
+  module test all 9.
 
 ## Inference time
 
@@ -240,3 +273,7 @@ Routed, kernel alone (without the interconnects); by process in
 - 2026-11-06: `justounetsimple_opt` at 250 MHz on five other images (`benchmark.ipynb`, speed_zcu104.md "Five images"): 7 563 cycles a
   patch (7 535-7 601), 20.12 ms, against 6 718 and 17.87 ms with the read-ahead reader: the simple
   reader costs it 12.6 %, as predicted. 92.11 % against the labels (mIoU 0.853), as classify_fixed on the images checked.
+- 2026-11-06: `justounetsimple_opt_tiled` (ZCU104), new: conv1 as `conv3x3_tiled_chunks` (new in
+  `src/optimized/`: `conv3x3_tiled`, packed, a pixel's bands in chunks, int8 inputs), fed by
+  `pixel_buffer` instead of `patch_buffer`; the rest as `justounetsimple_opt`. **Predicted** conv1
+  5 285 cycles a patch on 648 DSPs (864), the kernel still DDR-bound; bit-exact (native). Not built.

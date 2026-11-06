@@ -366,8 +366,8 @@ class FpgaShellTests(unittest.TestCase):
         for command in ('fpga_test', 'fpga_build', 'fpga_ip', 'fpga_cosim', 'fpga_runs', 'fpga_pynq'):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
-                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_zynq7020',
-                                  'justounetsimple_opt_zynq7030'])
+                                 ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_tiled',
+                                  'justounetsimple_opt_zynq7020', 'justounetsimple_opt_zynq7030'])
         self.assertEqual(self.complete('fpga_build', 'justounetsimple', '--c'), ['--clock-ns'])
         self.assertEqual(self.complete('fpga_cosim', 'justounetsimple', '--board', 'zynq7'), ['zynq7020', 'zynq7030'])
         self.assertEqual(self.complete('fpga_cosim', 'justounetsimple', '--d'), ['--dataflow-profile'])

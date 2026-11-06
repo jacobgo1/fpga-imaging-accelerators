@@ -78,7 +78,10 @@ tools/justoliunet_model.py;
 the performance model, the predictions for the 7020/7030 and the ideas still to try,
 such as hard-wired weights, are in docs/justoliunet_opt_design.md),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
-ZCU104), `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
+ZCU104), `justounetsimple_opt_tiled` (the same answers, ZCU104: conv1 in raster order,
+conv3x3_tiled_chunks, a pixel's 110 bands in 5 chunks of 24 from pixel_buffer, so no patch
+buffer; 648 DSPs on conv1 instead of 864, 5 285 cycles a patch, under the reads),
+`justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips (the 7030 one is the 7020's, wider: 12 bands a cycle, four
 read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020` / `zynq7030`; same
 answers, they share the testbench's checks),

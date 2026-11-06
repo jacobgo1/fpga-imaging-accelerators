@@ -418,7 +418,7 @@ class NotebookTests(unittest.TestCase):
         namespace = {}
         exec(cell[cell.index('KERNELS = '):cell.index('# The images')], namespace)
         self.assertEqual(sorted(namespace['KERNELS']),
-                         sorted(k for k in kernel_dirs() if k.endswith(('_opt', '_opt_u8'))))
+                         sorted(k for k in kernel_dirs() if k.endswith(('_opt', '_opt_u8', '_opt_tiled'))))
 
     # ---- the table ----
 

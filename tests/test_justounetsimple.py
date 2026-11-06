@@ -68,6 +68,7 @@ int main(int, char** argv) {
         cube.tofile(self.dir / 'in.bin')
         want = self.model.classify_fixed(cube)
         kernels = {'justounetsimple_opt': 'uint32_t cycles; justounetsimple_opt(d, d, d, d, dout.data(), h, w, cycles)',
+                   'justounetsimple_opt_tiled': 'uint32_t cycles; justounetsimple_opt_tiled(d, d, d, d, dout.data(), h, w, cycles)',
                    'justounetsimple_opt_zynq7020': 'justounetsimple_opt_zynq7020(d, d, dout.data(), h, w)',
                    'justounetsimple_opt_zynq7030': 'justounetsimple_opt_zynq7030(d, d, d, d, dout.data(), h, w)'}
         for name, call in kernels.items():
