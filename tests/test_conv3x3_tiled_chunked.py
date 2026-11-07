@@ -1,11 +1,11 @@
-"""conv3x3_tiled_chunks (a pixel in chunks, two multiplies per DSP), with plain g++.
+"""conv3x3_tiled with a pixel in chunks (a first layer's bands, two multiplies per DSP), with plain g++.
 
-justounetsimple_opt_tiled's testbench cannot fail some of its bugs: the network's weights never
+justounetsimple_opt_tiled's and the Zynq justounetsimple kernels' testbenches cannot fail some of its bugs: the network's weights never
 come near a group's bound, the padded bands always arrive as zeros, and 24 bands a chunk make
 216 taps, whole groups of 8. Here the worst case: weights -128 and 127, int8 inputs mostly 127
 (or uint8 255), 10 input channels in chunks of 3, 4 and 8 (padding of 2, 2 and 6 channels, with
-junk in them, and a shorter last group), one and two output groups, two patches. Against a
-plain loop, every sum.
+junk in them, and a shorter last group), one and two output groups, two patches; on both chips'
+packing (PACK_SHIFT 18: int8 groups of 8, uint8 4; 16: 2 and 1). Against a plain loop, every sum.
 """
 import subprocess
 import tempfile
@@ -15,7 +15,7 @@ from pathlib import Path
 from helpers import CXX, ROOT, compile_cpp
 
 DRIVER = """
-#include "conv3x3_tiled_chunks.hpp"
+#include "conv3x3_tiled.hpp"
 #include <cstdio>
 
 typedef {in_t} in_t;
@@ -44,7 +44,7 @@ int main() {{
                     in.write(v);
                 }}
             }}
-    conv3x3_tiled_chunks<H, W, H, W, IN, OUT, IPC, OPC, 0, WEIGHT, BIAS, 18, activation::none, 0>(
+    conv3x3_tiled<H, W, H, W, IN, OUT, IPC, OPC, 0, WEIGHT, BIAS, true, activation::none, 0, true, {shift}>(
         in, out, PATCHES * H, W);
     int errors = 0;
     for (int k = 0; k < PATCHES; k++)
@@ -78,25 +78,28 @@ def weights():
 
 @unittest.skipUnless(CXX, 'no C++ compiler')
 class ChunkedConvTests(unittest.TestCase):
-    def run_conv(self, tmp, ipc, opc, in_t):
-        stem = f'chunks_{ipc}_{opc}_{in_t}'
+    def run_conv(self, tmp, ipc, opc, in_t, shift):
+        stem = f'chunks_{ipc}_{opc}_{in_t}_{shift}'
         big = '127' if in_t == 'act8_t' else '255'
-        exe = compile_cpp(tmp, stem, DRIVER.format(weights=weights(), ipc=ipc, opc=opc, in_t=in_t, big=big),
+        exe = compile_cpp(tmp, stem, DRIVER.format(weights=weights(), ipc=ipc, opc=opc, in_t=in_t, big=big,
+                                                   shift=shift),
                           [ROOT / 'src/optimized'])
         return int(subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout)
 
     def test_int8_sums_are_exact_with_worst_case_weights(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for ipc in (3, 4, 8):
-                for opc in (2, 4):
-                    with self.subTest(in_per_cycle=ipc, out_per_cycle=opc):
-                        self.assertEqual(self.run_conv(Path(tmp), ipc, opc, 'act8_t'), 0)
+            for shift in (18, 16):
+                for ipc in (3, 4, 8):
+                    for opc in (2, 4):
+                        with self.subTest(shift=shift, in_per_cycle=ipc, out_per_cycle=opc):
+                            self.assertEqual(self.run_conv(Path(tmp), ipc, opc, 'act8_t', shift), 0)
 
     def test_uint8_sums_are_exact_with_worst_case_weights(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for ipc in (3, 4):
-                with self.subTest(in_per_cycle=ipc):
-                    self.assertEqual(self.run_conv(Path(tmp), ipc, 2, 'uact_t'), 0)
+            for shift in (18, 16):
+                for ipc in (3, 4):
+                    with self.subTest(shift=shift, in_per_cycle=ipc):
+                        self.assertEqual(self.run_conv(Path(tmp), ipc, 2, 'uact_t', shift), 0)
 
 
 if __name__ == '__main__':

@@ -1,7 +1,6 @@
 #include "justounetsimple_opt_zynq7030.hpp"
 #include "../../../optimized/read_patch_rows_simple.hpp"
-#include "../../../optimized/patch_buffer.hpp"
-#include "../../../optimized/conv3x3_2mul.hpp"
+#include "../../../optimized/pixel_buffer.hpp"
 #include "../../../optimized/conv3x3_tiled.hpp"
 #include "../../../optimized/max_pool.hpp"
 #include "../../../optimized/upsample.hpp"
@@ -51,8 +50,11 @@ void justounetsimple_opt_zynq7030(const cube_word_t* din0, const cube_word_t* di
     // The FIFOs between the processes, each with its depth: deep enough that no layer
     // waits for a slower one's bursts. The conv outputs keep the default 2, as before
     // the split (the convs here are far slower than the pools after them).
+    // The strip buffer holds a strip, not a patch, so the readers' FIFOs take up their
+    // bursts' jitter: 512 deep in block RAM, as in justounetsimple_opt_tiled.
     hls::stream<cube_word_t> cube_words[READ_PORTS];
-    #pragma HLS STREAM variable=cube_words depth=64
+    #pragma HLS STREAM variable=cube_words depth=512
+    #pragma HLS BIND_STORAGE variable=cube_words type=fifo impl=bram
     hls::stream<vec_t<act8_t, CONV1_BANDS_PER_CYCLE>, 64> zscores("zscores");
     hls::stream<vec_t<act_t, BASE_CHANNELS>> conv1_act("conv1_act");
     hls::stream<vec_t<act_t, BASE_CHANNELS>, 256> conv1_pooled("conv1_pooled");
@@ -67,14 +69,15 @@ void justounetsimple_opt_zynq7030(const cube_word_t* din0, const cube_word_t* di
     read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 1>(din1, cube_words[1], height, width);
     read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 2>(din2, cube_words[2], height, width);
     read_patch_rows_simple<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, READ_PORTS, 3>(din3, cube_words[3], height, width);
-    patch_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, CONV1_BANDS_PER_CYCLE,
-                 READ_PORTS, zscore::FRAC, zscore::IN_MAX, zscore::A, zscore::B, ZSCORE_ON_DSPS, HAS_URAM>(
+    pixel_buffer<PATCH_SIZE, PATCH_SIZE, WORDS_PER_PIXEL, FIRST_KEPT_WORD, BANDS_PER_WORD, CONV1_BANDS_PER_CYCLE,
+                 READ_PORTS, CONV1_CHUNKS, zscore::FRAC, zscore::IN_MAX, zscore::A, zscore::B, ZSCORE_ON_DSPS>(
         cube_words, zscores, height, width);
 
-    // conv1: 110 -> 6 at 32 x 32, 12 bands a cycle, two multiplies per DSP.
-    conv3x3_2mul<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
-                 CONV1_BANDS_PER_CYCLE, CONV1_BIAS_SHIFT, weights::conv1_weight, weights::conv1_bias,
-                 DSP_PACK_SHIFT, activation::relu, CONV1_OUTPUT_SHIFT>(zscores, conv1_act, height, width);
+    // conv1: 110 -> 6 at 32 x 32, a pixel's 12-band chunks in, two multiplies per DSP; ReLU.
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
+                  CONV1_BANDS_PER_CYCLE, BASE_CHANNELS, CONV1_BIAS_SHIFT, weights::conv1_weight,
+                  weights::conv1_bias, true, activation::relu, CONV1_OUTPUT_SHIFT, true, DSP_PACK_SHIFT>(
+        zscores, conv1_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
     // conv2: 6 -> 12 at 16 x 16; ReLU; pool to 8 x 8 and upsample back.

@@ -25,8 +25,8 @@ the ZCU104** (the 1D model is compute-bound).
 | `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 194.4 s** for a whole capture (292.4 ms a patch), 202.3 s wall clock, 96.20 % |
 | `justounetsimple_opt` | ZCU104 | 214 MHz | **measured 18.26 ms** for a whole capture, FPGA alone (5 882 cycles a patch; memory-bound); 19.2 ms wall clock |
 | `justounetsimple_opt_tiled` | ZCU104 | 4 ns target | conv1 in raster order, no patch buffer (below); **predicted** about as fast as `justounetsimple_opt` (memory-bound, conv1 5 285 cycles a patch), 648 DSPs on conv1 instead of 864; built in C++, bit-exact; not built |
-| `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider) |
-| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch) |
+| `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider); since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** 10 570 cycles a patch (+3 %), ~60 BRAM36 fewer; not built |
+| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch), with the patch buffer; since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** the same pace (the reads), ~60 of its 84.5 BRAM36 fewer; not built |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/justounetsimple_model.py`); same class as the float model on 99.96 % of the aegean pixels.
@@ -39,11 +39,11 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 | Preprocessing in hardware: band drop + integer z-score (int8, 5 fraction bits) | ✓ | ✓ | ✓ |
 | Fixed point: int8 weights, int8 into conv1, int16 activations, int32 sums | ✓ | ✓ | ✓ |
 | DATAFLOW, layers fused; maps never leave the chip | ✓ | ✓ | ✓ |
-| Ping-pong patch buffer: fill patch k+1 while conv1 reads patch k | UltraRAM | BRAM | BRAM |
+| Ping-pong patch buffer: fill patch k+1 while conv1 reads patch k (`justounetsimple_opt`); else a strip buffer (`pixel_buffer`, `_tiled` and since 2026-11-06 the 7030 and 7020) | UltraRAM / strip | strip (BRAM) | strip (BRAM) |
 | Read ports, each every n-th patch row | 4 × 128 bit | 4 × 64 bit (writer shares HP3) | 2 × 64 bit |
 | Read bursts requested ahead (`read_patch_rows`, `burst_maxi`); else one burst a row from a plain pointer (`read_patch_rows_simple`) | plain pointer (on trial, 2026-11-03) | ✓ (2 in flight) | ✓ (2 in flight) |
-| Line buffers + 3×3 shift-register window (`conv3x3_tiled_patch`; conv1 `conv3x3_2mul`) | ✓ | ✓ | ✓ |
-| conv1: P1 bands a cycle, band chunks accumulated | 32 | 12 | 8 |
+| Line buffers + 3×3 shift-register window (`conv3x3_tiled_patch`; conv1 `conv3x3_2mul` in `justounetsimple_opt`, `conv3x3_tiled` with a pixel in chunks elsewhere) | ✓ | ✓ | ✓ |
+| conv1: P1 bands a cycle, band chunks accumulated | 32 (`_tiled` 24) | 12 | 8 |
 | Two multiplies per DSP in conv1 | ✓ (DSP48E2, groups of 8) | ✓ (DSP48E1, groups of 2) | ✓ (DSP48E1, groups of 2) |
 | conv2-4: one output channel a cycle (narrow) / 2 inputs x 1 output a cycle (`conv3x3_tiled`) | narrow, DSP | grouped (2 in, 1 out), DSP | grouped (2 in, 1 out), LUTs |
 | ReLU in the conv (`activation::relu`), pool and upsample one process each (`max_pool`, `upsample`); before 2026-11-04 fused (`relu_pool`, `relu_pool_up`, `relu_up`) | ✓ | ✓ | ✓ |
@@ -56,17 +56,17 @@ All optimized kernels give the same answers bit for bit (`classify_fixed` in
 
 Each stage processes one patch at a time, one loop iteration per cycle (II = 1); the
 slowest stage sets the pace, T cycles per patch.
-- conv1: ceil(110 / P1) band chunks × 1 024 pixels + 33 (the window lag).
+- conv1: ceil(110 / P1) band chunks × 1 024 pixels + 33 (the window lag); chunked (`conv3x3_tiled`), ceil(110 / P1) × (1 024 + 33).
 - A reader: (32 / ports) rows × 32 pixels × words per pixel.
 
 | Stage | ZCU104 | 7030 | 7020 |
 |---|---|---|---|
 | read (per port) | 3 840 | 7 680 | **15 360** |
-| patch_buffer | 4 096 | 10 240 | 14 336 |
-| conv1 | **4 129** | **10 273** | 14 369 |
+| patch_buffer (ZCU104 `_opt`); strip buffer (7030, 7020, since 2026-11-06) | 4 096 | 10 240 | 15 360 |
+| conv1 | **4 129** | **10 570** (10 273 before 2026-11-06) | 14 798 (14 369) |
 | conv2 / conv3 / conv4 | 3 276 / 1 638 / 3 171 | 9 216 each | 9 216 each |
 | pool, upsample, store (ZCU104: one process each, the ReLU in its conv) | ≤ 1 280 | small | small |
-| **T** | **4 129** (conv1) | **10 273** (conv1) | **15 360** (readers) |
+| **T** | **4 129** (conv1) | **10 570** (conv1; 10 273 before 2026-11-06) | **15 360** (readers) |
 | DSPs | ~1 112 (conv1 864, conv2-4 216, z-score 32) | 378 of 400 (conv1 324, conv2-4 54) | 216 of 220 (conv1) |
 
 conv1's DSPs: OUT / 2 pairs × P1 × 9 taps (packed), so 3 × 12 × 9 = 324 on the 7030; 16
@@ -77,7 +77,7 @@ bands would need 432. Utilization of conv1's multipliers: u = 6.08 M / (T × 6 �
 
 `justounetsimple_opt` with conv1 and what feeds it changed. `conv3x3_2mul` goes over a patch once
 per band chunk, so the whole 32 × 32 × 110 patch must wait in the ping-pong patch buffer (UltraRAM).
-`conv3x3_tiled_chunks` takes a pixel's bands as 5 chunks of 24, one a step, in raster order, so a
+`conv3x3_tiled`, given a stream of 24-band chunks, takes a pixel's bands as 5 chunks of 24, one a step, in raster order, so a
 strip buffer (`pixel_buffer`, as SpecPW-UNet's: one strip of 4 rows, ping-pong, BRAM) is enough; its
 line buffers hold 2 rows × 32 × 120 int8. The same arithmetic, so the same answers bit for bit
 (the same testbench checks; `tests/test_justounetsimple.py`).
@@ -85,7 +85,7 @@ line buffers hold 2 rows × 32 × 120 int8. The same arithmetic, so the same ans
 | | `justounetsimple_opt` | `justounetsimple_opt_tiled` |
 |---|---|---|
 | In front of conv1 | `patch_buffer`: a whole patch, ping-pong, UltraRAM; 4 096 cycles a patch | `pixel_buffer`: a strip, ping-pong, BRAM; 5 120 (8 strips × 4 rows × 32 pixels × 5 chunks) |
-| conv1 | `conv3x3_2mul`, 32 bands a step over the patch, 4 chunks: **4 129** cycles a patch | `conv3x3_tiled_chunks`, 24 bands × 6 outputs a step, 5 steps a pixel: 5 × (1 024 + 33) = **5 285** |
+| conv1 | `conv3x3_2mul`, 32 bands a step over the patch, 4 chunks: **4 129** cycles a patch | `conv3x3_tiled` (chunked, packed), 24 bands × 6 outputs a step, 5 steps a pixel: 5 × (1 024 + 33) = **5 285** |
 | conv1's DSPs (packed, groups of 8) | 3 pairs × 32 × 9 = 864 | 3 pairs × 24 × 9 = **648** |
 | Padding | 110 bands to 128 (18 zero weights) | 110 to 120 (10 zero weights) |
 | Readers' FIFOs | 64 | 512, BRAM (the strip buffer absorbs less of the bursts' jitter) |
@@ -98,12 +98,36 @@ line buffers hold 2 rows × 32 × 120 int8. The same arithmetic, so the same ans
   not registers; its window (3 × 3 × 120 int8, ~8.6 k FFs) and line buffers (48 LUTRAMs of 160 × 8);
   the DSP count (~648 + 216 + 32); and with cosim the cycles a patch against `justounetsimple_opt`'s,
   since without a patch buffer a reader's stall reaches conv1 sooner.
-- **Tested:** `tests/test_conv3x3_tiled_chunks.py` runs the module with the worst-case weights (-128,
+- **Not from the tiling:** the 216 DSPs come from the narrower conv1 (24 bands, which the DDR-bound
+  kernel can afford); `conv3x3_2mul` at 24 bands would need 648 too. The tiling's own gain is the
+  patch buffer.
+- **Tested:** `tests/test_conv3x3_tiled_chunked.py` runs the chunked conv with the worst-case weights (-128,
   127), int8 and uint8 inputs, junk in the padded bands and shorter last groups, which the network
-  never reaches. Mutation-tested (9 bugs: chunk shifted into the wrong place, one line memory for all
+  never reaches, on both packings (PACK_SHIFT 18 and 16). Mutation-tested (9 bugs: chunk shifted into the wrong place, one line memory for all
   chunks, the column advanced every chunk, groups of 16, a pair swapped, the top padding, padded
   bands' weights not zero, the last short group dropped, the borrow): the testbench catches 5, the
   module test all 9.
+
+## Zynq-7030 and 7020: conv1 chunked, no patch buffer (2026-11-06)
+
+conv1 as in `_tiled`: `pixel_buffer` (a strip of `READ_PORTS` rows) and `conv3x3_tiled` with a pixel's
+bands in chunks of P1, packed. The DSPs do not change: on the 7020 the reads need P1 = 8 (7 bands
+would be 16 chunks, ~16 900 cycles, slower than the reads), on the 7030 the DSPs limit P1 to 12 (a
+chunk is whole 4-band words: 16 would need 432 DSPs). The gain is the patch buffer's block RAM.
+
+| | 7030 | 7020 |
+|---|---|---|
+| Strip buffer, cycles a patch | 8 strips × max(960 fill, 4 × 32 × 10 emit) = 10 240 | 16 × max(960, 2 × 32 × 14) = 15 360 |
+| conv1 (`conv3x3_tiled`, chunked) | 10 × (1 024 + 33) = **10 570** (`conv3x3_2mul` 10 273: the lag of 33 is paid per chunk) | 14 × 1 057 = **14 798**, under the reads |
+| **T** | **10 570** (+3 %) | **15 360**, the reads, as before |
+| conv1's DSPs (packed, groups of 2) | 3 × 12 × 9 = 324 | 3 × 8 × 9 = 216 |
+| Patch buffer → strip buffer | ~60 BRAM36 → ~4 | 64 BRAM36 → ~4 (and `conv3x3_2mul`'s per-pixel sums, ~6) |
+| Readers' FIFOs | 512, BRAM | 512, BRAM |
+
+- **To check on the build:** conv1 Final II = 1; the DSP count (216 / 324); BRAM36 (the 7020's
+  84.5 should drop by ~60); FFs: the window is 3 × 3 × 112 (7020) / 120 (7030) int8, ~8-9 k FFs, and the
+  7020 is the chip that ran short of FFs for `sp_unet_small_opt_zynq7020`; then cosim's cycles a patch,
+  and on the ZedBoard the time against 143.8 ms.
 
 ## Inference time
 
@@ -113,7 +137,7 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 | Board | T | clock | time |
 |---|---|---|---|
 | ZCU104 | 4 129 | 187.5 MHz | **14.7 ms** (13.7 at 200 MHz) if memory kept up; **measured 18.26 ms at 214 MHz** (5 882 cycles a patch: its reads get ~9.0 GB/s, though DDR gives 13) and **17.87 ms at 250 MHz** (6 718 cycles, 26.87 us a patch) |
-| Zynq-7030 | 10 273 | 100 MHz | **68 ms**, if DDR gives the four ports 2.4 GB/s together (check on HYPSO-2) |
+| Zynq-7030 | 10 273 (10 570 since 2026-11-06) | 100 MHz | **68 ms** (70 ms), if DDR gives the four ports 2.4 GB/s together (check on HYPSO-2) |
 | Zynq-7020 | 15 360 | 78.1 MHz | **131 ms**; **measured 143.8 ms at 76.189 MHz** (~16 480 cycles a patch, +7 %: DDR) |
 
 ## Boards: limits, differences and why
@@ -124,7 +148,7 @@ a 598 × 1092 capture is 19 × 35 = 665 patches.
 | DSPs / LUTs | 1 728 / 230 k | 400 / 79 k | 220 / 53 k |
 | conv1's width | 32 bands a cycle, 864 DSPs packed | 12 bands a cycle, 324 DSPs packed | 8 bands a cycle, 216 DSPs packed |
 | conv2-4 | DSPs (plenty) | DSPs (76 left after conv1) | LUTs (4 DSPs left) |
-| Patch buffer | UltraRAM | BRAM (~60 of 265 BRAM36) | BRAM (56 of 140 BRAM36) |
+| Patch buffer | UltraRAM (`_tiled`: none) | none since 2026-11-06 (was BRAM, ~60 of 265 BRAM36) | none since 2026-11-06 (was BRAM, 64 of the 84.5 BRAM36 measured) |
 | Ports | 4 read + 1 write, 128 bit | 4 read + 1 write sharing HP3, 64 bit (4 HP ports) | 2 + 1, 64 bit |
 | Reads needed at T (bytes a patch / T × clock) | 11.2 GB/s of 4 × 3.0 | 2.4 GB/s of 4 × 0.8 | 1.25 GB/s of 2 × 0.62 (the limit) |
 
@@ -282,3 +306,14 @@ Routed, kernel alone (without the interconnects); by process in
   wider word as slices of its input channels, a memory each (`tiled_slices`): conv1 is 6 slices of
   2 916 bits; every narrower word is one slice, as before. Same arithmetic; every kernel bit-exact
   (native). Not built.
+- 2026-11-06: `conv3x3_tiled_chunks` merged into `conv3x3_tiled`: the input stream's width says whether a
+  pixel comes whole or in chunks of `IN_PER_CYCLE`; `PACKED` takes int8 as well as uint8 (the group from
+  the input's range); a chunked `IN_CHANNELS` is padded with zero weights. Whole-pixel layers compile
+  to the same code as before (one word a pixel: every new index a constant). `justounetsimple_opt_tiled`
+  calls `conv3x3_tiled`. Every kernel bit-exact (native); module test on PACK_SHIFT 18 and 16,
+  mutation-tested (5 bugs, all caught). Not built: check one built kernel (e.g. `sp_unet_small_opt`)
+  for unchanged II, DSPs and LUTs.
+- 2026-11-06: `justounetsimple_opt_zynq7030` and `_zynq7020`: conv1 chunked (`conv3x3_tiled`, packed) behind
+  `pixel_buffer`, instead of `conv3x3_2mul` behind `patch_buffer`; readers' FIFOs 512 deep in BRAM.
+  **Predicted** 7030 10 570 cycles a patch (+3 %), 7020 unchanged (the reads); ~60 BRAM36 fewer on each;
+  same DSPs. Bit-exact (native). Not built.

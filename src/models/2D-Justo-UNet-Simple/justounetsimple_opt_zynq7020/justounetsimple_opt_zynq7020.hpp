@@ -9,7 +9,9 @@
 namespace zscore = zscore_int8;
 
 // justounetsimple_opt for the Zynq-7020 (--board zynq7020 or zedboard): the same answers,
-// conv1 on 216 of the 220 DSPs, everything else in LUTs, two 64-bit read ports.
+// conv1 on 216 of the 220 DSPs, everything else in LUTs, two 64-bit read ports. conv1 in
+// raster order (conv3x3_tiled, a pixel in chunks), fed from a strip buffer (pixel_buffer):
+// no patch buffer.
 
 constexpr int PATCH_SIZE = 32;            // patches are 32 x 32 pixels
 constexpr int CUBE_BANDS = 120;           // bands per pixel in the raw cube
@@ -19,6 +21,9 @@ constexpr int CLASSES = 3;
 constexpr int READ_PORTS = 2;
 constexpr int BANDS_PER_WORD = 4;         // one 64-bit word
 constexpr int CONV1_BANDS_PER_CYCLE = 8;
+// conv1: a pixel's 110 bands in 14 chunks of 8 (the last padded with zero weights), all 6
+// outputs a step: 14 x (1 024 + 33) = 14 798 cycles a patch, under the reads (15 360).
+constexpr int CONV1_CHUNKS = (MODEL_BANDS + CONV1_BANDS_PER_CYCLE - 1) / CONV1_BANDS_PER_CYCLE;
 constexpr int CONV2_TO_4_CHANNELS_PER_CYCLE = 2;
 
 constexpr int ZSCORE_FRAC_BITS = 5;       // fraction bits of the int8 z-scores
@@ -36,7 +41,6 @@ constexpr bool CONV2_TO_4_ON_DSPS = false;
 
 // Chip variables for implementation:
 constexpr int DSP_PACK_SHIFT = 16;   // DSP48E1, 25-bit input: two weights 16 bits apart (dsp_pack.hpp)
-constexpr bool HAS_URAM = false;                         // no UltraRAM: the patch buffer in block RAM
 
 // The argument names become the kernel's register names: keep them.
 void justounetsimple_opt_zynq7020(const cube_word_t* din0, const cube_word_t* din1,

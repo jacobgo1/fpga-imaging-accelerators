@@ -6,11 +6,11 @@
 #include "window3x3.hpp"
 #include "patch_grid.hpp"
 
-// A same-padded 3x3 conv of one map, streamed: a pixel with all its channels in,
-// raster order; its outputs out, the same order. Two lines of input are kept on
-// chip, the window in registers; its centre trails the input by a row and a
-// pixel, so the loop runs W + 1 pixels past the last input, and taps outside the
-// map are zeroed by the centre's position.
+// A same-padded 3x3 conv of one map, streamed: pixels in raster order in, their
+// outputs out, the same order. Two lines of input are kept on chip, the window in
+// registers; its centre trails the input by a row and a pixel, so the loop runs
+// W + 1 pixels past the last input, and taps outside the map are zeroed by the
+// centre's position.
 //
 // Sized for any time a pixel: a step is the whole window for IN_PER_CYCLE input
 // channels times OUT_PER_CYCLE output channels (IN_PER_CYCLE = IN_CHANNELS for a
@@ -18,10 +18,17 @@
 // Out the sums, or with activation::relu ReLU'd and rounded off ROUND_BITS bits
 // to activations, so no ReLU module is needed after it.
 //
-// IN_T: the input activations' type, int16 or uint8, multiplied as it is.
-// PACKED: two multiplies per DSP (dsp_pack.hpp), uint8 inputs only. Output channels
-// 2j and 2j + 1 of a step share every activation, so a pair's IN_PER_CYCLE x 9
-// products go in groups of pack_group (4 on the DSP48E2), the last one shorter
+// The input stream's width says how a pixel comes in: all its channels in one word
+// (IN_CHANNELS wide, read at the pixel's first step), or, for a first layer of many
+// bands (from pixel_buffer), IN_GROUPS chunks of IN_PER_CYCLE, one a step of the
+// first output group, the step that first uses it. Chunked, IN_CHANNELS need not
+// divide: the last chunk's channels past it get zero weights.
+//
+// IN_T: the input activations' type, int16, int8 or uint8, multiplied as it is.
+// PACKED: two multiplies per DSP (dsp_pack.hpp), 8-bit inputs only: int8 in
+// -127 .. 127 or uint8. Output channels 2j and 2j + 1 of a step share every
+// activation, so a pair's IN_PER_CYCLE x 9 products go in groups of pack_group
+// (int8 8, uint8 4 on the DSP48E2; 2 and 1 on the DSP48E1), the last one shorter
 // when they do not divide; each group's sum is split into the two channels.
 // PACK_SHIFT: the chip's packing (the kernel's DSP_PACK_SHIFT).
 //
@@ -29,6 +36,11 @@
 // thousand small ones made sp_unet_large_opt too congested to route. HLS packs a
 // word at most 4096 bits wide, so a wider one is kept as a few slices of its input
 // channels, a memory each (tiled_slices).
+
+// Input groups a pixel, the last one padded; the largest input a packed group must hold.
+constexpr int tiled_groups(int channels, int per_cycle) { return (channels + per_cycle - 1) / per_cycle; }
+template<typename IN_T> constexpr int input_max() { return std::is_same<IN_T, uact_t>::value ? 255 : 127; }
+
 template<int IN_PER_CYCLE, int OUT_PER_CYCLE>
 struct tiled_word_t {
     weight_t v[OUT_PER_CYCLE][IN_PER_CYCLE][3][3];
@@ -160,27 +172,34 @@ void tiled_finish(int j, sum_t sum, int og, int ig, const sum_t bias[OUT_GROUPS]
 }
 
 template<int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE,
-         activation A, int ROUND_BITS, bool DSP, bool PACKED, int PACK_SHIFT, typename IN_T>
+         activation A, int ROUND_BITS, bool DSP, bool PACKED, int PACK_SHIFT, typename IN_T, int IN_WIDTH>
 void conv3x3_tiled_patch(
-    hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
+    hls::stream<vec_t<IN_T, IN_WIDTH> >& in,
     const typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * tiled_groups(IN_CHANNELS, IN_PER_CYCLE)]
               [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     const sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE],
     hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out) {
-    constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
+    constexpr int IN_GROUPS = tiled_groups(IN_CHANNELS, IN_PER_CYCLE), OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
+    constexpr int PADDED = IN_GROUPS * IN_PER_CYCLE;
+    constexpr int IN_WORDS = PADDED / IN_WIDTH;   // words a pixel: 1 whole, IN_GROUPS chunked
     constexpr int PIXELS = MAP_HEIGHT * MAP_WIDTH, LAG = MAP_WIDTH + 1;
-    constexpr int TAPS = IN_PER_CYCLE * 9, GROUP = pack_group<PACK_SHIFT, 255>();
+    constexpr int TAPS = IN_PER_CYCLE * 9, GROUP = pack_group<PACK_SHIFT, input_max<IN_T>()>();
     static_assert((MAP_WIDTH & (MAP_WIDTH - 1)) == 0, "a power of two: the centre's y and x are shifts");
-    static_assert(!PACKED || (std::is_same<IN_T, uact_t>::value && OUT_PER_CYCLE % 2 == 0),
-                  "packed: uint8 inputs and whole pairs of output channels");
+    static_assert(IN_WIDTH == PADDED || IN_WIDTH == IN_PER_CYCLE,
+                  "a pixel whole (IN_PER_CYCLE dividing IN_CHANNELS) or in chunks of IN_PER_CYCLE");
+    static_assert(!PACKED || ((std::is_same<IN_T, uact_t>::value || std::is_same<IN_T, act8_t>::value)
+                              && OUT_PER_CYCLE % 2 == 0),
+                  "packed: 8-bit inputs and whole pairs of output channels");
     typedef typename conv_out<A, ROUND_BITS>::type out_t;
     typedef typename tiled_word_of<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::type word_t;
 
-    IN_T lines[2][MAP_WIDTH][IN_CHANNELS];
+    // The lines: a word's channels a memory each, the word of the pixel in the address
+    // (a bank chosen at run time would duplicate the stores).
+    IN_T lines[2][IN_WORDS * MAP_WIDTH][IN_WIDTH];
     #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=1
     #pragma HLS ARRAY_PARTITION variable=lines type=complete dim=3
-    IN_T window[3][3][IN_CHANNELS];
+    IN_T window[3][3][PADDED];
     #pragma HLS ARRAY_PARTITION variable=window type=complete dim=0
     out_t outputs[OUT_CHANNELS];
     #pragma HLS ARRAY_PARTITION variable=outputs type=complete
@@ -195,12 +214,35 @@ void conv3x3_tiled_patch(
             in_groups: for (int ig = 0; ig < IN_GROUPS; ig++) {
                 #pragma HLS PIPELINE II=1
                 #pragma HLS DEPENDENCE variable=lines type=inter false
-                // A pixel's first step takes input pixel p in; past the last, zeros.
-                if (og == 0 && ig == 0) {
+                // The first output group's first IN_WORDS steps take input pixel p in,
+                // a word each (whole: step 0 only); past the last pixel, zeros.
+                if (og == 0 && ig < IN_WORDS) {
                     const bool have = p < PIXELS;
-                    vec_t<IN_T, IN_CHANNELS> value;
+                    vec_t<IN_T, IN_WIDTH> value;
                     if (have) value = in.read();
-                    shift_window<MAP_WIDTH, IN_CHANNELS>(lines, window, in_col, value, have);
+                    const int address = (IN_WORDS == 1 ? 0 : ig) * MAP_WIDTH + in_col;
+                    for (int c = 0; c < IN_WIDTH; c++) {
+                        #pragma HLS UNROLL
+                        const IN_T two_up = lines[0][address][c], one_up = lines[1][address][c];
+                        const IN_T now = have ? value.v[c] : (IN_T)0;
+                        lines[0][address][c] = one_up;
+                        lines[1][address][c] = now;
+                        for (int w = 0; w < IN_WORDS; w++) {
+                            #pragma HLS UNROLL
+                            if (IN_WORDS == 1 || w == ig) {
+                                const int ch = w * IN_WIDTH + c;
+                                for (int ky = 0; ky < 3; ky++) {
+                                    #pragma HLS UNROLL
+                                    window[ky][0][ch] = window[ky][1][ch];
+                                    window[ky][1][ch] = window[ky][2][ch];
+                                }
+                                window[0][2][ch] = two_up;
+                                window[1][2][ch] = one_up;
+                                window[2][2][ch] = now;
+                            }
+                        }
+                    }
+                    if (ig == IN_WORDS - 1) in_col = (in_col == MAP_WIDTH - 1) ? 0 : in_col + 1;
                 }
 
                 // The window's centre is pixel p - LAG.
@@ -265,15 +307,16 @@ void conv3x3_tiled_patch(
 }
 
 // The weights a word a step, in the order the steps take them, read from the
-// ROM once, when the layer starts; packed, channel 2j + 1's above 2j's.
+// ROM once, when the layer starts; packed, channel 2j + 1's above 2j's; zeros
+// past IN_CHANNELS.
 template<bool PACKED, int IN_CHANNELS, int OUT_CHANNELS, int IN_PER_CYCLE, int OUT_PER_CYCLE, int PACK_SHIFT,
          int BIAS_SHIFT, const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS]>
 void load_tiled_weights(
     typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * tiled_groups(IN_CHANNELS, IN_PER_CYCLE)]
               [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE]) {
-    constexpr int IN_GROUPS = IN_CHANNELS / IN_PER_CYCLE, OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
+    constexpr int IN_GROUPS = tiled_groups(IN_CHANNELS, IN_PER_CYCLE), OUT_GROUPS = OUT_CHANNELS / OUT_PER_CYCLE;
     load_w: for (int og = 0; og < OUT_GROUPS; og++)
         for (int ig = 0; ig < IN_GROUPS; ig++) {
             #pragma HLS PIPELINE
@@ -287,12 +330,16 @@ void load_tiled_weights(
                         for (int kx = 0; kx < 3; kx++) {
                             #pragma HLS UNROLL
                             const int in_ch = ig * IN_PER_CYCLE + i;
+                            const bool real = in_ch < IN_CHANNELS;
+                            const int source = real ? in_ch : IN_CHANNELS - 1;   // never read past the array
                             if (PACKED) {
                                 const int low = PACKED ? og * OUT_PER_CYCLE + 2 * j : 0;   // in range either way
                                 set_packed_tap<PACK_SHIFT>(word, j, i, ky, kx, pack_weights<PACK_SHIFT>(
-                                    WEIGHT[low + 1][in_ch][ky][kx], WEIGHT[low][in_ch][ky][kx]));
+                                    real ? WEIGHT[low + 1][source][ky][kx] : (weight_t)0,
+                                    real ? WEIGHT[low][source][ky][kx] : (weight_t)0));
                             } else {
-                                set_plain_tap(word, j, i, ky, kx, WEIGHT[og * OUT_PER_CYCLE + j][in_ch][ky][kx]);
+                                set_plain_tap(word, j, i, ky, kx,
+                                              real ? WEIGHT[og * OUT_PER_CYCLE + j][source][ky][kx] : (weight_t)0);
                             }
                         }
                     }
@@ -310,12 +357,12 @@ void load_tiled_weights(
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int OUT_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
-         activation A, int ROUND_BITS, bool PACKED, int PACK_SHIFT, typename IN_T>
+         activation A, int ROUND_BITS, bool PACKED, int PACK_SHIFT, typename IN_T, int IN_WIDTH>
 void conv3x3_tiled_layer(
     typename tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::slice_t
-        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE)]
+        weight[(OUT_CHANNELS / OUT_PER_CYCLE) * tiled_groups(IN_CHANNELS, IN_PER_CYCLE)]
               [tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT>::SLICES],
-    hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
+    hls::stream<vec_t<IN_T, IN_WIDTH> >& in,
     hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out, int height, int width) {
     #pragma HLS INLINE
     sum_t bias[OUT_CHANNELS / OUT_PER_CYCLE][OUT_PER_CYCLE];
@@ -331,16 +378,17 @@ void conv3x3_tiled_layer(
 
 // The weight memory is block RAM when deep, LUTs when shallow (block RAM would
 // be mostly empty). impl takes only a literal word: one declaration each.
-// PACKED, PACK_SHIFT, IN_T: see conv3x3_tiled_patch (IN_T follows from in).
+// PACKED, PACK_SHIFT, IN_T, IN_WIDTH: see conv3x3_tiled_patch (IN_T and IN_WIDTH,
+// whole pixel or chunk, follow from in).
 template<int PATCH_HEIGHT, int PATCH_WIDTH, int MAP_HEIGHT, int MAP_WIDTH, int IN_CHANNELS, int OUT_CHANNELS,
          int IN_PER_CYCLE, int OUT_PER_CYCLE, int BIAS_SHIFT,
          const weight_t (&WEIGHT)[OUT_CHANNELS][IN_CHANNELS][3][3], const weight_t (&BIAS)[OUT_CHANNELS], bool DSP,
          activation A = activation::none, int ROUND_BITS = 0, bool PACKED = false, int PACK_SHIFT = 18,
-         typename IN_T = act_t>
-void conv3x3_tiled(hls::stream<vec_t<IN_T, IN_CHANNELS> >& in,
+         typename IN_T = act_t, int IN_WIDTH = IN_CHANNELS>
+void conv3x3_tiled(hls::stream<vec_t<IN_T, IN_WIDTH> >& in,
                    hls::stream<vec_t<typename conv_out<A, ROUND_BITS>::type, OUT_CHANNELS> >& out,
                    int height, int width) {
-    constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * (IN_CHANNELS / IN_PER_CYCLE);
+    constexpr int STEPS = (OUT_CHANNELS / OUT_PER_CYCLE) * tiled_groups(IN_CHANNELS, IN_PER_CYCLE);
     typedef tiled_slices<PACKED, IN_PER_CYCLE, OUT_PER_CYCLE, PACK_SHIFT> slices;
     typedef typename slices::slice_t slice_t;
     if (STEPS > 64) {

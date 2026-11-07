@@ -5,7 +5,7 @@
 #include "../../../common/hls_burst_maxi_shim.hpp"
 #include "../../../optimized/zscore_int8.hpp"
 
-// justounetsimple_opt with conv1 in raster order (conv3x3_tiled_chunks), fed pixel by
+// justounetsimple_opt with conv1 in raster order (conv3x3_tiled, a pixel in chunks), fed pixel by
 // pixel from a strip buffer (pixel_buffer), so no patch buffer; the same answers.
 namespace zscore = zscore_int8;
 

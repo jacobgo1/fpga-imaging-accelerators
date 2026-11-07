@@ -79,12 +79,12 @@ the performance model, the predictions for the 7020/7030 and the ideas still to 
 such as hard-wired weights, are in docs/justoliunet_opt_design.md),
 `justounetsimple` (golden baseline), `justounetsimple_opt` (fast,
 ZCU104), `justounetsimple_opt_tiled` (the same answers, ZCU104: conv1 in raster order,
-conv3x3_tiled_chunks, a pixel's 110 bands in 5 chunks of 24 from pixel_buffer, so no patch
+conv3x3_tiled packed with a pixel's 110 bands in 5 chunks of 24 from pixel_buffer, so no patch
 buffer; 648 DSPs on conv1 instead of 864, 5 285 cycles a patch, under the reads),
 `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips (the 7030 one is the 7020's, wider: 12 bands a cycle, four
-read ports, its fifth m_axi port sharing HP3): build them with `--board zynq7020` / `zynq7030`; same
-answers, they share the testbench's checks),
+read ports, its fifth m_axi port sharing HP3), conv1 as in `_tiled` (chunks of 8 / 12, no patch
+buffer): build them with `--board zynq7020` / `zynq7030`; same answers, they share the testbench's checks),
 `sp_unet_small`, `sp_unet_medium`, `sp_unet_large` (golden baselines of SpecPW-UNet, the
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
 from src/golden/layers.hpp, the network in src/models/SpecPW-UNet/specpw_unet.hpp; numpy model and the bit-exact integer model
@@ -174,8 +174,8 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/dsp_pack.hpp`, AMD WP486; used by conv3x3_2mul, pointwise_packed and
-  the 1D convs): int8 activations in -127..127, or uint8. The DSP's wide input sets the
+  (`src/optimized/dsp_pack.hpp`, AMD WP486; used by conv3x3_2mul, conv3x3_tiled's PACKED mode,
+  pointwise_packed and the 1D convs): int8 activations in -127..127, or uint8. The DSP's wide input sets the
   spacing, the kernel's DSP_PACK_SHIFT: 18 bits on the UltraScale+ DSP48E2 (27-bit input),
   16 on the 7-series DSP48E1 (25-bit); how many products a DSP chain adds follows from it. Check the DSP
   count in the csynth report: about 864 for the ZCU104's conv1, 324 for the 7030's, 216 for the

@@ -1,7 +1,6 @@
 #include "justounetsimple_opt_tiled.hpp"
 #include "../../../optimized/read_patch_rows_simple.hpp"
 #include "../../../optimized/pixel_buffer.hpp"
-#include "../../../optimized/conv3x3_tiled_chunks.hpp"
 #include "../../../optimized/conv3x3_tiled.hpp"
 #include "../../../optimized/max_pool.hpp"
 #include "../../../optimized/upsample.hpp"
@@ -77,9 +76,9 @@ void justounetsimple_opt_tiled(const cube_word_t* din0, const cube_word_t* din1,
         cube_words, zscores, height, width);
 
     // conv1: 110 -> 6 at 32 x 32, a pixel's 24-band chunks in, two multiplies per DSP; ReLU; pool.
-    conv3x3_tiled_chunks<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
-                         CONV1_BANDS_PER_CYCLE, BASE_CHANNELS, CONV1_BIAS_SHIFT, weights::conv1_weight,
-                         weights::conv1_bias, DSP_PACK_SHIFT, activation::relu, CONV1_OUTPUT_SHIFT>(
+    conv3x3_tiled<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, BASE_CHANNELS,
+                  CONV1_BANDS_PER_CYCLE, BASE_CHANNELS, CONV1_BIAS_SHIFT, weights::conv1_weight,
+                  weights::conv1_bias, true, activation::relu, CONV1_OUTPUT_SHIFT, true, DSP_PACK_SHIFT>(
         zscores, conv1_act, height, width);
     max_pool<PATCH_SIZE, PATCH_SIZE, PATCH_SIZE, PATCH_SIZE>(conv1_act, conv1_pooled, height, width);
 
