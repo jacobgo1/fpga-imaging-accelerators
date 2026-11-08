@@ -53,7 +53,9 @@ software/pynq/        the board notebooks every model shares: classify_golden.ip
                      benchmark.ipynb, uploaded on its own to the top of the Jupyter folder: every
                      ZCU104 optimized kernel (from its KERNEL_pynq/) on five images, one report
 software/opu/        classify.c: the C program every optimized kernel runs on the OPU system's
-                     PetaLinux (no PYNQ); main.py builds it with the kernel's registers
+                     PetaLinux (no PYNQ); main.py builds it with the kernel's registers.
+                     benchmark.sh, copied on its own to the board: every ZedBoard optimized
+                     kernel (from its KERNEL_opu/) on five images, one report, as benchmark.ipynb
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does
@@ -108,7 +110,12 @@ fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`
 memories (conv3x3_tiled_ram), a tap or a window column a step, their ReLU inside, one 64-bit read
 port, 2-deep FIFOs between the processes; T = 76 176 cycles a patch, measured 665 ms on the
 ZedBoard; the chain in
-src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/), `spectralpointwise1d` (golden baseline of
+src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/), `sp_unet_small_opt_u8_zynq7020` (the same with
+uint8 activations as the _u8 kernels, conv3x3_tiled_ram's PACKED mode: two multiplies per DSP48E1, a group
+of one uint8 product; T = 39 456 cycles a patch, 198 DSPs designed) and `sp_unet_small_opt_u8_zynq7030`,
+`_medium_opt_u8_zynq7030`, `_large_opt_u8_zynq7030` (the same chain for the 7030, `--board zynq7030`:
+T = 22 194 / 78 912 / 152 352, 364 / 287 / 303 DSPs; small reads with two ports); bit for bit the _u8
+kernels; not built yet, see sp_unet.md), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
 and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
@@ -174,7 +181,7 @@ those are the user's, on the lab server, every time.
 - Bursts need consecutive addresses in one loop: read whole patch rows.
 - Vitis warns that UltraRAM does not use read-first mode; BRAM is the fallback.
 - Two int8 multiplies fit in one DSP when they share an operand
-  (`src/optimized/dsp_pack.hpp`, AMD WP486; used by conv3x3_2mul, conv3x3_tiled's PACKED mode,
+  (`src/optimized/dsp_pack.hpp`, AMD WP486; used by conv3x3_2mul, conv3x3_tiled's and conv3x3_tiled_ram's PACKED mode,
   pointwise_packed and the 1D convs): int8 activations in -127..127, or uint8. The DSP's wide input sets the
   spacing, the kernel's DSP_PACK_SHIFT: 18 bits on the UltraScale+ DSP48E2 (27-bit input),
   16 on the 7-series DSP48E1 (25-bit); how many products a DSP chain adds follows from it. Check the DSP

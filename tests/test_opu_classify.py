@@ -6,6 +6,7 @@ cube), checked against the labels.
 import gc
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,9 @@ void reg_write(struct board *, unsigned offset, uint32_t value) {
     cube_word_t *d = (cube_word_t *)at(dins[0], (size_t)h * w * CUBE_BANDS * 2);
     score_word_t *out = (score_word_t *)at(REG_DOUT, (size_t)h * w * sizeof(score_word_t));
     KERNEL(d, d, out, h, w);
+#ifdef REG_CYCLES
+    regs[REG_CYCLES / 4] = 1000 + h * w;        // a count the tests can predict
+#endif
     regs[REG_AP_CTRL / 4] = 4 | 2;              // done, idle
     fprintf(stderr, "fake board: a start, %d x %d\n", h, w);
 }
@@ -85,13 +89,14 @@ class OpuClassifyTests(unittest.TestCase):
         gc.collect()
         self.tmp.cleanup()
 
-    def build(self, kernel):
-        """classify on the fake board, with KERNEL's registers."""
+    def build(self, kernel, cycles=False):
+        """classify on the fake board, with KERNEL's registers (and a cycle counter if cycles)."""
         prefix = f'#define X{kernel.upper()}_CONTROL_'
         header = ''.join(f'{prefix}{key} {value}\n' for key, value in (
             ('ADDR_AP_CTRL', '0x00'), ('ADDR_DIN0_DATA', '0x10'), ('BITS_DIN0_DATA', '64'),
             ('ADDR_DIN1_DATA', '0x1c'), ('BITS_DIN1_DATA', '64'), ('ADDR_DOUT_DATA', '0x28'),
-            ('BITS_DOUT_DATA', '64'), ('ADDR_HEIGHT_DATA', '0x34'), ('ADDR_WIDTH_DATA', '0x3c')))
+            ('BITS_DOUT_DATA', '64'), ('ADDR_HEIGHT_DATA', '0x34'), ('ADDR_WIDTH_DATA', '0x3c'))
+            + ((('ADDR_CYCLES_DATA', '0x44'),) if cycles else ()))
         (self.dir / 'kernel_regs.h').write_text(self.flow.opu_registers(header))
         subprocess.run([CC, '-std=c99', '-O2', '-Wall', '-Werror', '-DFAKE_BOARD', f'-I{self.dir}', '-c',
                         str(ROOT / 'software/opu/classify.c'), '-o', str(self.dir / 'classify.o')], check=True)
@@ -163,6 +168,71 @@ class OpuClassifyTests(unittest.TestCase):
         result = self.classify(exe, 'floats.npy', 1048576)
         self.assertEqual(result.returncode, 1)
         self.assertIn("expected '<u2'", result.stderr)
+
+    def test_own_cycle_count_added_up_over_the_strips(self):
+        kernel = 'justounetsimple_opt_zynq7020'
+        exe = self.build(kernel, cycles=True)
+        cube, *_ = self.cube_and_labels(kernel)
+        w = cube.shape[1]
+        # 70 rows in strips of 32: 32, 32 and 6.
+        result = self.classify(exe, 'cube.npy', 4096 + 64 * w * 120 * 2)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'own count:          {3000 + 70 * w} cycles', result.stdout)
+        # A kernel without the counter says nothing about it.
+        result = self.classify(self.build(kernel), 'cube.npy')
+        self.assertNotIn('own count', result.stdout)
+
+    @unittest.skipUnless(shutil.which('sh') and shutil.which('awk'), 'no sh and awk')
+    def test_benchmark_runs_every_kernel_on_every_image_and_writes_the_report(self):
+        """software/opu/benchmark.sh on a fake board: each kernel's classify (one with its own
+        count, one without), a kernel whose load.sh fails, two images."""
+        top = self.dir / 'board'
+        firmware = top / 'firmware'
+        firmware.mkdir(parents=True)
+        shutil.copy2(ROOT / 'software/opu/benchmark.sh', top)
+        want = {}
+        for kernel, cycles in zip(KERNELS, (True, False)):
+            folder = top / f'{kernel}_opu'
+            folder.mkdir()
+            shutil.copy2(self.build(kernel, cycles), folder / 'classify')
+            (folder / 'load.sh').write_text('echo "FCLK_CLK0: 100000 kHz, built for 100000 kHz"\n')
+        broken = top / 'justoliunet_opt_zynq7020_opu'
+        broken.mkdir()
+        (broken / 'classify').write_text('')
+        (broken / 'load.sh').write_text('echo "md5sum: FAILED"; exit 1\n')
+        # The same cube and labels for both images (the labels follow the first kernel's classes).
+        _, labels, *_ = self.cube_and_labels(next(iter(KERNELS)))
+        for image in ('one', 'two'):
+            (top / image).mkdir()
+            shutil.copy2(self.dir / 'cube.npy', top / image)
+            shutil.copy2(self.dir / 'labels.npy', top / image)
+        known = labels < 3
+        for kernel in KERNELS:
+            model = load_module(KERNELS[kernel], ROOT / 'tools' / f'{KERNELS[kernel]}.py')
+            classes = model.with_class(model.classify_fixed(np.load(self.dir / 'cube.npy')))[..., 3]
+            want[kernel] = 100 * (classes[known] == labels[known]).mean()
+        env = {**os.environ, 'FIRMWARE': str(firmware), 'FAKE_MEMORY': str(64 << 20), 'IMAGES': 'one two',
+               'KERNELS': ' '.join(list(KERNELS) + ['justoliunet_opt_zynq7020', 'sp_unet_small_opt_zynq7020'])}
+        result = subprocess.run(['sh', str(top / 'benchmark.sh')], capture_output=True, text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('skipped (no KERNEL_opu/classify): sp_unet_small_opt_zynq7020', result.stdout)
+        self.assertTrue((firmware / 'load.sh').exists(), 'the kernel files went to the firmware folder')
+        report = next((top / 'benchmark_results').glob('benchmark_*.md')).read_text()
+        rows = {line.split('|')[1].strip(): line for line in report.splitlines() if line.startswith('| `')}
+        h, w = labels.shape
+        counted, uncounted = KERNELS
+        self.assertIn(f'| `{counted}` | 100.0 | 2 | {(1000 + h * w) / 6:.2f} a patch | {(1000 + h * w) / 1e5:.3f} |',
+                      rows[f'`{counted}`'])
+        self.assertIn(f'| `{uncounted}` | 100.0 | 2 | - | - |', rows[f'`{uncounted}`'])
+        for kernel in KERNELS:
+            self.assertIn(f'| {want[kernel]:.2f}% | {want[kernel]:.2f}% |', rows[f'`{kernel}`'])
+        self.assertNotIn('`justoliunet_opt_zynq7020`', rows)
+        self.assertEqual(report.count('failed: load.sh: md5sum: FAILED'), 2)
+        self.assertEqual(report.count(f'| one | `'), 3)
+        self.assertIn(f'one ({h} x {w}), two ({h} x {w})', report)
+        csv_rows = next((top / 'benchmark_results').glob('benchmark_*.csv')).read_text().splitlines()
+        self.assertEqual(len(csv_rows), 1 + 3 * 2)
+        self.assertFalse((top / 'benchmark_results' / 'scores.npy').exists())
 
 
 if __name__ == '__main__':

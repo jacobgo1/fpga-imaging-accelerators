@@ -368,26 +368,28 @@ class SpecPWUNetTests(unittest.TestCase):
 
     @unittest.skipUnless(CXX, 'no C++ compiler')
     def test_optimized_kernels_match_classify_fixed_bit_for_bit(self):
-        """The whole raw-cube kernels, direct (_opt), uint8 (_opt_u8) and the Zynq-7020's, on
-        a real crop of 45 x 70 pixels (2 x 3 patches, the edge ones partly outside): what
-        classify_fixed (with the uint8 kernels' fraction bits for _u8) and the class say, every
-        value."""
+        """The whole raw-cube kernels, direct (_opt), uint8 (_opt_u8) and the Zynq-7000 ones
+        (_zynq7020, _u8_zynq7020, _u8_zynq7030), on a real crop of 45 x 70 pixels (2 x 3
+        patches, the edge ones partly outside): what classify_fixed (with the uint8 kernels'
+        fraction bits for the _u8 ones) and the class say, every value."""
         m = self.model
         cube = np.clip(np.rint(self.raw[:45, :70]), 0, 65535).astype(np.uint16)
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             cube.tofile(tmp / 'cube.bin')
             for name, size in [(f'{m.name(size)}_opt{kind}', size) for size in m.SIZES
-                               for kind in ('', '_u8', '_zynq7020')
-                               if kind != '_zynq7020' or size == 'small']:   # the 7020 fits small only
+                               for kind in ('', '_u8', '_zynq7020', '_u8_zynq7020', '_u8_zynq7030')
+                               if 'zynq7020' not in kind or size == 'small']:   # the 7020 fits small only
                 with self.subTest(kernel=name):
                     source_dir = kernel_dir(name)
-                    ports = 'din.data(), ' * (1 if name.endswith('zynq7020') else 4)   # read ports
+                    # Its read ports, din0, din1, ...: every one reads the cube.
+                    header = (source_dir / f'{name}.hpp').read_text(encoding='utf-8')
+                    ports = 'din.data(), ' * header.count('const cube_word_t* din')
                     compile_and_run(OPT_DRIVER.format(name=name, ports=ports), tmp, f'run_{name}',
                                     [source_dir], sorted(source_dir.glob('*.cpp')),
                                     [tmp / 'cube.bin', tmp / 'out.bin', 45, 70])
                     got = np.fromfile(tmp / 'out.bin', dtype=np.int32).reshape(45, 70, 4)
-                    if name.endswith('_u8'):
+                    if '_u8' in name:
                         want = m.kernel_reference(cube, self.quantized(size), fracs=m.act8_fracs(size),
                                                   act_max=m.U8_MAX)
                     else:

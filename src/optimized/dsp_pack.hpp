@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include "fixed_point.hpp"
 
 // Two multiplies in one DSP (AMD WP486). Output channels 2j and 2j + 1 share the
@@ -35,6 +36,9 @@ constexpr int pack_group() {
 }
 static_assert(pack_group<18, 127>() == 8 && pack_group<16, 127>() == 2, "int8 groups");
 static_assert(pack_group<18, 255>() == 4 && pack_group<16, 255>() == 1, "uint8 groups");
+
+// The largest input a packed group must hold: uint8 255, int8 127.
+template<typename IN_T> constexpr int input_max() { return std::is_same<IN_T, uact_t>::value ? 255 : 127; }
 
 // Channel 2j + 1's weight above channel 2j's. At load only (see above).
 template<int SHIFT>

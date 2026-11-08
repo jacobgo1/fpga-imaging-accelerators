@@ -1,10 +1,11 @@
 #ifndef SP_UNET_SMALL_OPT_DIRECT_ZYNQ7020_HLS_HPP
 #define SP_UNET_SMALL_OPT_DIRECT_ZYNQ7020_HLS_HPP
 
-#include "sp_unet_opt_zynq7020.hpp"
+#include "sp_unet_opt_zynq7000.hpp"
 
 // SpecPW-UNet small, direct convs, on the Zynq-7020: the chain and its
 // sizes are in the .cpp.
+constexpr int READ_PORTS = 1;
 // Every process takes at most T = 76 176 cycles a patch; the multipliers of each:
 namespace sizes {
 constexpr int CONVSP1_BANDS_PER_CYCLE = 20;                         // convsp1: 20 bands a chunk, 6 chunks

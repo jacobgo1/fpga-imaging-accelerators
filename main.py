@@ -320,6 +320,9 @@ def opu_registers(header):
     missing = [k for k in ('AP_CTRL', 'DOUT_DATA', 'HEIGHT_DATA', 'WIDTH_DATA') if k not in addr]
     if missing or not dins:
         raise SystemExit(f'The register map has no {", ".join(missing or ["DIN0_DATA"])}')
+    # The kernel's own cycle count, for the kernels that keep one.
+    cycles = f'#define REG_CYCLES {addr["CYCLES_DATA"]}   /* its own count of its cycles */\n' \
+        if 'CYCLES_DATA' in addr else ''
     return ('/* The kernel\'s registers, from its x..._hw.h, for the board\'s programs. Made by main.py. */\n'
             f'#define REG_AP_CTRL {addr["AP_CTRL"]}\n'
             f'#define REG_HEIGHT {addr["HEIGHT_DATA"]}\n'
@@ -327,7 +330,8 @@ def opu_registers(header):
             f'#define REG_DINS {{{", ".join(addr[k] for k in dins)}}}   /* every input port */\n'
             f'#define REG_DIN_64 {int(bits.get(dins[0]) == "64")}   /* addresses in two registers */\n'
             f'#define REG_DOUT {addr["DOUT_DATA"]}\n'
-            f'#define REG_DOUT_64 {int(bits.get("DOUT_DATA") == "64")}\n')
+            f'#define REG_DOUT_64 {int(bits.get("DOUT_DATA") == "64")}\n'
+            + cycles)
 
 
 def opu_compiler():

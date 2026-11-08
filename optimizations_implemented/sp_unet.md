@@ -49,6 +49,10 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
+| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; **predicted** 39 456 cycles a patch, ~345 ms at 76.189 MHz, 198 DSPs designed; not built yet |
+| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | the same for the 7030, two read ports; **predicted** 22 194 cycles a patch, ~148 ms at 100 MHz, 364 DSPs; not built yet |
+| `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 78 912 cycles a patch, ~526 ms, 287 DSPs; not built yet |
+| `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 152 352 cycles a patch, ~1.01 s, 303 DSPs; not built yet (LUTs the likeliest limit) |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -206,7 +210,7 @@ The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the s
 arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
 chip with 220 DSP48E1 (these use at most 205), 53 k LUTs, 106 k flip-flops, 140 BRAM36, no
 UltraRAM and 64-bit HP ports. The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/
-sp_unet_opt_zynq7020.hpp`; the chain and its sizes
+sp_unet_opt_zynq7000.hpp` (shared with the uint8 Zynq kernels below); the chain and its sizes
 table: its `.cpp`.
 
 On this chip the DSPs set the pace (the reads need 30 720 cycles a patch through one port, far
@@ -391,6 +395,72 @@ and lakeAlexandria/large are still to do:
 | hawkebay | large | 96.23 % | 96.21 % | -0.02 pp | 99.87 % | 0.0000 % |
 | lakeAlexandria | small | 95.45 % | 95.44 % | -0.00 pp | 99.90 % | 0.0000 % |
 | lakeAlexandria | medium | 96.12 % | 96.11 % | -0.01 pp | 99.89 % | 0.0000 % |
+
+## The uint8 Zynq-7000 kernels (`sp_unet_small_opt_u8_zynq7020`, `sp_unet_SIZE_opt_u8_zynq7030`)
+
+The Zynq-7020 kernel's chain with the `_u8` kernels' arithmetic: every activation uint8 with each
+layer's fixed fraction bits, so every 3x3 conv takes two multiplies per DSP48E1. Bit for bit the
+`_u8` kernels (`classify_fixed(..., fracs=act8_fracs(SIZE), act_max=U8_MAX)`), checked by the same
+testbench (`check_kernel_u8`) and, on a real crop, by `tests/test_specpw_unet.py`. Small on the 7020;
+small, medium and large on the 7030 (400 DSPs, 79 k LUTs, 265 BRAM36), the place for the larger
+sizes on a Zynq-7000. Medium and large are not made for the 7020: its LUTs, not its DSPs, stopped
+their int16 kernels (above), and packing does not shrink the conv engines' fixed cost.
+
+| | `sp_unet_small_opt_zynq7020` | `_u8_zynq7020` / `_u8_zynq7030` |
+|---|---|---|
+| Activations | int16, 10 fraction bits | uint8, each layer its own (`specpw_unet_act8_fracs.hpp`) |
+| 3x3 convs | `conv3x3_tiled_ram`, KT x PI x PO multipliers | `conv3x3_tiled_ram` with `PACKED`: output channels 2j and 2j + 1 share each tap, **KT x PI x PO / 2 DSPs** |
+| A DSP's group | — | **one product**: on the DSP48E1 the low channel has 16 bits, and one uint8 x int8 product (up to 32 640) fills them, so each product is split into its two channels on its own (`pack_group<16, 255>` = 1; the ZCU104's DSP48E2 adds 4) |
+| convsp1 | `pointwise_packed`, int16 out | the same, `activation::relu8` |
+| convsp2/3, final | `conv1x1`, a few DSPs | the same on uint8; the smallest (7020 convsp3 and final, 7030 small's too) as LUT multipliers, 8 x 8 bits |
+| Weight memories | 8 bits a multiplier | 25 bits a DSP (two weights packed at load, `DSP_PACK_SHIFT` 16) |
+| Read ports | 1 x 64 bit | 1; 2 on the 7030 small (HP0, HP1; the writer on HP2) |
+
+**Tables** (cycles a patch (H x W + W + 2) x 9/KT x IN/PI x OUT/PO; DSPs KT x PI x PO / 2; at equal
+DSPs the fewest output lanes, since each needs a rounding unit):
+
+| Layer (PI x PO x KT) | small, 7020 | small, 7030 | medium, 7030 | large, 7030 |
+|---|---|---|---|---|
+| convsp1 (bands a chunk, passes) | 36 864 (20, 6) | 21 504 (16, 3) | 73 728 (20, 12) | 114 688 (16, 16) |
+| double1 a / b | 38 088 (6x2x3) / 38 088 (6x2x3) | 19 044 (12x2x3) / 19 044 (12x2x3) | 76 176 (6x2x3) / 76 176 (12x2x3) | **152 352** (16x2x1) / **152 352** (32x2x1) |
+| double2 a / b | **39 456** (3x2x3) / **39 456** (6x2x3) | **22 194** (4x8x1) / **22 194** (8x8x1) | **78 912** (6x2x3) / **78 912** (12x2x3) | 105 216 (8x2x3) / 105 216 (16x2x3) |
+| up1 | **39 456** (6x2x3) | **22 194** (8x8x1) | **78 912** (12x2x3) | 105 216 (16x2x3) |
+| double3 a / b | **39 456** (3x2x3) / 29 592 (2x2x3) | **22 194** (8x4x1) / **22 194** (4x4x1) | **78 912** (6x2x3) / **78 912** (3x2x3) | 105 216 (8x2x3) / 105 216 (4x2x3) |
+| up2 | 38 088 (6x2x3) | 19 044 (12x2x3) | 76 176 (12x2x3) | **152 352** (32x2x1) |
+| double4 a / b | 38 088 (8x2x3) / 38 088 (8x2x1) | 19 044 (8x4x3) / 19 044 (8x4x1) | 76 176 (12x2x3) / 76 176 (3x2x3) | **152 352** (32x2x1) / **152 352** (8x2x1) |
+| **T** | **39 456** | **22 194** | **78 912** | **152 352** |
+| DSPs (convs + convsp1 + convsp2/3, final + z-score) | 146 + 40 + 8 + 4 = **198** | 276 + 64 + 16 + 8 = **364** | 252 + 20 + 11 + 4 = **287** | 276 + 16 + 7 + 4 = **303** |
+| Weight memories (rough, BRAM36) | ~58 (int16 table: ~21) | ~101 | ~94 | ~102 |
+| **predicted**, 666 x T | **~345 ms** at 76.189 MHz | **~148 ms** at 100 MHz | **~526 ms** | **~1.01 s** |
+| today | 665.7 ms (int16, measured) | — | — | — |
+
+- **7020 small:** the int16 kernel's 164 conv DSPs gave T = 76 176; packed, 146 give 39 456 (1.9x).
+  The stem had to follow: convsp1 40 DSPs (20 bands x 2 pairs a pass, 6 passes), convsp2 8. 198
+  designed; the int16 kernel routed 10 over its table (the z-score's 4 multipliers, 16 x 32 bits,
+  take 8), so ~208 of 220 expected. The read port's 30 720 cycles a patch stay below T.
+- **7030 small:** two read ports (15 360 cycles a patch); 364 DSPs designed, ~380 expected routed
+  (the z-score's 8 take 16). The next faster table (19 728) needs 403.
+- **7030 medium:** 287 DSPs; the next faster table (76 176, 3.5 % faster) needs 326, not worth its LUTs.
+- **7030 large:** kept to 303 DSPs. The next table, 105 216 cycles a patch (~701 ms, 1.45x
+  faster), needs 373: within the DSPs, but large's int16 7020 kernel was estimated at ~69 k LUTs
+  with 168 conv multipliers, and packed it has 552 products a cycle to add up. Build this one
+  first; if the route leaves LUTs, the faster table is only its `.hpp`'s ten lines.
+- **Block RAM** is wider per DSP than in the int16 kernels (25 bits a packed pair, not 8 a weight),
+  so the weight memories are ~3x; the row memories and the skip FIFO are half as wide. Within
+  140 / 265 BRAM36 by this estimate; to check in the reports.
+- **On the build, check:** the DSP count (convs as the tables: 146 / 276 / 252 / 276, the Bind Op
+  Report's `mul` on DSPs, one per packed product), Final II = 1 on every conv, LUTs (large first),
+  and the cycles a patch with cosim (`python3 main.py cosim --kernel K --board B`): the packed
+  split is new RTL on the DSP48E1, and csim passing does not prove it.
+
+**Testbench.** `tb/sp_unet_SIZE_opt_u8_zynq70X0/` with the shared `check_kernel_u8`: bit for bit
+on z-scores -4 .. 4 (with saturation) and -1 .. 1, scores within 0.25 of float (worst 0.19 / 0.15 /
+0.12, as the `_u8` kernels). The packed `conv3x3_tiled_ram` on its own, with the worst-case
+weights: `tests/test_conv3x3_packed.py` (a group of two uint8 products fails there).
+Mutation-tested on the 7020 small and 7030 large kernels: swapping a pair's channels, swapping
+the packed weights at load, groups of 2, dropping the borrow in the split, dropping a product,
+the activation read as int8, a tap's weight from the wrong row, the wrong row memory, the next
+lane's weight: each fails.
 
 ## Integer formats (the bit-exact model)
 
@@ -641,3 +711,11 @@ Routed, kernel alone (without the interconnects); by process in
   aggregate limit). `conv3x3_tiled` now keeps a wider word as slices of its input channels, a memory
   each (`tiled_slices`): those layers are 2 slices of 2 187 bits; every other layer is one slice, as
   before. Same arithmetic; every `_opt` and `_opt_u8` kernel bit-exact (native). Not built.
+- 2026-11-07: uint8 Zynq-7000 kernels: `sp_unet_small_opt_u8_zynq7020` and `sp_unet_small_opt_u8_zynq7030`,
+  `sp_unet_medium_opt_u8_zynq7030`, `sp_unet_large_opt_u8_zynq7030` (tables in "The uint8 Zynq-7000
+  kernels"): `conv3x3_tiled_ram` has a `PACKED` mode (two multiplies per DSP48E1, a group of one uint8
+  product, the weights packed at load) and takes uint8 inputs; **predicted** T = 39 456 / 22 194 /
+  78 912 / 152 352 cycles a patch, 198 / 364 / 287 / 303 DSPs. Bit-exact against the uint8 model
+  (native, and on a real crop in the tests); not built. `sp_unet_opt_zynq7020.hpp` is now
+  `sp_unet_opt_zynq7000.hpp`, shared, with `READ_PORTS` in each kernel's header;
+  `sp_unet_small_opt_zynq7020` is bit-exact as before (native). `input_max` moved to `dsp_pack.hpp`.

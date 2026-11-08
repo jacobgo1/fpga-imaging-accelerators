@@ -37,9 +37,8 @@
 // word at most 4096 bits wide, so a wider one is kept as a few slices of its input
 // channels, a memory each (tiled_slices).
 
-// Input groups a pixel, the last one padded; the largest input a packed group must hold.
+// Input groups a pixel, the last one padded.
 constexpr int tiled_groups(int channels, int per_cycle) { return (channels + per_cycle - 1) / per_cycle; }
-template<typename IN_T> constexpr int input_max() { return std::is_same<IN_T, uact_t>::value ? 255 : 127; }
 
 template<int IN_PER_CYCLE, int OUT_PER_CYCLE>
 struct tiled_word_t {

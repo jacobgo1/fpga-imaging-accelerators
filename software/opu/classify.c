@@ -10,6 +10,8 @@
  * kernel wrote, H x W x 4 int32: the 3 scores * 2^OUT_FRAC, then the class. The classes
  * are checked against labels.npy in the cube's folder (H x W integers: 0 cloud, 1 land,
  * 2 sea, anything else unlabeled), which must be there: their accuracy and each class's IoU.
+ * A kernel that counts its own cycles (REG_CYCLES) has that count printed too, summed
+ * over the starts; the last line has the counts benchmark.sh adds up over images.
  *
  * The registers come from UIO (the overlay's "kernel" node, generic-uio), the buffers
  * from the devicetree's reserved memory (CubeDMA's: it must be idle). That memory is
@@ -264,6 +266,7 @@ int main(int argc, char **argv) {
 
     double loading = 0, fpga = 0, saving = 0;
     long patches = 0, strips = 0;
+    unsigned long long cycles = 0;   /* the kernel's own count, every start's */
     /* Against the labels: the labelled pixels (0 cloud, 1 land, 2 sea; other values are
      * unlabeled), those classified as labelled, and per class the pixels both call it
      * and either calls it (IoU), as the notebooks count them. */
@@ -284,6 +287,9 @@ int main(int argc, char **argv) {
         while (!(reg_read(&b, REG_AP_CTRL) & 0x2))                   /* done */
             if (now() - t > TIMEOUT_S) fail("the kernel did not finish");
         fpga += now() - t;
+#ifdef REG_CYCLES
+        cycles += reg_read(&b, REG_CYCLES);
+#endif
 
         t = now();
         const int32_t *scores = (const int32_t *)(b.mem + scores_at);
@@ -310,6 +316,10 @@ int main(int argc, char **argv) {
            strips == 1 ? "" : "s", rows);
     printf("cube into memory:   %8.3f s\n", loading);
     printf("FPGA:               %8.1f ms, %.1f us per patch\n", 1e3 * fpga, 1e6 * fpga / patches);
+#ifdef REG_CYCLES
+    printf("own count:          %llu cycles\n", cycles);
+#endif
+    (void)cycles;
     printf("scores to the file: %8.3f s (and checked against the labels)\n", saving);
     printf("wall clock:         %8.3f s\n", now() - start);
     printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
@@ -321,5 +331,8 @@ int main(int argc, char **argv) {
         else printf("%s %s -", c ? "," : "", names[c]);   /* neither has it: no IoU */
     }
     printf("\n");
+    /* The counts behind those, for benchmark.sh to add up over images. */
+    printf("counts: %ld %ld %ld %ld %ld %ld %ld %ld (labelled, correct, both cloud land sea, either cloud land sea)\n",
+           labelled, correct, both[0], both[1], both[2], either[0], either[1], either[2]);
     return 0;
 }

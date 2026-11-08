@@ -179,7 +179,7 @@ take the same way:
 | Module | Window and input order | Why it is its own module |
 | --- | --- | --- |
 | `conv3x3_tiled` | 3×3, window in registers, raster order; a pixel with all its channels at a time, or (a first layer on the raw bands, from `pixel_buffer`) in chunks of `IN_PER_CYCLE`, one a step: the input stream's width says which | the general 3×3 (`IN_PER_CYCLE = IN_CHANNELS` for a small layer); `PACKED` on 8-bit inputs (int8 z-scores, uint8 activations): two output channels per DSP; chunked, the last chunk padded with zero weights, so no patch buffer (`justounetsimple_opt_tiled`, the Zynq justounetsimple kernels) |
-| `conv3x3_tiled_ram` | 3×3, window in three row memories | the Zynq-7020 has too few flip-flops for the window registers; a memory gives one column a step, so it cannot replace tiled's 9 taps a cycle |
+| `conv3x3_tiled_ram` | 3×3, window in three row memories | the Zynq-7020 has too few flip-flops for the window registers; a memory gives one column a step, so it cannot replace tiled's 9 taps a cycle; `PACKED` on uint8 activations: two output channels per DSP48E1, each product split on its own (the `sp_unet_SIZE_opt_u8_zynq7020/7030` kernels) |
 | `conv3x3_2mul` | 3×3 on the raw bands: a patch's bands in chunks, the sums held per pixel | the first layer behind a patch buffer (`patch_buffer`), which sends each band chunk of the whole patch in turn (`justounetsimple_opt` only; chunked `conv3x3_tiled` behind `pixel_buffer` needs no patch buffer) |
 | `conv1x1` | a pixel with all its channels at a time (2D patches or 1D lanes, `patch_pixels` / `pixel_lane`) | the general 1×1, every head |
 | `pointwise_packed` | 1×1 on the raw bands, a pixel's bands in chunks | as `conv3x3_2mul`, for 1×1 |

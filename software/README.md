@@ -7,7 +7,8 @@ model, in `software/pynq/`: `classify_golden.ipynb` for the golden kernels
 inside the exported HLS IP (`x<kernel>_hw.h`, packed next to the notebook) and
 which model it is from `kernel.json` (main.py writes it from `tools/models.py`).
 `software/opu/classify.c` is the C program every optimized kernel runs on the boards with the
-OPU system's PetaLinux, the same way.
+OPU system's PetaLinux, the same way. `software/opu/benchmark.sh` runs them all over the
+images there, as `software/pynq/benchmark.ipynb` does on the ZCU104 (boards/README.md).
 
 `fpga.sh` in the repository root wraps everything below in short commands
 (`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)

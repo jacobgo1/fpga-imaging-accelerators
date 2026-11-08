@@ -10,8 +10,8 @@ The board is checked against the image's labels only. The PC's answers, for the 
 (tests/test_notebooks.py): golden_scores, what the golden kernel answers (float32
 H x W x 3), and fixed_scores, what every optimized kernel writes, bit for bit (int32
 H x W x 4: the scores * 2^out_frac, then the class). Every optimized kernel of a model gives
-the same answers, except sp_unet_SIZE_opt_u8 (uint8 activations): fixed_scores takes the
-kernel's name for those.
+the same answers, except sp_unet_SIZE_opt_u8 and its Zynq-7000 versions (uint8 activations):
+fixed_scores takes the kernel's name for those.
 
 The table needs nothing but Python (main.py reads it); the answers need numpy.
 """
@@ -90,8 +90,10 @@ def golden_scores(model, cube):
 
 
 def uint8_activations(kernel):
-    """Whether the kernel keeps its activations in uint8 (sp_unet_SIZE_opt_u8), not int16."""
-    return kernel is not None and kernel.startswith('sp_unet_') and kernel.endswith('_u8')
+    """Whether the kernel keeps its activations in uint8 (sp_unet_SIZE_opt_u8, and its
+    Zynq-7000 versions sp_unet_SIZE_opt_u8_zynq7020 / _zynq7030), not int16."""
+    return (kernel is not None and kernel.startswith('sp_unet_')
+            and (kernel.endswith('_u8') or '_u8_' in kernel))
 
 
 def fixed_scores(model, cube, kernel=None):

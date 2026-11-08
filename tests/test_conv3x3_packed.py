@@ -1,4 +1,5 @@
-"""conv3x3_tiled's packed mode (two multiplies per DSP, src/optimized/dsp_pack.hpp), with plain g++.
+"""conv3x3_tiled's and conv3x3_tiled_ram's packed mode (two multiplies per DSP,
+src/optimized/dsp_pack.hpp), with plain g++.
 
 The networks' weights are small, so their testbenches never come near the bound a group of
 products must stay within: a group of 8 uint8 products (the int8 bound) passed
@@ -6,6 +7,8 @@ sp_unet_small_opt_u8's testbench. Here the weights are the worst case, -128 and 
 activations near 255, so a group one product too long overflows the low channel. Against a
 plain loop, every sum, with whole groups (IN_PER_CYCLE 4: 36 taps) and a shorter last one
 (1 and 2: 9 and 18 taps), two and four outputs a step; and the unpacked path on uint8.
+conv3x3_tiled_ram the same, packed for the DSP48E1 (16 bits apart: a group is one uint8
+product), a tap or a column of the window a step.
 """
 import subprocess
 import tempfile
@@ -15,7 +18,7 @@ from pathlib import Path
 from helpers import CXX, ROOT, compile_cpp
 
 DRIVER = """
-#include "conv3x3_tiled.hpp"
+#include "{module}.hpp"
 #include <cstdio>
 #include <cstdlib>
 
@@ -40,8 +43,7 @@ int main() {{
             for (int i = 0; i < IN; i++) v.v[i] = x[y][c][i];
             in.write(v);
         }}
-    conv3x3_tiled<H, W, H, W, IN, OUT, {ipc}, {opc}, 0, WEIGHT, BIAS, true, activation::none, 0, {packed}, 18>(
-        in, out, H, W);
+    {module}<H, W, H, W, IN, OUT, {ipc}, {opc}, 0, WEIGHT, BIAS, true, {options}>(in, out, H, W);
     int errors = 0;
     for (int y = 0; y < H; y++)
         for (int c = 0; c < W; c++) {{
@@ -72,10 +74,17 @@ def weights():
 
 @unittest.skipUnless(CXX, 'no C++ compiler')
 class PackedConvTests(unittest.TestCase):
-    def run_conv(self, tmp, ipc, opc, packed):
-        stem = f'conv_{ipc}_{opc}_{int(packed)}'
-        exe = compile_cpp(tmp, stem, DRIVER.format(weights=weights(), ipc=ipc, opc=opc,
-                                                    packed='true' if packed else 'false'),
+    def run_conv(self, tmp, ipc, opc, packed, taps_per_step=None):
+        """Wrong sums of conv3x3_tiled (DSP48E2 packing), or with taps_per_step, of
+        conv3x3_tiled_ram (DSP48E1 packing)."""
+        flag = 'true' if packed else 'false'
+        if taps_per_step is None:
+            module, options = 'conv3x3_tiled', f'activation::none, 0, {flag}, 18'
+        else:
+            module, options = 'conv3x3_tiled_ram', f'{taps_per_step}, activation::none, 0, {flag}, 16'
+        stem = f'{module}_{ipc}_{opc}_{int(packed)}_{taps_per_step}'
+        exe = compile_cpp(tmp, stem, DRIVER.format(weights=weights(), ipc=ipc, opc=opc, module=module,
+                                                    options=options),
                           [ROOT / 'src/optimized'])
         return int(subprocess.run([str(exe)], check=True, capture_output=True, text=True).stdout)
 
@@ -89,6 +98,18 @@ class PackedConvTests(unittest.TestCase):
     def test_unpacked_uint8_sums_are_exact(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self.run_conv(Path(tmp), 2, 2, False), 0)
+
+    def test_tiled_ram_packed_sums_are_exact_with_worst_case_weights(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for taps_per_step in (1, 3):
+                for ipc in (1, 4):
+                    for opc in (2, 4):
+                        with self.subTest(taps_per_step=taps_per_step, in_per_cycle=ipc, out_per_cycle=opc):
+                            self.assertEqual(self.run_conv(Path(tmp), ipc, opc, True, taps_per_step), 0)
+
+    def test_tiled_ram_unpacked_uint8_sums_are_exact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_conv(Path(tmp), 2, 2, False, 3), 0)
 
 
 if __name__ == '__main__':

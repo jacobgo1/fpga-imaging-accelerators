@@ -44,8 +44,7 @@ _fpga_fail() { echo "fpga: $*" >&2; return 1; }
 # The kernels: one .cpp each in src/models/MODEL/.../, named after it, in byte order
 # (sort follows the locale, which puts sp_unet after spectralpointwise1d on some machines).
 fpga_kernels() {
-    local LC_ALL=C
-    find "$FPGA_ROOT/src/models" -name '*.cpp' -exec basename {} .cpp \; | sort
+    find "$FPGA_ROOT/src/models" -name '*.cpp' -exec basename {} .cpp \; | LC_ALL=C sort
 }
 
 # Run folders are named by date, so glob order is time order.

@@ -113,6 +113,14 @@ and so does a `zynq7030` run, for PicoBoB (HYPSO-2's board, also the OPU system)
 Copy the folder's files to `/media/sd-pl/firmware/` on the board, then
 `sh /media/sd-pl/firmware/load.sh`.
 
+To run every optimized ZedBoard kernel on every image, as `benchmark.ipynb` does on
+the ZCU104, use `software/opu/benchmark.sh`. Put it in one folder on the board with each
+kernel's `K_opu/` and each image's folder (`cube.npy`, `labels.npy`), then as root run
+`sh benchmark.sh`. For each kernel it copies the files to the firmware folder, runs
+`load.sh`, and runs `classify` on each image. It writes `benchmark_results/benchmark_DATE.md`,
+with a `.csv` and a `.log` of everything the programs printed beside it. `classify`
+prints the kernel's own cycle count too, for the kernels that keep one.
+
 A bitstream loaded at run time cannot change the PS: FCLK_CLK0 is set by the
 overlay (`xlnx,fclk`), or by `load.sh` if that did not take, and the HP ports keep
 the boot loader's settings (64 bits, as on the lab's ZedBoard). `classify` uses the
