@@ -108,18 +108,20 @@ and so does a `zynq7030` run, for PicoBoB (HYPSO-2's board, also the OPU system)
 | `K.dtsi` (`K.dtbo`) | the overlay: which bitstream the full region gets, FCLK_CLK0 at the kernel's clock, the kernel's registers (generic-uio). Compiled when `dtc` is on the server's PATH; else `load.sh` compiles it on the board |
 | `xK_hw.h` | register offsets |
 | `load.sh` | run as root on the board: checks the md5sum, removes the overlay already loaded, loads, sets FCLK_CLK0 through the SLCR if the overlay could not, prints the FPGA state, FCLK_CLK0 and the kernel's AP_CTRL (4: idle) |
-| `classify` (`classify.c`, `kernel_regs.h`) | `software/opu/classify.c`, for every optimized kernel (and any program in `software/opu/K/`), built static for the board's ARM when the server has `arm-linux-gnueabihf-gcc` (or `$OPU_CC`); the board has no compiler. `classify cube.npy scores.npy`: runs the kernel from the reserved memory, in strips if the cube does not fit, times it and checks the classes against `labels.npy` next to the cube. `classify hsi0/binned_cube.bip scores.npy HEIGHT WIDTH` takes a capture as the OPU saves it (no header: HEIGHT is its frame count, WIDTH its rows after subsampling); without `labels.npy` it only gives the times |
+| `classify` (`classify.c`, `kernel_regs.h`) | `software/opu/classify.c`, for every optimized kernel (and any program in `software/opu/K/`), built static for the board's ARM when the server has `arm-linux-gnueabihf-gcc` (or `$OPU_CC`); the board has no compiler. `classify CUBE.bip scores.npy HEIGHT WIDTH`: the raw uint16 cube with no header, as the OPU saves a capture (`hsiN/binned_cube.bip`) and `tools/image.py` writes a test image (`cube.bip`, its size in `size.txt`); runs the kernel from the reserved memory, in strips if the cube does not fit, times it and writes the scores. The classes are checked on the PC: `tools/opu_results.py` |
 
 Copy the folder's files to `/media/sd-pl/firmware/` on the board, then
 `sh /media/sd-pl/firmware/load.sh`.
 
 To run every optimized ZedBoard kernel on every image, as `benchmark.ipynb` does on
 the ZCU104, use `software/opu/benchmark.sh`. Put it in one folder on the board with each
-kernel's `K_opu/` and each image's folder (`cube.npy`, `labels.npy`), then as root run
+kernel's `K_opu/` and each image's folder (`cube.bip`, `size.txt`), then as root run
 `sh benchmark.sh`. For each kernel it copies the files to the firmware folder, runs
-`load.sh`, and runs `classify` on each image. It writes `benchmark_results/benchmark_DATE.md`,
-with a `.csv` and a `.log` of everything the programs printed beside it. `classify`
-prints the kernel's own cycle count too, for the kernels that keep one.
+`load.sh`, and runs `classify` on each image. It writes `benchmark_results/DATE/`: the times
+(`times.csv`, with the kernel's own cycle count for the kernels that keep one), `log.txt`
+(everything the programs printed) and every run's scores. Copy that folder to the PC; there
+`python3 tools/opu_results.py DATE --images FOLDER` writes the report, with accuracy and IoU
+against each image's `labels.npy`, as `benchmark.ipynb` does on the ZCU104.
 
 A bitstream loaded at run time cannot change the PS: FCLK_CLK0 is set by the
 overlay (`xlnx,fclk`), or by `load.sh` if that did not take, and the HP ports keep

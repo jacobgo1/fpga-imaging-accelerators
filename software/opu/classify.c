@@ -1,21 +1,17 @@
-/* classify.c -- runs an optimized kernel on the OPU system's PetaLinux (the lab's
- * ZedBoards, boards/README.md): the notebook's job without PYNQ, Python or numpy. Every
- * optimized kernel takes the raw cube and gives the same scores, so one program serves all.
- * main.py builds it for the board's ARM with the kernel's register offsets
- * (kernel_regs.h, from x<kernel>_hw.h) and puts it in the OPU zip.
+/* classify.c -- runs an optimized kernel on the OPU system's PetaLinux (the lab's ZedBoards
+ * and HYPSO-2's PicoBoB): no PYNQ, Python or numpy on the board. Every optimized kernel takes
+ * the raw cube and gives the same scores, so one program serves all. main.py builds it for
+ * the board's ARM with the kernel's register offsets (kernel_regs.h, from x<kernel>_hw.h)
+ * and puts it in the OPU zip.
  *
- *   classify CUBE.npy SCORES.npy
  *   classify CUBE.bip SCORES.npy HEIGHT WIDTH
  *
- * CUBE: the raw cube, H x W x 120 uint16 (cube.npy from an image zip). A .bip is the same
- * cube with no header, as the OPU saves a capture (hsiN/binned_cube.bip): HEIGHT is its
- * frame_count, WIDTH its rows after spatial subsampling (capture_config.ini). SCORES: what
- * the kernel wrote, H x W x 4 int32: the 3 scores * 2^OUT_FRAC, then the class. The classes
- * are checked against labels.npy in the cube's folder (H x W integers: 0 cloud, 1 land,
- * 2 sea, anything else unlabeled): their accuracy and each class's IoU. It must be there
- * for a .npy; a capture has none, so for a .bip only the times are given without it.
- * A kernel that counts its own cycles (REG_CYCLES) has that count printed too, summed
- * over the starts; the last line has the counts benchmark.sh adds up over images.
+ * CUBE: the raw cube, HEIGHT x WIDTH x 120 uint16 with no header, as the OPU saves a capture
+ * (hsiN/binned_cube.bip: HEIGHT its frame_count, WIDTH its rows) and as tools/image.py writes
+ * a test image (cube.bip, its size in size.txt). SCORES: what the kernel wrote, H x W x 4
+ * int32: the 3 scores * 2^OUT_FRAC, then the class (0 cloud, 1 land, 2 sea). It prints the
+ * times, and the kernel's own cycle count if it keeps one (REG_CYCLES), summed over the
+ * starts. The classes are checked on the PC (tools/opu_results.py), not here.
  *
  * The registers come from UIO (the overlay's "kernel" node, generic-uio), the buffers
  * from the devicetree's reserved memory (CubeDMA's: it must be idle). That memory is
@@ -93,7 +89,7 @@ static void open_board(struct board *b) {
         snprintf(path, sizeof path, "/sys/class/uio/uio%d/name", uio);
         if (read_line(path, text, sizeof text) && strcmp(text, "kernel") == 0) break;
     }
-    if (uio == 32) fail("no UIO device named kernel: load the design with load.sh first");
+    if (uio == 32) fail("no UIO device named kernel: load the design (with its overlay) first");
     snprintf(path, sizeof path, "/sys/class/uio/uio%d/maps/map0/size", uio);
     if (!read_line(path, text, sizeof text)) fail("cannot read the size of the kernel's registers");
     size_t regs_size = strtoul(text, NULL, 0);
@@ -132,78 +128,15 @@ static void open_board(struct board *b) {
 }
 #endif
 
-/* A .npy file's header, the dict as text (to free), leaving f at the start of the data. */
-static char *npy_dict(FILE *f) {
-    unsigned char start[12];
-    if (fread(start, 1, 10, f) != 10 || memcmp(start, "\x93NUMPY", 6) != 0) fail("not a .npy file");
-    unsigned long n = start[8] | (unsigned long)start[9] << 8;
-    if (start[6] >= 2) {                         /* version 2 and 3: a 4-byte length */
-        if (fread(start + 10, 1, 2, f) != 2) fail("a .npy file cut short");
-        n |= (unsigned long)start[10] << 16 | (unsigned long)start[11] << 24;
+/* A positive size from the command line. */
+static long size_arg(const char *text, const char *what) {
+    char *end;
+    const long v = strtol(text, &end, 10);
+    if (end == text || *end || v <= 0) {
+        fprintf(stderr, "classify: %s must be a positive whole number, not %s\n", what, text);
+        exit(2);
     }
-    char *header = malloc(n + 1);
-    if (!header || fread(header, 1, n, f) != n) fail("a .npy file cut short");
-    header[n] = 0;
-    return header;
-}
-
-/* shape: the dict's sizes, exactly dims of them. */
-static void npy_shape(const char *header, int dims, long shape[]) {
-    const char *p = strstr(header, "'shape': (");
-    if (!p) fail("a .npy header without a shape");
-    p += strlen("'shape': (");
-    for (int i = 0; i < dims; i++) {
-        char *end;
-        shape[i] = strtol(p, &end, 10);
-        if (end == p) fail("a .npy file with fewer dimensions than expected");
-        for (p = end; *p == ',' || *p == ' '; p++) {}
-    }
-    if (*p != ')') fail("a .npy file with more dimensions than expected");
-}
-
-/* Opens a .npy file and checks its type (e.g. "'<u2'") and number of dimensions; shape
- * gets its size. The file is left at the start of the data. */
-static FILE *npy_open(const char *path, const char *descr, int dims, long shape[]) {
-    FILE *f = fopen(path, "rb");
-    if (!f) fail(path);
-    char *header = npy_dict(f);
-    char want[32];
-    snprintf(want, sizeof want, "'descr': %s", descr);
-    if (!strstr(header, want) || !strstr(header, "'fortran_order': False")) {
-        fprintf(stderr, "classify: %s: expected %s in C order, the header is %s\n", path, descr, header);
-        exit(1);
-    }
-    npy_shape(header, dims, shape);
-    free(header);
-    return f;
-}
-
-/* Opens H x W labels of any integer type (prepare writes int64, a capture's own file is
- * uint8): bytes and is_signed get the type. NULL when there is no such file. */
-static FILE *npy_open_labels(const char *path, long shape[2], int *bytes, int *is_signed) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    char *header = npy_dict(f);
-    const char *d = strstr(header, "'descr': '");
-    if (d) d += strlen("'descr': '");
-    if (!d || (d[0] != '<' && d[0] != '|') || (d[1] != 'i' && d[1] != 'u') || !d[2] ||
-        !strchr("1248", d[2]) || d[3] != '\'' || !strstr(header, "'fortran_order': False")) {
-        fprintf(stderr, "classify: %s: expected integer labels in C order, the header is %s\n", path, header);
-        exit(1);
-    }
-    *bytes = d[2] - '0';
-    *is_signed = d[1] == 'i';
-    npy_shape(header, 2, shape);
-    free(header);
-    return f;
-}
-
-/* A label of that type, little-endian, as a number. */
-static int64_t label_at(const unsigned char *p, int bytes, int is_signed) {
-    uint64_t v = 0;
-    for (int i = bytes - 1; i >= 0; i--) v = v << 8 | p[i];
-    if (is_signed && bytes < 8 && (v >> (8 * bytes - 1)) & 1) v |= ~(uint64_t)0 << (8 * bytes);
-    return (int64_t)v;
+    return v;
 }
 
 /* The header of an int32 H x W x LANES .npy file: version 1, padded to 64 bytes. */
@@ -224,69 +157,25 @@ static void write_address(struct board *b, unsigned offset, int wide, uint64_t a
     if (wide) reg_write(b, offset + 4, (uint32_t)(address >> 32));
 }
 
-/* A headerless H x W x 120 uint16 cube: its size must be exactly that. */
-static FILE *bip_open(const char *path, long h, long w) {
-    FILE *f = fopen(path, "rb");
-    if (!f) fail(path);
-    if (fseeko(f, 0, SEEK_END) != 0) fail("cannot find the size of the .bip");
-    const off_t size = ftello(f), want = (off_t)h * w * BANDS * 2;
-    if (size != want) {
-        fprintf(stderr, "classify: %s is %lld bytes, but %ld x %ld x %d uint16 is %lld\n", path,
-                (long long)size, h, w, BANDS, (long long)want);
-        exit(1);
-    }
-    rewind(f);
-    return f;
-}
-
-/* A positive size from the command line. */
-static long size_arg(const char *text, const char *what) {
-    char *end;
-    const long v = strtol(text, &end, 10);
-    if (end == text || *end || v <= 0) {
-        fprintf(stderr, "classify: %s must be a positive whole number, not %s\n", what, text);
-        exit(2);
-    }
-    return v;
-}
-
 int main(int argc, char **argv) {
-    const size_t name = argc > 1 ? strlen(argv[1]) : 0;
-    const int bip = name >= 4 && strcmp(argv[1] + name - 4, ".bip") == 0;
-    if (argc != (bip ? 5 : 3)) {
-        fprintf(stderr, "usage: %s CUBE.npy SCORES.npy\n   or: %s CUBE.bip SCORES.npy HEIGHT WIDTH\n",
-                argv[0], argv[0]);
+    if (argc != 5) {
+        fprintf(stderr, "usage: %s CUBE.bip SCORES.npy HEIGHT WIDTH\n", argv[0]);
         return 2;
     }
     const double start = now();
-    long h, w;
-    FILE *in;
-    if (bip) {
-        h = size_arg(argv[3], "HEIGHT");
-        w = size_arg(argv[4], "WIDTH");
-        in = bip_open(argv[1], h, w);
-    } else {
-        long shape[3];
-        in = npy_open(argv[1], "'<u2'", 3, shape);
-        h = shape[0], w = shape[1];
-        if (shape[2] != BANDS) fail("the cube must have 120 bands");
+    const long h = size_arg(argv[3], "HEIGHT"), w = size_arg(argv[4], "WIDTH");
+
+    /* The cube must be exactly H x W x 120 uint16: a wrong size means wrong HEIGHT or WIDTH. */
+    FILE *in = fopen(argv[1], "rb");
+    if (!in) fail(argv[1]);
+    if (fseeko(in, 0, SEEK_END) != 0) fail("cannot find the size of the cube");
+    const off_t size = ftello(in), want = (off_t)h * w * BANDS * 2;
+    if (size != want) {
+        fprintf(stderr, "classify: %s is %lld bytes, but %ld x %ld x %d uint16 is %lld\n", argv[1],
+                (long long)size, h, w, BANDS, (long long)want);
+        return 1;
     }
-    /* labels.npy in the cube's folder: the classes are checked against it. */
-    char labels_path[4096];
-    size_t folder = 0;
-    for (size_t i = 0; argv[1][i]; i++)
-        if (argv[1][i] == '/' || argv[1][i] == '\\') folder = i + 1;
-    if (folder + sizeof "labels.npy" > sizeof labels_path) fail("the cube's path is too long");
-    snprintf(labels_path, sizeof labels_path, "%.*slabels.npy", (int)folder, argv[1]);
-    long labels_shape[2];
-    int label_bytes = 0, label_signed = 0;
-    FILE *labels = npy_open_labels(labels_path, labels_shape, &label_bytes, &label_signed);
-    if (!labels && !bip) {
-        fprintf(stderr, "classify: no %s: the classes are checked against it (copy the image's labels.npy next to the cube)\n",
-                labels_path);
-        exit(1);
-    }
-    if (labels && (labels_shape[0] != h || labels_shape[1] != w)) fail("the labels are not H x W for this cube");
+    rewind(in);
     FILE *out = fopen(argv[2], "wb");
     if (!out) fail(argv[2]);
     npy_header(out, h, w);
@@ -302,16 +191,10 @@ int main(int argc, char **argv) {
     if (rows > h) rows = h;
     const uint64_t scores_at = ((uint64_t)rows * in_row + 4095) / 4096 * 4096;
     const int dins[] = REG_DINS;
-    unsigned char *truth = labels ? malloc((size_t)rows * w * label_bytes) : NULL;
-    if (labels && !truth) fail("no memory for the labels");
 
     double loading = 0, fpga = 0, saving = 0;
     long patches = 0, strips = 0;
     unsigned long long cycles = 0;   /* the kernel's own count, every start's */
-    /* Against the labels: the labelled pixels (0 cloud, 1 land, 2 sea; other values are
-     * unlabeled), those classified as labelled, and per class the pixels both call it
-     * and either calls it (IoU), as the notebooks count them. */
-    long labelled = 0, correct = 0, both[3] = {0, 0, 0}, either[3] = {0, 0, 0};
     for (long y = 0; y < h; y += rows) {
         const long n = h - y < rows ? h - y : rows;
         double t = now();
@@ -333,20 +216,7 @@ int main(int argc, char **argv) {
 #endif
 
         t = now();
-        const int32_t *scores = (const int32_t *)(b.mem + scores_at);
-        if (fwrite(scores, out_row, n, out) != (size_t)n) fail("cannot write the scores");
-        if (labels && fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
-        for (long p = 0; labels && p < n * w; p++) {
-            const int64_t label = label_at(truth + (size_t)p * label_bytes, label_bytes, label_signed);
-            const int32_t cls = scores[LANES * p + 3];
-            if (label < 0 || label > 2) continue;
-            labelled++;
-            if (cls == label) correct++;
-            for (int c = 0; c < 3; c++) {
-                if (cls == c && label == c) both[c]++;
-                if (cls == c || label == c) either[c]++;
-            }
-        }
+        if (fwrite(b.mem + scores_at, out_row, n, out) != (size_t)n) fail("cannot write the scores");
         saving += now() - t;
         patches += (n + PATCH - 1) / PATCH * ((w + PATCH - 1) / PATCH);
         strips++;
@@ -361,24 +231,7 @@ int main(int argc, char **argv) {
     printf("own count:          %llu cycles\n", cycles);
 #endif
     (void)cycles;
-    printf("scores to the file: %8.3f s%s\n", saving, labels ? " (and checked against the labels)" : "");
+    printf("scores to the file: %8.3f s\n", saving);
     printf("wall clock:         %8.3f s\n", now() - start);
-    if (!labels) {
-        printf("no %s: the classes are not checked\n", labels_path);
-        return 0;
-    }
-    fclose(labels);
-    printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
-           labelled ? 100 * ((double)correct / labelled) : 0.0, labelled);
-    const char *names[3] = {"cloud", "land", "sea"};
-    printf("  IoU");
-    for (int c = 0; c < 3; c++) {
-        if (either[c]) printf("%s %s %.3f", c ? "," : "", names[c], (double)both[c] / either[c]);
-        else printf("%s %s -", c ? "," : "", names[c]);   /* neither has it: no IoU */
-    }
-    printf("\n");
-    /* The counts behind those, for benchmark.sh to add up over images. */
-    printf("counts: %ld %ld %ld %ld %ld %ld %ld %ld (labelled, correct, both cloud land sea, either cloud land sea)\n",
-           labelled, correct, both[0], both[1], both[2], either[0], either[1], either[2]);
     return 0;
 }

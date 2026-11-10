@@ -32,30 +32,25 @@ has neither).
 sudo apt install device-tree-compiler gcc-arm-linux-gnueabihf
 ```
 
-**2. The test image on the board.** `classify` takes a raw cube (H x W x 120, **uint16**),
-and checks the classes against the true labels, `labels.npy`, which must be next to the
-cube. They stay on the board; every design uses the same files.
-
-The `aegean_unet/` on the server has its cube saved as float32 (it is older than the
-uint16 format), which `classify` rejects. Its values are whole raw counts, so a uint16
-copy is the same cube:
+**2. The test image on the board.** `classify` takes a raw cube with no header,
+`cube.bip` (H x W x 120 uint16, as the OPU saves a capture), and its height and width.
+`tools/image.py` writes it with `size.txt` (the height and width) next to `cube.npy`; for
+an image folder made before, `python3 tools/image.py bip FOLDER` adds the two. The cube stays
+on the board; every design uses the same file. The labels stay on the PC: the classes are
+checked there (step 7).
 
 ```bash
-python3 -c "
-import numpy as np
-c = np.load('aegean_unet/cube.npy')
-assert (c >= 0).all() and (c <= 65535).all() and (c == np.rint(c)).all(), 'not raw counts'
-np.save('aegean_unet/cube_u16.npy', c.astype(np.uint16))
-print('written aegean_unet/cube_u16.npy', c.shape)
-"
+python3 tools/image.py bip aegean_unet
 ssh zb05 mkdir -p /media/sd-pl/firmware
-scp aegean_unet/cube_u16.npy zb05:/media/sd-pl/firmware/cube.npy
-scp aegean_unet/labels.npy zb05:/media/sd-pl/firmware/
+scp aegean_unet/cube.bip aegean_unet/size.txt zb05:/media/sd-pl/firmware/
 ```
 
-A new test image comes from a HYPSO capture with
-`python3 tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out NAME`
-(it writes `cube.npy` as uint16 and `labels.npy`). Copy the two the same way.
+(`bip` needs a uint16 cube. The `aegean_unet/` on the server is older and float32; its
+values are whole raw counts, so `python3 -c "import numpy as np; np.save('aegean_unet/cube.npy',
+np.load('aegean_unet/cube.npy').astype(np.uint16))"` first.) A new test image comes from a
+HYPSO capture with
+`python3 tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --out NAME`,
+which writes all of them.
 
 ## Every new design, step by step
 
@@ -139,7 +134,7 @@ The list must contain `kernel`.
 ### 6. Run it on the test image
 
 ```bash
-ssh zb05 "cd /media/sd-pl/firmware && ./classify cube.npy scores.npy"
+ssh zb05 'cd /media/sd-pl/firmware && ./classify cube.bip scores.npy $(cat size.txt)'
 ```
 
 `classify` runs the kernel on the whole cube (in strips of 32-row multiples if it does not
@@ -149,13 +144,11 @@ fit in the board's reserved memory, with the same answers) and prints:
 598 x 1092 pixels, 665 patches, in 1 start of up to 598 rows
 cube into memory:      1.668 s
 FPGA:                 1851.3 ms, 2783.9 us per patch
-scores to the file:    0.563 s (and checked against the labels)
+scores to the file:    0.563 s
 wall clock:            4.121 s
-accuracy against labels.npy: ...% of 653016 labelled pixels      the result: the true labels
-  IoU cloud ..., land ..., sea ...                               per class, as the notebooks
 ```
 
-Without `labels.npy` next to the cube, `classify` says so and exits with 1.
+A cube of another size than `size.txt` says is refused before the kernel starts.
 
 ### 7. Keep the results
 
@@ -166,8 +159,13 @@ scp zb05:/media/sd-pl/firmware/scores.npy $RUN/
 ```
 
 `scores.npy` is what the kernel wrote: H x W x 4 int32, the 3 scores x 2^16, then the class
-(0 cloud, 1 land, 2 sea). Write the timings worth keeping in `docs/experiments/`
-(`build/` is not in git).
+(0 cloud, 1 land, 2 sea). Its accuracy and IoU against the image's labels:
+
+```bash
+python3 tools/opu_results.py --scores $RUN/scores.npy --labels aegean_unet/labels.npy
+```
+
+Write the timings worth keeping in `docs/experiments/` (`build/` is not in git).
 
 ### 8. Give the board back
 
@@ -182,7 +180,7 @@ After the reboot the board runs its own design again.
 The files stay on the SD card. After a reboot, load and run in one go:
 
 ```bash
-ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.npy scores.npy'
+ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd /media/sd-pl/firmware && ./classify cube.bip scores.npy $(cat size.txt)'
 ```
 
 ## When something goes wrong
@@ -190,9 +188,7 @@ ssh zb05 'sh /media/sd-pl/firmware/load.sh && cat /sys/class/uio/uio*/name && cd
 | What you see | Why | What to do |
 | --- | --- | --- |
 | `classify: no UIO device named kernel` | the design is not loaded: the board rebooted (`uptime`), or someone loaded another design | [load again](#again-later-without-copying) |
-| `classify: cube.npy: expected '<u2' in C order` | the cube on the board is float32 | the uint16 copy in [Once](#once-before-the-first-test) |
-| `FAIL: 653016 of 653016 pixels differ` | almost always the reference of another network | the kernel's own reference, from the table in [Once](#once-before-the-first-test) |
-| `no labels.npy: the classes are not checked against labels` | no `labels.npy` next to the cube | copy it ([Once](#once-before-the-first-test)) |
+| `classify: cube.bip is N bytes, but ...` | `size.txt` is not this cube's | copy both again ([Once](#once-before-the-first-test)) |
 | `md5sum: ... FAILED` | the `.bit.bin` on the board is not the one built | copy again (step 4) |
 | `load.sh` stops at `dtc: not found` | the package has no `.dtbo` | step 2's table: install `dtc`, `fpga_pynq $K $RUN`, copy again |
 | the clock after `load.sh` is above "built for" | it could not be set | do not run `classify`; paste the output |
@@ -221,4 +217,5 @@ fpga_build $K --board zynq7030
 RUN=$(ls -d build/$K/*-bitstream-zynq7030 | tail -n 1)
 ```
 
-then steps 3 to 8 against the PicoBoB's address instead of `zb05`.
+then steps 3 to 8 against the PicoBoB's address instead of `zb05`. On the HYPSO-2 flatsat,
+reached through `hypso-cli` instead of SSH, see [flatsat.md](flatsat.md).

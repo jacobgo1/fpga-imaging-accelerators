@@ -76,8 +76,12 @@ test_specpw_unet) skip.
 ## Images: a HYPSO capture -> a folder for the board notebook
 
 ```text
-image.py                  prepare: capture -> cube.npy (uint16 raw counts), labels.npy and
-                          meta.json (the picture's bands).
+image.py                  prepare: capture -> cube.npy (uint16 raw counts), labels.npy,
+                          meta.json (the picture's bands), and cube.bip + size.txt (the same
+                          cube with no header, and its size, for the OPU boards' classify).
+                          bip FOLDER: adds cube.bip and size.txt to a folder made before.
+opu_results.py            the OPU boards' classes checked on the PC: benchmark.sh's folder ->
+                          report.md (times, accuracy, IoU), or one scores.npy against labels.npy.
 ```
 
 One image folder serves every kernel: prepare it and zip it.

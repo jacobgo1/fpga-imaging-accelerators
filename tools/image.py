@@ -9,9 +9,15 @@ Writes, into --out:
                            counts), what the board classifies
     labels.npy             the labels, remapped as in training: what the board is checked against
     meta.json              where it came from, and the RGB bands for the picture
+    cube.bip, size.txt     the same cube with no header, as the OPU saves a capture, and its
+                           height and width: what classify reads on the ZedBoard and PicoBoB
 
-One folder serves every kernel; the notebooks and the ZedBoard's classify check the board's
-classes against the labels.
+    python tools/image.py bip FOLDER [FOLDER ...]
+
+adds cube.bip and size.txt to image folders made before they were.
+
+One folder serves every kernel; the notebooks, and tools/opu_results.py for the OPU boards,
+check the board's classes against the labels.
 Classes: 0 cloud, 1 land, 2 sea.
 """
 import argparse
@@ -67,6 +73,23 @@ def load_cube(path):
     return cube.astype(np.float32), None
 
 
+def write_bip(folder, cube):
+    """cube.bip: the raw uint16 cube with no header (the .npy's data, in the same order), and
+    size.txt: its height and width, for the OPU boards' classify, which has no numpy."""
+    if cube.dtype != np.uint16:
+        raise SystemExit(f'{folder}: the cube is {cube.dtype}, not raw uint16 counts: no cube.bip')
+    np.ascontiguousarray(cube).tofile(Path(folder) / 'cube.bip')
+    (Path(folder) / 'size.txt').write_bytes(f'{cube.shape[0]} {cube.shape[1]}\n'.encode())
+
+
+def bip(args):
+    for folder in args.folders:
+        cube = np.load(Path(folder) / 'cube.npy', mmap_mode='r')
+        write_bip(folder, cube)
+        print(f'{folder}: cube.bip and size.txt, {cube.shape[0]} x {cube.shape[1]}')
+        del cube
+
+
 def prepare(args):
     cube, rgb_default = load_cube(args.cube)
     print(f'cube: {cube.shape[0]} x {cube.shape[1]} pixels, {cube.shape[2]} bands')
@@ -90,6 +113,7 @@ def prepare(args):
     out.mkdir(parents=True, exist_ok=True)
     np.save(out / 'cube.npy', cube)
     np.save(out / 'labels.npy', labels)
+    write_bip(out, cube)
     (out / 'meta.json').write_text(json.dumps({
         'cube': str(args.cube), 'crop': [row, col, height, width],
         'rgb_bands': args.rgb or rgb_default or DEFAULT_RGB}, indent=2))
@@ -108,7 +132,10 @@ def main():
     p.add_argument('--crop', type=int, nargs=4, metavar=('ROW', 'COL', 'HEIGHT', 'WIDTH'),
                    help='a region only (a full capture is 665 patches)')
     p.add_argument('--rgb', type=int, nargs=3, metavar=('R', 'G', 'B'), help='raw band indices for the picture')
-    prepare(parser.parse_args())
+    p = sub.add_parser('bip', help="add cube.bip and size.txt to image folders (from their cube.npy)")
+    p.add_argument('folders', nargs='+', help='image folders with a cube.npy')
+    args = parser.parse_args()
+    (prepare if args.command == 'prepare' else bip)(args)
     return 0
 
 

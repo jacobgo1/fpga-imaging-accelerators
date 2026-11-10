@@ -1,7 +1,8 @@
 """software/opu/classify.c, the program every optimized kernel runs on the OPU system's
-PetaLinux, against a fake board that runs the kernel's C++ in software: the cube in, the
-scores out, bit-exact, in one start and in strips (a reserved memory too small for the
-cube), checked against the labels.
+PetaLinux, against a fake board that runs the kernel's C++ in software: the raw .bip cube in,
+the scores out, bit-exact, in one start and in strips (a reserved memory too small for the
+cube). And software/opu/benchmark.sh, whose times and scores tools/opu_results.py turns into
+the report on the PC, with accuracy and IoU against the labels; and tools/image.py's cube.bip.
 """
 import gc
 import os
@@ -69,6 +70,14 @@ uint32_t reg_read(struct board *, unsigned offset) {
 """
 
 
+def expected_counts(classes, labels):
+    """What the PC's report must find: labelled, correct, and per class both / either."""
+    known = (labels >= 0) & (labels <= 2)
+    c, l = classes[known], labels[known]
+    return known.sum(), (c == l).sum(), [((c == k) & (l == k)).sum() for k in range(3)], \
+        [((c == k) | (l == k)).sum() for k in range(3)]
+
+
 @unittest.skipIf(np is None, 'needs numpy')
 @unittest.skipUnless(CXX and CC, 'no C and C++ compiler')
 class OpuClassifyTests(unittest.TestCase):
@@ -76,6 +85,8 @@ class OpuClassifyTests(unittest.TestCase):
     def setUpClass(cls):
         sys.path.insert(0, str(ROOT / 'tools'))
         cls.flow = load_module('flow', ROOT / 'main.py')
+        cls.results = load_module('opu_results', ROOT / 'tools/opu_results.py')
+        cls.image = load_module('image', ROOT / 'tools/image.py')
 
     @classmethod
     def tearDownClass(cls):
@@ -101,135 +112,116 @@ class OpuClassifyTests(unittest.TestCase):
         subprocess.run([CC, '-std=c99', '-O2', '-Wall', '-Werror', '-DFAKE_BOARD', f'-I{self.dir}', '-c',
                         str(ROOT / 'software/opu/classify.c'), '-o', str(self.dir / 'classify.o')], check=True)
         source_dir = kernel_dir(kernel)
-        return compile_cpp(self.dir, f'classify_{kernel}', FAKE_BOARD.replace('KERNEL', kernel),
+        return compile_cpp(self.dir, f'classify_{kernel}_{int(cycles)}', FAKE_BOARD.replace('KERNEL', kernel),
                            [source_dir, self.dir], [source_dir / f'{kernel}.cpp', self.dir / 'classify.o'])
 
-    def cube_and_labels(self, kernel):
-        """cube.npy, 3 x 2 patches with the edge ones partial, and labels.npy, mostly the
-        kernel's classes (3: unlabeled). Returns them, the scores classify must write, and
-        the accuracy and IoU it must print (as the notebooks compute them)."""
+    def cube(self, kernel, folder=None):
+        """An image folder as tools/image.py makes it: cube.npy, labels.npy (mostly the kernel's
+        classes, 3: unlabeled), cube.bip and size.txt; 3 x 2 patches with the edge ones partial.
+        Returns the cube, the labels and the scores the board must give."""
+        folder = folder or self.dir
+        folder.mkdir(parents=True, exist_ok=True)
         model = load_module(KERNELS[kernel], ROOT / 'tools' / f'{KERNELS[kernel]}.py')
         h, w = 70, 45
         cube = raw_cube(model, h, w, seed=5, counts=True).astype(np.uint16)
         want = model.with_class(model.classify_fixed(cube))
         rng = np.random.default_rng(6)
-        classes = want[..., 3]
-        labels = np.where(rng.random((h, w)) < 0.8, classes, rng.integers(0, 4, (h, w)))
-        known = labels < 3
-        self.assertLess(known.sum(), h * w, 'some unlabeled pixels, to be skipped')
-        accuracy = f'accuracy against {self.dir / "labels.npy"}: {100 * (classes[known] == labels[known]).mean():.2f}% ' \
-                   f'of {known.sum()} labelled pixels'
-        iou = ', '.join(f'{name} {((classes == c) & (labels == c))[known].sum() / ((classes == c) | (labels == c))[known].sum():.3f}'
-                        for c, name in enumerate(('cloud', 'land', 'sea')))
-        np.save(self.dir / 'cube.npy', cube)
-        np.save(self.dir / 'labels.npy', labels)
-        return cube, labels, want, accuracy, iou
+        labels = np.where(rng.random((h, w)) < 0.8, want[..., 3], rng.integers(0, 4, (h, w)))
+        np.save(folder / 'cube.npy', cube)
+        np.save(folder / 'labels.npy', labels)
+        self.image.write_bip(folder, cube)
+        return cube, labels, want
 
-    def classify(self, exe, cube_file, memory=64 << 20):
-        return subprocess.run([str(exe), str(self.dir / cube_file), str(self.dir / 'scores.npy')],
+    def classify(self, exe, *args, memory=64 << 20):
+        return subprocess.run([str(exe), str(self.dir / 'cube.bip'), str(self.dir / 'scores.npy'), *map(str, args)],
                               capture_output=True, text=True, env={**os.environ, 'FAKE_MEMORY': str(memory)})
+
+    def test_image_bip_is_the_npy_data_and_its_size(self):
+        cube, *_ = self.cube(next(iter(KERNELS)))
+        self.assertEqual((self.dir / 'cube.bip').read_bytes(), cube.tobytes())
+        self.assertEqual((self.dir / 'size.txt').read_bytes(), b'70 45\n')
+        # bip on a folder made before: the same files from its cube.npy.
+        (self.dir / 'cube.bip').unlink()
+        (self.dir / 'size.txt').unlink()
+        saved, sys.argv = sys.argv, ['image.py', 'bip', str(self.dir)]
+        try:
+            self.image.main()
+        finally:
+            sys.argv = saved
+        gc.collect()
+        self.assertEqual((self.dir / 'cube.bip').read_bytes(), cube.tobytes())
+        self.assertEqual((self.dir / 'size.txt').read_text(), '70 45\n')
 
     def test_every_kernel_bit_exact_in_one_start_and_in_strips(self):
         for kernel in KERNELS:
             exe = self.build(kernel)
-            cube, _, want, accuracy, iou = self.cube_and_labels(kernel)
+            cube, _, want = self.cube(kernel)
+            h, w = cube.shape[:2]
             # All of it at once; then 32 rows at a time: room for 64 rows of the cube, but only
             # for 60 with their scores (a strip size that forgets the scores overruns the memory).
-            for memory, starts in ((64 << 20, 1), (4096 + 64 * cube.shape[1] * 120 * 2, 3)):
+            for memory, starts in ((64 << 20, 1), (4096 + 64 * w * 120 * 2, 3)):
                 with self.subTest(kernel=kernel, memory=memory):
-                    result = self.classify(exe, 'cube.npy', memory)
+                    result = self.classify(exe, h, w, memory=memory)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn(f'in {starts} start', result.stdout)
                     self.assertEqual(result.stderr.count('fake board: a start'), starts)
                     np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
-                    self.assertIn(accuracy, result.stdout)
-                    self.assertIn(f'IoU {iou}', result.stdout)
 
-    def test_says_what_is_wrong_with_the_labels_or_the_cube(self):
-        kernel = 'justounetsimple_opt_zynq7020'
-        exe = self.build(kernel)
-        cube, labels, _, accuracy, _ = self.cube_and_labels(kernel)
-        # uint8 labels, as a capture's own are (prepare writes int64)
-        np.save(self.dir / 'labels.npy', labels.astype(np.uint8))
-        result = self.classify(exe, 'cube.npy')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(accuracy, result.stdout)
-        # Labels of another size, or none: said, exit 1.
-        np.save(self.dir / 'labels.npy', labels[:-1])
-        result = self.classify(exe, 'cube.npy')
-        self.assertEqual(result.returncode, 1)
-        self.assertIn('the labels are not H x W for this cube', result.stderr)
-        (self.dir / 'labels.npy').unlink()
-        result = self.classify(exe, 'cube.npy')
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(f'no {self.dir / "labels.npy"}', result.stderr)
-        # Not the cube's type: said, exit 1.
-        np.save(self.dir / 'floats.npy', cube.astype(np.float32))
-        result = self.classify(exe, 'floats.npy', 1048576)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("expected '<u2'", result.stderr)
-
-    def test_bip_capture_with_or_without_labels(self):
-        """A headerless .bip, as the OPU saves a capture: the same scores as the .npy, in one
-        start and in strips; without labels.npy only the times; a wrong size is said."""
-        kernel = 'waveletcnn_opt_zynq7020'
-        exe = self.build(kernel)
-        cube, _, want, accuracy, _ = self.cube_and_labels(kernel)
+    def test_says_what_is_wrong_with_the_arguments(self):
+        exe = self.build('justounetsimple_opt_zynq7020')
+        cube, *_ = self.cube('justounetsimple_opt_zynq7020')
         h, w = cube.shape[:2]
-        cube.tofile(self.dir / 'binned_cube.bip')
-
-        def run(*sizes, memory=64 << 20):
-            return subprocess.run([str(exe), str(self.dir / 'binned_cube.bip'), str(self.dir / 'scores.npy'),
-                                   *map(str, sizes)], capture_output=True, text=True,
-                                  env={**os.environ, 'FAKE_MEMORY': str(memory)})
-        for memory, starts in ((64 << 20, 1), (4096 + 64 * w * 120 * 2, 3)):
-            with self.subTest(memory=memory):
-                result = run(h, w, memory=memory)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn(f'in {starts} start', result.stdout)
-                np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
-                self.assertIn(accuracy, result.stdout)
-        (self.dir / 'labels.npy').unlink()
-        result = run(h, w)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
-        self.assertIn('the classes are not checked', result.stdout)
-        self.assertNotIn('accuracy', result.stdout)
-        self.assertNotIn('counts:', result.stdout)
-        # Sizes that do not match the file, or none: said, and the kernel never starts.
-        result = run(h, w + 1)
+        # Sizes that do not match the file: said, and the kernel never starts.
+        result = self.classify(exe, h, w + 1)
         self.assertEqual(result.returncode, 1)
         self.assertIn(f'but {h} x {w + 1} x 120 uint16 is', result.stderr)
         self.assertNotIn('fake board: a start', result.stderr)
-        result = run(h)
+        result = self.classify(exe, h)
         self.assertEqual(result.returncode, 2)
         self.assertIn('CUBE.bip SCORES.npy HEIGHT WIDTH', result.stderr)
-        result = run(h, 'x')
+        result = self.classify(exe, h, 'x')
         self.assertEqual(result.returncode, 2)
         self.assertIn('WIDTH must be a positive whole number', result.stderr)
 
     def test_own_cycle_count_added_up_over_the_strips(self):
         kernel = 'justounetsimple_opt_zynq7020'
-        exe = self.build(kernel, cycles=True)
-        cube, *_ = self.cube_and_labels(kernel)
-        w = cube.shape[1]
+        cube, *_ = self.cube(kernel)
+        h, w = cube.shape[:2]
         # 70 rows in strips of 32: 32, 32 and 6.
-        result = self.classify(exe, 'cube.npy', 4096 + 64 * w * 120 * 2)
+        result = self.classify(self.build(kernel, cycles=True), h, w, memory=4096 + 64 * w * 120 * 2)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(f'own count:          {3000 + 70 * w} cycles', result.stdout)
+        self.assertIn(f'own count:          {3000 + h * w} cycles', result.stdout)
         # A kernel without the counter says nothing about it.
-        result = self.classify(self.build(kernel), 'cube.npy')
+        result = self.classify(self.build(kernel), h, w)
         self.assertNotIn('own count', result.stdout)
 
+    def test_one_run_checked_on_the_pc(self):
+        kernel = 'waveletcnn_opt_zynq7020'
+        _, labels, want = self.cube(kernel)
+        np.save(self.dir / 'scores.npy', want)
+        labelled, correct, both, either = expected_counts(want[..., 3], labels)
+        self.assertLess(labelled, labels.size, 'some unlabeled pixels, to be skipped')
+        saved, sys.argv = sys.argv, ['opu_results.py', '--scores', str(self.dir / 'scores.npy'),
+                                     '--labels', str(self.dir / 'labels.npy')]
+        try:
+            from io import StringIO
+            from contextlib import redirect_stdout
+            with redirect_stdout(StringIO()) as out:
+                self.results.main()
+        finally:
+            sys.argv = saved
+        self.assertIn(f'accuracy: {100 * correct / labelled:.2f}% of {labelled} labelled pixels', out.getvalue())
+        self.assertIn(f'cloud {both[0] / either[0]:.3f}, land {both[1] / either[1]:.3f}', out.getvalue())
+
     @unittest.skipUnless(shutil.which('sh') and shutil.which('awk'), 'no sh and awk')
-    def test_benchmark_runs_every_kernel_on_every_image_and_writes_the_report(self):
+    def test_benchmark_runs_every_kernel_on_every_image_and_the_pc_reports(self):
         """software/opu/benchmark.sh on a fake board: each kernel's classify (one with its own
-        count, one without), a kernel whose load.sh fails, two images."""
+        count, one without), a kernel whose load.sh fails, a kernel with no folder, two images;
+        then tools/opu_results.py's report from what it wrote."""
         top = self.dir / 'board'
         firmware = top / 'firmware'
         firmware.mkdir(parents=True)
         shutil.copy2(ROOT / 'software/opu/benchmark.sh', top)
-        want = {}
         for kernel, cycles in zip(KERNELS, (True, False)):
             folder = top / f'{kernel}_opu'
             folder.mkdir()
@@ -240,38 +232,49 @@ class OpuClassifyTests(unittest.TestCase):
         (broken / 'classify').write_text('')
         (broken / 'load.sh').write_text('echo "md5sum: FAILED"; exit 1\n')
         # The same cube and labels for both images (the labels follow the first kernel's classes).
-        _, labels, *_ = self.cube_and_labels(next(iter(KERNELS)))
-        for image in ('one', 'two'):
-            (top / image).mkdir()
-            shutil.copy2(self.dir / 'cube.npy', top / image)
-            shutil.copy2(self.dir / 'labels.npy', top / image)
-        known = labels < 3
-        for kernel in KERNELS:
-            model = load_module(KERNELS[kernel], ROOT / 'tools' / f'{KERNELS[kernel]}.py')
-            classes = model.with_class(model.classify_fixed(np.load(self.dir / 'cube.npy')))[..., 3]
-            want[kernel] = 100 * (classes[known] == labels[known]).mean()
+        cube, labels, _ = self.cube(next(iter(KERNELS)), top / 'one')
+        shutil.copytree(top / 'one', top / 'two')
+        h, w = labels.shape
         env = {**os.environ, 'FIRMWARE': str(firmware), 'FAKE_MEMORY': str(64 << 20), 'IMAGES': 'one two',
                'KERNELS': ' '.join(list(KERNELS) + ['justoliunet_opt_zynq7020', 'sp_unet_small_opt_zynq7020'])}
         result = subprocess.run(['sh', str(top / 'benchmark.sh')], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('skipped (no KERNEL_opu/classify): sp_unet_small_opt_zynq7020', result.stdout)
         self.assertTrue((firmware / 'load.sh').exists(), 'the kernel files went to the firmware folder')
-        report = next((top / 'benchmark_results').glob('benchmark_*.md')).read_text()
+        out = next((top / 'benchmark_results').iterdir())
+        csv_rows = (out / 'times.csv').read_text().splitlines()
+        self.assertEqual(len(csv_rows), 1 + 3 * 2)
+        self.assertEqual(sum('md5sum: FAILED' in row for row in csv_rows), 2)
+        for kernel in KERNELS:
+            model = load_module(KERNELS[kernel], ROOT / 'tools' / f'{KERNELS[kernel]}.py')
+            want = model.with_class(model.classify_fixed(cube))
+            for image in ('one', 'two'):
+                np.testing.assert_array_equal(np.load(out / 'scores' / kernel / f'{image}.npy'), want)
+
+        saved, sys.argv = sys.argv, ['opu_results.py', str(out), '--images', str(top)]
+        try:
+            from io import StringIO
+            from contextlib import redirect_stdout
+            with redirect_stdout(StringIO()):
+                self.results.main()
+        finally:
+            sys.argv = saved
+        report = (out / 'report.md').read_text()
         rows = {line.split('|')[1].strip(): line for line in report.splitlines() if line.startswith('| `')}
-        h, w = labels.shape
         counted, uncounted = KERNELS
         self.assertIn(f'| `{counted}` | 100.0 | 2 | {(1000 + h * w) / 6:.2f} a patch | {(1000 + h * w) / 1e5:.3f} |',
                       rows[f'`{counted}`'])
         self.assertIn(f'| `{uncounted}` | 100.0 | 2 | - | - |', rows[f'`{uncounted}`'])
         for kernel in KERNELS:
-            self.assertIn(f'| {want[kernel]:.2f}% | {want[kernel]:.2f}% |', rows[f'`{kernel}`'])
+            model = load_module(KERNELS[kernel], ROOT / 'tools' / f'{KERNELS[kernel]}.py')
+            labelled, correct, both, either = expected_counts(model.with_class(model.classify_fixed(cube))[..., 3], labels)
+            accuracy = 100 * correct / labelled
+            iou = [b / e for b, e in zip(both, either)]
+            self.assertIn(f'| {accuracy:.2f}% | {accuracy:.2f}% | {iou[0]:.3f} | {iou[1]:.3f} | {iou[2]:.3f} '
+                          f'| {sum(iou) / 3:.3f} |', rows[f'`{kernel}`'])
         self.assertNotIn('`justoliunet_opt_zynq7020`', rows)
         self.assertEqual(report.count('failed: load.sh: md5sum: FAILED'), 2)
-        self.assertEqual(report.count(f'| one | `'), 3)
         self.assertIn(f'one ({h} x {w}), two ({h} x {w})', report)
-        csv_rows = next((top / 'benchmark_results').glob('benchmark_*.csv')).read_text().splitlines()
-        self.assertEqual(len(csv_rows), 1 + 3 * 2)
-        self.assertFalse((top / 'benchmark_results' / 'scores.npy').exists())
 
 
 if __name__ == '__main__':

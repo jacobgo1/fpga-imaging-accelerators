@@ -54,8 +54,12 @@ software/pynq/        the board notebooks every model shares: classify_golden.ip
                      ZCU104 optimized kernel (from its KERNEL_pynq/) on five images, one report
 software/opu/        classify.c: the C program every optimized kernel runs on the OPU system's
                      PetaLinux (no PYNQ); main.py builds it with the kernel's registers.
-                     benchmark.sh, copied on its own to the board: every ZedBoard optimized
-                     kernel (from its KERNEL_opu/) on five images, one report, as benchmark.ipynb
+                     classify takes the raw cube with no header (cube.bip, or a capture's
+                     binned_cube.bip) and only runs and times the kernel; the PC checks the classes
+                     (tools/opu_results.py). benchmark.sh, copied on its own to the board: every
+                     ZedBoard optimized kernel (from its KERNEL_opu/) on five images, times and
+                     scores; tools/opu_results.py makes the report, as benchmark.ipynb's
+docs/flatsat.md      running a _zynq7030 kernel on the HYPSO-2 flatsat through hypso-cli
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does
