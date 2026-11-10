@@ -5,11 +5,15 @@
  * (kernel_regs.h, from x<kernel>_hw.h) and puts it in the OPU zip.
  *
  *   classify CUBE.npy SCORES.npy
+ *   classify CUBE.bip SCORES.npy HEIGHT WIDTH
  *
- * CUBE: the raw cube, H x W x 120 uint16 (cube.npy from an image zip). SCORES: what the
- * kernel wrote, H x W x 4 int32: the 3 scores * 2^OUT_FRAC, then the class. The classes
+ * CUBE: the raw cube, H x W x 120 uint16 (cube.npy from an image zip). A .bip is the same
+ * cube with no header, as the OPU saves a capture (hsiN/binned_cube.bip): HEIGHT is its
+ * frame_count, WIDTH its rows after spatial subsampling (capture_config.ini). SCORES: what
+ * the kernel wrote, H x W x 4 int32: the 3 scores * 2^OUT_FRAC, then the class. The classes
  * are checked against labels.npy in the cube's folder (H x W integers: 0 cloud, 1 land,
- * 2 sea, anything else unlabeled), which must be there: their accuracy and each class's IoU.
+ * 2 sea, anything else unlabeled): their accuracy and each class's IoU. It must be there
+ * for a .npy; a capture has none, so for a .bip only the times are given without it.
  * A kernel that counts its own cycles (REG_CYCLES) has that count printed too, summed
  * over the starts; the last line has the counts benchmark.sh adds up over images.
  *
@@ -220,16 +224,53 @@ static void write_address(struct board *b, unsigned offset, int wide, uint64_t a
     if (wide) reg_write(b, offset + 4, (uint32_t)(address >> 32));
 }
 
+/* A headerless H x W x 120 uint16 cube: its size must be exactly that. */
+static FILE *bip_open(const char *path, long h, long w) {
+    FILE *f = fopen(path, "rb");
+    if (!f) fail(path);
+    if (fseeko(f, 0, SEEK_END) != 0) fail("cannot find the size of the .bip");
+    const off_t size = ftello(f), want = (off_t)h * w * BANDS * 2;
+    if (size != want) {
+        fprintf(stderr, "classify: %s is %lld bytes, but %ld x %ld x %d uint16 is %lld\n", path,
+                (long long)size, h, w, BANDS, (long long)want);
+        exit(1);
+    }
+    rewind(f);
+    return f;
+}
+
+/* A positive size from the command line. */
+static long size_arg(const char *text, const char *what) {
+    char *end;
+    const long v = strtol(text, &end, 10);
+    if (end == text || *end || v <= 0) {
+        fprintf(stderr, "classify: %s must be a positive whole number, not %s\n", what, text);
+        exit(2);
+    }
+    return v;
+}
+
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: %s CUBE.npy SCORES.npy\n", argv[0]);
+    const size_t name = argc > 1 ? strlen(argv[1]) : 0;
+    const int bip = name >= 4 && strcmp(argv[1] + name - 4, ".bip") == 0;
+    if (argc != (bip ? 5 : 3)) {
+        fprintf(stderr, "usage: %s CUBE.npy SCORES.npy\n   or: %s CUBE.bip SCORES.npy HEIGHT WIDTH\n",
+                argv[0], argv[0]);
         return 2;
     }
     const double start = now();
-    long shape[3];
-    FILE *in = npy_open(argv[1], "'<u2'", 3, shape);
-    const long h = shape[0], w = shape[1];
-    if (shape[2] != BANDS) fail("the cube must have 120 bands");
+    long h, w;
+    FILE *in;
+    if (bip) {
+        h = size_arg(argv[3], "HEIGHT");
+        w = size_arg(argv[4], "WIDTH");
+        in = bip_open(argv[1], h, w);
+    } else {
+        long shape[3];
+        in = npy_open(argv[1], "'<u2'", 3, shape);
+        h = shape[0], w = shape[1];
+        if (shape[2] != BANDS) fail("the cube must have 120 bands");
+    }
     /* labels.npy in the cube's folder: the classes are checked against it. */
     char labels_path[4096];
     size_t folder = 0;
@@ -240,12 +281,12 @@ int main(int argc, char **argv) {
     long labels_shape[2];
     int label_bytes = 0, label_signed = 0;
     FILE *labels = npy_open_labels(labels_path, labels_shape, &label_bytes, &label_signed);
-    if (!labels) {
+    if (!labels && !bip) {
         fprintf(stderr, "classify: no %s: the classes are checked against it (copy the image's labels.npy next to the cube)\n",
                 labels_path);
         exit(1);
     }
-    if (labels_shape[0] != h || labels_shape[1] != w) fail("the labels are not H x W for this cube");
+    if (labels && (labels_shape[0] != h || labels_shape[1] != w)) fail("the labels are not H x W for this cube");
     FILE *out = fopen(argv[2], "wb");
     if (!out) fail(argv[2]);
     npy_header(out, h, w);
@@ -261,8 +302,8 @@ int main(int argc, char **argv) {
     if (rows > h) rows = h;
     const uint64_t scores_at = ((uint64_t)rows * in_row + 4095) / 4096 * 4096;
     const int dins[] = REG_DINS;
-    unsigned char *truth = malloc((size_t)rows * w * label_bytes);
-    if (!truth) fail("no memory for the labels");
+    unsigned char *truth = labels ? malloc((size_t)rows * w * label_bytes) : NULL;
+    if (labels && !truth) fail("no memory for the labels");
 
     double loading = 0, fpga = 0, saving = 0;
     long patches = 0, strips = 0;
@@ -294,8 +335,8 @@ int main(int argc, char **argv) {
         t = now();
         const int32_t *scores = (const int32_t *)(b.mem + scores_at);
         if (fwrite(scores, out_row, n, out) != (size_t)n) fail("cannot write the scores");
-        if (fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
-        for (long p = 0; p < n * w; p++) {
+        if (labels && fread(truth, (size_t)w * label_bytes, n, labels) != (size_t)n) fail("the labels file is cut short");
+        for (long p = 0; labels && p < n * w; p++) {
             const int64_t label = label_at(truth + (size_t)p * label_bytes, label_bytes, label_signed);
             const int32_t cls = scores[LANES * p + 3];
             if (label < 0 || label > 2) continue;
@@ -320,8 +361,13 @@ int main(int argc, char **argv) {
     printf("own count:          %llu cycles\n", cycles);
 #endif
     (void)cycles;
-    printf("scores to the file: %8.3f s (and checked against the labels)\n", saving);
+    printf("scores to the file: %8.3f s%s\n", saving, labels ? " (and checked against the labels)" : "");
     printf("wall clock:         %8.3f s\n", now() - start);
+    if (!labels) {
+        printf("no %s: the classes are not checked\n", labels_path);
+        return 0;
+    }
+    fclose(labels);
     printf("accuracy against %s: %.2f%% of %ld labelled pixels\n", labels_path,
            labelled ? 100 * ((double)correct / labelled) : 0.0, labelled);
     const char *names[3] = {"cloud", "land", "sea"};

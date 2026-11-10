@@ -169,6 +169,45 @@ class OpuClassifyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("expected '<u2'", result.stderr)
 
+    def test_bip_capture_with_or_without_labels(self):
+        """A headerless .bip, as the OPU saves a capture: the same scores as the .npy, in one
+        start and in strips; without labels.npy only the times; a wrong size is said."""
+        kernel = 'waveletcnn_opt_zynq7020'
+        exe = self.build(kernel)
+        cube, _, want, accuracy, _ = self.cube_and_labels(kernel)
+        h, w = cube.shape[:2]
+        cube.tofile(self.dir / 'binned_cube.bip')
+
+        def run(*sizes, memory=64 << 20):
+            return subprocess.run([str(exe), str(self.dir / 'binned_cube.bip'), str(self.dir / 'scores.npy'),
+                                   *map(str, sizes)], capture_output=True, text=True,
+                                  env={**os.environ, 'FAKE_MEMORY': str(memory)})
+        for memory, starts in ((64 << 20, 1), (4096 + 64 * w * 120 * 2, 3)):
+            with self.subTest(memory=memory):
+                result = run(h, w, memory=memory)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f'in {starts} start', result.stdout)
+                np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
+                self.assertIn(accuracy, result.stdout)
+        (self.dir / 'labels.npy').unlink()
+        result = run(h, w)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        np.testing.assert_array_equal(np.load(self.dir / 'scores.npy'), want)
+        self.assertIn('the classes are not checked', result.stdout)
+        self.assertNotIn('accuracy', result.stdout)
+        self.assertNotIn('counts:', result.stdout)
+        # Sizes that do not match the file, or none: said, and the kernel never starts.
+        result = run(h, w + 1)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(f'but {h} x {w + 1} x 120 uint16 is', result.stderr)
+        self.assertNotIn('fake board: a start', result.stderr)
+        result = run(h)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('CUBE.bip SCORES.npy HEIGHT WIDTH', result.stderr)
+        result = run(h, 'x')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('WIDTH must be a positive whole number', result.stderr)
+
     def test_own_cycle_count_added_up_over_the_strips(self):
         kernel = 'justounetsimple_opt_zynq7020'
         exe = self.build(kernel, cycles=True)
