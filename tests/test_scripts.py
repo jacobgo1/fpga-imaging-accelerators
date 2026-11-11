@@ -144,6 +144,17 @@ def fake_repository(root):
     return root
 
 
+@unittest.skipIf(os.name == 'nt', 'Windows has no execute bit')
+class ExecutableTests(unittest.TestCase):
+    def test_every_script_is_executable(self):
+        # The scripts call each other as programs, and git keeps the bit for other machines.
+        # The tests below run them with bash, so they would not notice a missing one.
+        scripts = sorted([*(ROOT / 'scripts').glob('*.sh'), *(ROOT / 'software/opu').glob('*.sh')])
+        self.assertTrue(scripts)
+        missing = [str(p.relative_to(ROOT)) for p in scripts if not os.access(p, os.X_OK)]
+        self.assertEqual(missing, [], 'chmod +x these (and commit the mode)')
+
+
 @unittest.skipIf(BASH is None, 'the scripts need bash (Git Bash, WSL or Linux)')
 class ScriptTests(unittest.TestCase):
     def setUp(self):
