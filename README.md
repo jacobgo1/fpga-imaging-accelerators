@@ -90,8 +90,8 @@ Each board's in `boards/BOARD/board.conf`: its FPGA part, the HLS clock (`CLOCK_
 on the ZCU104, 12.8 on the Zynq-7020s, 10 on PicoBoB), and its flow (`pynq` or `opu`).
 `FPGA_JOBS` sets how many Vivado runs go at once (default: every core, as `nproc` counts
 them), each with up to 8 threads. `FPGA_OPU_SYSTEM` is where opu-system is (default
-`../opu-system`). Use the same AMD release for HLS and Vivado (2025.2 works for every
-board; only the OPU boards' PetaLinux is 2023.1, in Docker). On Linux, `fpga_env` sources
+`../opu-system`). Vitis HLS and Vivado 2025.2 work for every board; the OPU boards' Vivado
+and PetaLinux are opu-system's 2023.1, in Docker. On Linux, `fpga_env` sources
 Vivado's `settings64.sh`. `hls.sh` uses `vitis-run` if it is on PATH, otherwise `vitis_hls`.
 
 ## Layout

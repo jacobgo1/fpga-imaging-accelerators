@@ -26,8 +26,8 @@ weights are extracted from them on demand.
   bitstreams. The user runs these and pastes results; Claude cannot.
   - HLS log: `build/K/BOARD/hls.log`
   - reports: `build/K/BOARD/hls/solution/syn/report/`
-  - the OPU boards need opu-system next to the repository and its PetaLinux 2023.1 Docker
-    image; Vivado is the release of the HLS export, 2025.2 works (`docs/opu.md`).
+  - the OPU boards need opu-system next to the repository with its Vivado and PetaLinux
+    2023.1 Docker images; an export from Vitis HLS 2025.2 works (`docs/opu.md`).
 - **Board:** the ZCU104 with PYNQ: upload `K_pynq.zip`, unzip, run the notebook. PicoBoB and
   the ZedBoard: unpack `K_opu.tar.gz` in `/media/sd-pl`, load, run `K/classify`.
 

@@ -92,14 +92,12 @@ On the lab server:
    is opu-system's `docker/README.md`: the installer in `docker/petalinux-docker/`, then
    `docker/setup-petalinux-docker.sh` (press Enter at its question about a BSP, the firmware
    step needs none).
-2. **Vivado, the release of the Vitis HLS** that made `export.zip`: Vivado takes IP from its
-   own release only. With opu-system's own Vivado 2023.1 (in `/opt/Xilinx/Vivado/2023.1`, or its
-   Docker image `vivado:2023.1`) and a 2023.1 export, `opu.sh` runs `run_tcl_script.sh`.
-   Otherwise it runs the `vivado` on PATH (`fpga_env`) the way `run_tcl_script.sh` does (the
-   same repoDir substitution and flags), as the FPGA workstation builds with 2025.2; PetaLinux
-   2023.1 takes its xsa. opu-system's `check_vivado.tcl` then prints `BD_TCL-109` (made with
-   2023.1) and the build carries on. A Vivado of another release than the export is refused
-   (`FPGA_IGNORE_VERSION=1` tries anyway).
+2. **opu-system's Vivado 2023.1**, in `/opt/Xilinx/Vivado/2023.1` or its Docker image
+   `vivado:2023.1` (the FPGA workstation has the image). `opu.sh` runs `run_tcl_script.sh`
+   with it, as cnn-1d's `build-firmware.sh` does; it takes an export from Vitis HLS 2025.2.
+   A machine without it uses the `vivado` on PATH (`fpga_env`) the way `run_tcl_script.sh`
+   would (the same repoDir substitution and flags); opu-system's `check_vivado.tcl` then
+   prints `BD_TCL-109` for a release other than 2023.1, and the build carries on.
 3. **The Docker image for classify** (as cnn-1d's `scripts/setup_docker`):
 
    ```bash
@@ -175,7 +173,9 @@ tarball, from the firmware already built.
 
 | What you see | Why | What to do |
 | --- | --- | --- |
-| `export.zip is from Vitis HLS 2025.2, and there is no Vivado 2025.2` | the Vivado on PATH is another release than the HLS step's | `fpga_env` with that release's settings64.sh, `fpga_bitstream` again |
+| `no Vivado` | neither opu-system's Vivado nor one on PATH | `fpga_env` |
+| `cracklib ... Unable to find revision ... in branch master`, then `Error in prepare_pl_firmware.sh, line 130` | PetaLinux 2023.1 looks for cracklib's old branch name; `opu.sh` adds the fix to opu-system's `dtbo-project` and runs PetaLinux again by itself | nothing, unless it fails the second time too |
+| `WARNING: ... not a supported OS` from PetaLinux | its host check, inside Docker | nothing: a warning only |
 | `no opu-system in ...` | opu-system is not next to the repository | clone it there, or `export FPGA_OPU_SYSTEM=/path/to/opu-system` |
 | `docker: Error response ... permission denied` on `/home/hypso/petalinux` | SELinux (Fedora) keeps Docker out of the folder | `scripts/get-petalinux.sh` again (it relabels the folder) |
 | `the input device is not a TTY` | `run-petalinux-docker.sh` runs `docker run -it` | run the build in a terminal, not through a pipe or `nohup` |

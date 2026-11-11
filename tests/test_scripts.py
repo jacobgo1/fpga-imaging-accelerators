@@ -51,14 +51,11 @@ if stage == 'ip':
         z.writestr(src + f'x{top}_sinit.c', '')
 '''
 
-# A stand-in for vivado: -version; -source vivado.tcl (scripts/pynq.sh); -source an opu-system
+# A stand-in for vivado: -source vivado.tcl (scripts/pynq.sh); -source an opu-system
 # project script (scripts/opu.sh with the Vivado on PATH), which must point repoDir at opu-system.
 FAKE_VIVADO = r'''#!PYTHON
 import os, re, sys
 from pathlib import Path
-if sys.argv[1:] == ['-version']:
-    print(f"vivado v{os.environ.get('FAKE_VIVADO_VERSION', '2023.1')} (64-bit)")
-    sys.exit(0)
 with open(os.environ['FAKE_LOG'], 'a') as log:
     log.write(f'vivado {" ".join(sys.argv[1:])}\n')
 script = Path(sys.argv[sys.argv.index('-source') + 1])
@@ -102,6 +99,10 @@ set -e
 echo "petalinux $*" >> "$FAKE_LOG"
 cd "$(dirname "$0")/../petalinux/projects"
 [ "$1" = ./prepare_pl_firmware.sh ] && [ -f "$2" ] && [ -f "$5" ]
+# The first run makes dtbo-project; cracklib fails without the fix (FAKE_CRACKLIB).
+conf=dtbo-project/project-spec/meta-user/conf/petalinuxbsp.conf
+[ -f "$conf" ] || { mkdir -p "$(dirname "$conf")"; echo '#User Configuration' > "$conf"; }
+if [ -n "$FAKE_CRACKLIB" ] && ! grep -q 'branch=main' "$conf"; then exit 1; fi
 echo BITBIN > "$4/$3.bit.bin"
 echo "hash  /media/sd-pl/firmware/$3.bit.bin" > "$4/$3.bit.bin.md5sum"
 echo DTBO > "$4/$3.dtbo"
@@ -377,31 +378,37 @@ class ScriptTests(unittest.TestCase):
         self.assertIn('reg = <0x10000000 0x09600000 0x19600000 0x01000000>;', dtsi)
         self.assertIn('#define KERNEL_CLOCK_MHZ 78.125', (self.out(board='zedboard') / 'driver/kernel.h').read_text())
 
-    def test_opu_uses_the_vivado_on_path_for_another_release(self):
-        # The FPGA workstation's way: HLS and Vivado 2025.2, PetaLinux 2023.1.
-        release = {'FAKE_HLS_VERSION': '2025.2', 'FAKE_VIVADO_VERSION': '2025.2'}
-        result = self.opu_build(env=release)
+    def test_opu_uses_opu_systems_vivado_for_any_export(self):
+        # The FPGA workstation's way: an export from Vitis HLS 2025.2, opu-system's Vivado 2023.1.
+        result = self.opu_build(env={'FAKE_HLS_VERSION': '2025.2'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('run_tcl_script k_opt_picobob.tcl', self.log.read_text())
+        self.assertNotIn('-mode batch -source', self.log.read_text())
+
+    def test_opu_without_opu_systems_vivado_runs_the_one_on_path(self):
+        result = self.opu_build(env={'FAKE_VIVADO_IMAGE': ''})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         log = self.log.read_text()
         self.assertNotIn('run_tcl_script', log)
         self.assertIn('vivado -notrace -nolog -nojou -quiet -mode batch -source', log)
         self.assertIn('petalinux ./prepare_pl_firmware.sh', log)
         self.assertEqual(list((self.opu / 'vivado/tcl-scripts/tmp').glob('local-*')), [])
-        # Without opu-system's 2023.1 the Vivado on PATH runs a 2023.1 export too.
-        self.log.write_text('')
-        result = self.opu_build(env={'FAKE_VIVADO_IMAGE': ''})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn('run_tcl_script', self.log.read_text())
 
-    def test_opu_refuses_a_vivado_of_another_release(self):
-        result = self.opu_build(env={'FAKE_HLS_VERSION': '2025.2', 'FAKE_VIVADO_VERSION': '2024.2'})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('from Vitis HLS 2025.2, and there is no Vivado 2025.2 (on PATH: 2024.2)', result.stderr)
-        self.assertNotIn('-mode batch -source', self.log.read_text())
-        self.assertNotIn('run_tcl_script', self.log.read_text())
-        result = self.opu_build(env={'FAKE_HLS_VERSION': '2025.2', 'FAKE_VIVADO_VERSION': '2024.2',
-                                     'FPGA_IGNORE_VERSION': '1'})
+    def test_opu_fixes_cracklib_and_runs_petalinux_again(self):
+        result = self.opu_build(env={'FAKE_CRACKLIB': '1'})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.log.read_text().count('petalinux ./prepare_pl_firmware.sh'), 2)
+        conf = (self.opu / 'petalinux/projects/dtbo-project/project-spec/meta-user/conf/petalinuxbsp.conf').read_text()
+        for recipe in ('cracklib', 'cracklib-native'):
+            self.assertIn(f'SRC_URI:remove:pn-{recipe} = "git://github.com/cracklib/cracklib;protocol=https;branch=master"', conf)
+            self.assertIn(f'SRC_URI:prepend:pn-{recipe} = "git://github.com/cracklib/cracklib;protocol=https;branch=main "', conf)
+        # The next build has the fix from the start, and adds it only once.
+        self.log.write_text('')
+        result = self.opu_build(env={'FAKE_CRACKLIB': '1'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.log.read_text().count('petalinux ./prepare_pl_firmware.sh'), 1)
+        conf = (self.opu / 'petalinux/projects/dtbo-project/project-spec/meta-user/conf/petalinuxbsp.conf').read_text()
+        self.assertEqual(conf.count('branch=main'), 2)
 
     def test_opu_stops_when_timing_fails(self):
         result = self.opu_build(env={'FAKE_TIMING': 'Timing constraints are not met.'})

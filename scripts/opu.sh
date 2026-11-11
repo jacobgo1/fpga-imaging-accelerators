@@ -16,14 +16,12 @@
 #        KERNEL/classify, process-capture.sh, load.sh
 #
 # --driver: steps 3 and 4 only (after changing classify).
-# opu-system: FPGA_OPU_SYSTEM, else ../opu-system next to this repository, with its PetaLinux
-# Docker image petalinux:2023.1 (opu-system's README). Vivado must be the release of the
-# Vitis HLS that made export.zip: opu-system's own 2023.1 (in /opt/Xilinx or its Docker image)
-# through run_tcl_script.sh, or else the vivado on PATH (fpga_env), run the way
-# run_tcl_script.sh runs it. PetaLinux 2023.1 takes an xsa from a newer Vivado (the FPGA
-# workstation builds with 2025.2). Nothing in opu-system's git is changed: the files this puts
-# there are in its vivado/projects/, vivado/tcl-scripts/tmp/ and
-# petalinux/projects/KERNEL_BOARD/, as cnn-1d-picobob's build-firmware.sh does.
+# opu-system: FPGA_OPU_SYSTEM, else ../opu-system next to this repository, with its Vivado
+# 2023.1 (in /opt/Xilinx or its Docker image vivado:2023.1) and PetaLinux Docker image
+# petalinux:2023.1 (opu-system's README). Steps 1 and 2 are cnn-1d-picobob's
+# build-firmware.sh: the same opu-system scripts, the same places. A machine without
+# opu-system's Vivado runs the vivado on PATH (fpga_env) the way run_tcl_script.sh would.
+# Nothing in opu-system's git is changed.
 set -e
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -48,27 +46,14 @@ if [ $driver_only -eq 0 ]; then
     [ -x "$OPU/vivado/run_tcl_script.sh" ] || die "no opu-system in $OPU: clone it there, or set FPGA_OPU_SYSTEM"
     OPU="$(cd "$OPU" && pwd)"
     command -v unzip >/dev/null || die "unzip not found on PATH"
-    # Vivado takes IP from its own release only, so pick the Vivado of the export's release.
-    hls_version="$(unzip -p "$export_zip" '*component.xml' 2>/dev/null | grep -o 'xilinxVersion>[^<]*' | head -n 1 | cut -d '>' -f 2)"
-    path_version=""
-    if command -v vivado >/dev/null; then
-        path_version="$(vivado -version 2>/dev/null | grep -o 'v[0-9]*\.[0-9]*' | head -n 1 | cut -c 2-)"
-    fi
-    opu_vivado=0                        # what run_tcl_script.sh looks for
+    # run_tcl_script.sh needs Vivado 2023.1 in /opt/Xilinx or its Docker image. Vivado 2023.1
+    # takes an export from a newer Vitis HLS (2025.2 on the FPGA workstation).
     if [ -x /opt/Xilinx/Vivado/2023.1/bin/vivado ] || docker image inspect vivado:2023.1 >/dev/null 2>&1; then
-        opu_vivado=1
-    fi
-    if [ -z "$hls_version" ]; then
-        echo "WARNING: cannot tell which Vitis HLS made $export_zip; Vivado must be the same release"
-    fi
-    if [ $opu_vivado -eq 1 ] && [ "${hls_version:-2023.1}" = 2023.1 ]; then
         vivado_with=opu-system
-    elif [ -n "$path_version" ] && { [ "${hls_version:-$path_version}" = "$path_version" ] || [ -n "$FPGA_IGNORE_VERSION" ]; }; then
+    elif command -v vivado >/dev/null; then
         vivado_with=path
-    elif [ $opu_vivado -eq 1 ] && [ -n "$FPGA_IGNORE_VERSION" ]; then
-        vivado_with=opu-system
     else
-        die "$export_zip is from Vitis HLS $hls_version, and there is no Vivado $hls_version (on PATH: ${path_version:-none}): fpga_env with its settings64.sh, or set FPGA_IGNORE_VERSION=1 to try another"
+        die "no Vivado: opu-system's (its README: docker/vivado-docker), or fpga_env for one on PATH"
     fi
 
     # 1. Vivado.
@@ -87,9 +72,9 @@ if [ $driver_only -eq 0 ]; then
         "$OPU/vivado/run_tcl_script.sh" "$PROJECT.tcl" 2>&1 | tee "$out/vivado-console.log"
     else
         # run_tcl_script.sh's steps with this Vivado: the same two seds point repoDir at
-        # opu-system, the same flags. Its check_vivado.tcl prints an error for a release
-        # other than 2023.1 and carries on, as on the FPGA workstation.
-        echo "Vivado $path_version on PATH: $(command -v vivado)"
+        # opu-system, the same flags. check_vivado.tcl prints an error for a release other
+        # than 2023.1 and carries on.
+        echo "No Vivado of opu-system's: the one on PATH, $(command -v vivado)"
         script="$OPU/vivado/tcl-scripts/tmp/local-$PROJECT.tcl"
         cp "$OPU/vivado/tcl-scripts/tmp/$PROJECT.tcl" "$script"
         sed -i "s!set repoDir /home/hypso!#set repoDir /home/hypso!g" "$script"
@@ -120,8 +105,31 @@ if [ $driver_only -eq 0 ]; then
     sed -e "s/@CUBE_MAP@/$(printf '0x%08x' $memory_base)/" \
         -e "s/@SCORES_MAP@/$(printf '0x%08x' $((memory_base + 0x09600000)))/" \
         "$FPGA_ROOT/boards/opu/hls_kernel.dtsi" > "$pl/$PROJECT.dtsi"
-    "$OPU/docker/run-petalinux-docker.sh" ./prepare_pl_firmware.sh "./$PROJECT/$PROJECT.xsa" "$KERNEL" \
-        "./$PROJECT/output" "./$PROJECT/$PROJECT.dtsi"
+    # PetaLinux 2023.1 fetches cracklib from its branch master, which upstream has renamed
+    # main: without a copy in opu-system's download cache the build stops ("Unable to find
+    # revision ... in branch master"). The fix is four lines in opu-system's dtbo-project,
+    # which prepare_pl_firmware.sh makes on its first run (it is not in git); after that
+    # first run fails, add them and run again.
+    dtbo_conf="$OPU/petalinux/projects/dtbo-project/project-spec/meta-user/conf/petalinuxbsp.conf"
+    fix_cracklib() {
+        [ -f "$dtbo_conf" ] || return 1
+        grep -q 'cracklib;protocol=https;branch=main' "$dtbo_conf" && return 1
+        echo "Fetching cracklib from its branch main ($dtbo_conf)"
+        local recipe url="git://github.com/cracklib/cracklib;protocol=https"
+        for recipe in cracklib cracklib-native; do
+            printf 'SRC_URI:remove:pn-%s = "%s;branch=master"\nSRC_URI:prepend:pn-%s = "%s;branch=main "\n' \
+                "$recipe" "$url" "$recipe" "$url" >> "$dtbo_conf"
+        done
+    }
+    firmware() {
+        "$OPU/docker/run-petalinux-docker.sh" ./prepare_pl_firmware.sh "./$PROJECT/$PROJECT.xsa" "$KERNEL" \
+            "./$PROJECT/output" "./$PROJECT/$PROJECT.dtsi"
+    }
+    fix_cracklib || true
+    if ! firmware; then
+        fix_cracklib || die "PetaLinux failed; see above"
+        firmware
+    fi
     for file in "$KERNEL.bit.bin" "$KERNEL.bit.bin.md5sum" "$KERNEL.dtbo"; do
         [ -f "$pl/output/$file" ] || die "PetaLinux made no $pl/output/$file"
     done
