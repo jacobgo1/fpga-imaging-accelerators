@@ -7,7 +7,7 @@ system's PetaLinux, built the way opu-system builds its own designs).
 
 **What happens at each step, from C++ to a result on the board, and how to change the
 hardware around a kernel: [docs/framework.md](docs/framework.md).** The OPU boards:
-[docs/opu.md](docs/opu.md).
+[docs/opu.md](docs/opu.md), and how the build uses opu-system: [docs/opu_flow.md](docs/opu_flow.md).
 
 ## Quickstart
 

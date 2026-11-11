@@ -8,6 +8,8 @@ with its md5sum, a devicetree overlay, and a program that drives the kernel thro
 
 ## What happens
 
+Which script is opu-system's and which is ours, step by step: [opu_flow.md](opu_flow.md).
+
 `fpga_build K picobob` (`scripts/build.sh K picobob`) runs:
 
 | # | Script | What | Result in `build/K/picobob/` |
