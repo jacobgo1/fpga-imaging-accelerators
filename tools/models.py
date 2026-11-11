@@ -2,8 +2,9 @@
 
 A kernel belongs to the model whose name it starts with: justounetsimple_opt_zynq7020 is
 justounetsimple's, sp_unet_small_opt sp_unet_small's. The kernel named like its
-model is the golden one, the rest are optimized. main.py packs MODELS' entry with the
-board's notebook (kernel.json), so one notebook serves every model: the golden kernels
+model is the golden one, the rest are optimized. scripts/pynq.sh packs MODELS' entry with the
+board's notebook (kernel.json, from `python3 tools/models.py kernel-json KERNEL`), so one notebook
+serves every model: the golden kernels
 share software/pynq/classify_golden.ipynb, the optimized ones classify.ipynb.
 
 The board is checked against the image's labels only. The PC's answers, for the tests
@@ -13,7 +14,7 @@ H x W x 4: the scores * 2^out_frac, then the class). Every optimized kernel of a
 the same answers, except sp_unet_SIZE_opt_u8 and its Zynq-7000 versions (uint8 activations):
 fixed_scores takes the kernel's name for those.
 
-The table needs nothing but Python (main.py reads it); the answers need numpy.
+The table needs nothing but Python (the scripts read it); the answers need numpy.
 """
 import importlib
 from pathlib import Path
@@ -115,3 +116,21 @@ def fixed_scores(model, cube, kernel=None):
         return m.kernel_reference(cube, m.load_quantized(size))
     m = _module(f'{model}_model')
     return m.with_class(m.classify_fixed(cube))
+
+
+def kernel_json(kernel):
+    """What the board's notebook reads as kernel.json: the kernel, its model and the model's
+    entry. None for a kernel of no model."""
+    model = model_of(kernel)
+    return {'kernel': kernel, 'model': model, **MODELS[model]} if model else None
+
+
+if __name__ == '__main__':
+    # python3 tools/models.py kernel-json KERNEL: kernel.json, or exit 1 for a kernel of no model.
+    import json
+    if len(sys.argv) != 3 or sys.argv[1] != 'kernel-json':
+        sys.exit('usage: python3 tools/models.py kernel-json KERNEL')
+    info = kernel_json(sys.argv[2])
+    if info is None:
+        sys.exit(1)
+    print(json.dumps(info, indent=2))

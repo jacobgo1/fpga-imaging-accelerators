@@ -36,8 +36,8 @@ point 97.24 %; the fixed point gives the same class as fp32 on 99.71 % of them.
 |---|---|---|---|
 | `spectralpointwise1d` | ZCU104 (any) | 5 ns | golden baseline: float, int8 weights, plain loops, `n` preprocessed pixels per start; **measured 82.18 s** for a whole capture (0.126 ms a pixel), 97.32 % |
 | `spectralpointwise1d_opt` | ZCU104 | 250 MHz | whole raw capture per start, bit-exact in C++; **measured 12.02-12.21 ms** at 250 MHz (4.60-4.68 cycles a pixel) and 12.05-12.17 ms at 214 MHz (3.95-3.99): DDR's limit, 97.32 % |
-| `spectralpointwise1d_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | whole raw capture per start, bit-exact in C++; cycle model only, not yet run |
-| `spectralpointwise1d_opt_zynq7020` | ZedBoard (`--board zedboard`) or PYNQ-Z2 (`--board zynq7020`) | 12.8 ns (PLL: 76.189 MHz) | whole raw capture per start, bit-exact in C++; **measured 135.0 ms** on the ZedBoard, 15.75 cycles a pixel (DDR), 97.32 % |
+| `spectralpointwise1d_opt_zynq7030` | Zynq-7030 (board `picobob`) | 100 MHz | whole raw capture per start, bit-exact in C++; cycle model only, not yet run |
+| `spectralpointwise1d_opt_zynq7020` | ZedBoard (board `zedboard`) or PYNQ-Z2 (board `pynqz2`) | 12.8 ns (PLL: 76.189 MHz) | whole raw capture per start, bit-exact in C++; **measured 135.0 ms** on the ZedBoard, 15.75 cycles a pixel (DDR), 97.32 % |
 
 All optimized kernels give the same answers bit for bit: `classify_fixed` in
 `tools/spectralpointwise1d_model.py`, checked by the shared testbench
@@ -46,7 +46,7 @@ reference and the float golden network) and by `tests/test_spectralpointwise1d.p
 aegean pixels. The design: `src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp`; a
 lane's layers: `spectralpointwise1d_opt_lanes.hpp`; the lanes' chain: each kernel's `.cpp`
 (four lanes on the ZCU104 and the 7030, two on the 7020). Notebooks:
-the shared ones, `software/pynq/classify_golden.ipynb` and `classify.ipynb`; on the OPU PetaLinux (ZedBoard, 7030): the generic `classify.c`.
+the shared ones, `software/pynq/classify_golden.ipynb` and `classify.ipynb`; on the OPU PetaLinux (ZedBoard, PicoBoB): the generic `classify` (software/opu/).
 
 ## Optimizations used
 

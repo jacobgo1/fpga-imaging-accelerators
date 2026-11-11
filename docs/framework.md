@@ -1,51 +1,53 @@
-# How it works: from C++ to a result in the notebook
+# How it works: from C++ to a result on the board
 
-There are two halves. **On the lab server**, one command turns a kernel's C++
-into a bitstream and a zip for the board. **On the board**, a Jupyter notebook
-(PYNQ) loads that bitstream and drives the kernel. The example used here is
-`justounetsimple_opt`, but every kernel goes the same way.
+There are two halves. **On the lab server**, the scripts in `scripts/` turn a kernel's C++
+into a bitstream and a package for the board. **On the board**, a Jupyter notebook (PYNQ:
+the ZCU104, the PYNQ-Z2) or the program `classify` (the OPU system: PicoBoB, the ZedBoard)
+loads that bitstream and drives the kernel. The example used here is `justounetsimple_opt`
+on the ZCU104, but every kernel goes the same way; the OPU boards are in [opu.md](opu.md).
 
 ## 1. Building: `fpga_build justounetsimple_opt`
 
-That runs `python3 main.py bitstream --kernel justounetsimple_opt --skip-cosim`,
-which does five things in order:
+That runs `scripts/build.sh justounetsimple_opt zcu104`, which does four things in order:
 
-| # | Who | What | Result |
+| # | Who | What | Result in `build/K/zcu104/` |
 | --- | --- | --- | --- |
-| 1 | `main.py` | Finds the folder in `src/models/` with `K.cpp`, its `*.cpp`, and `tb/K/*.cpp`, makes `build/K/DATE-bitstream/` and writes `settings.tcl` there (paths, part, clock) | a run folder |
-| 2 | Vitis HLS runs [`scripts/hls.tcl`](../scripts/hls.tcl) | C simulation (your testbench) → C synthesis (C++ → Verilog) → `export_design` | an **IP block** in `hls/solution/impl/ip/` |
-| 3 | Vivado runs [`scripts/vivado.tcl`](../scripts/vivado.tcl) | Empty project, the IP put in its catalog, then [`boards/zcu104/system.tcl`](../boards/zcu104/system.tcl) | a **block design**: the hardware around the IP (section 2) |
-| 4 | Vivado, still `vivado.tcl` | Synthesis → place and route → timing check → `.bit` | the bitstream in `vivado/system.runs/impl_1/` |
-| 5 | `main.py` | Takes the `.bit`, the `.hwh` (block design description) and `xK_hw.h` (register offsets) from the run folder, names the first two after the kernel, adds `software/pynq/K/` (notebook) and the files in its `include.txt`, and zips it | `K_pynq.zip` in the run folder |
+| 1 | `scripts/hls.sh` | Finds the folder in `src/models/` with `K.cpp`, its `*.cpp`, and `tb/K/*.cpp`; reads `boards/zcu104/board.conf` (part, clock); writes `settings.tcl` | the settings |
+| 2 | Vitis HLS runs [`scripts/hls.tcl`](../scripts/hls.tcl) | C simulation (your testbench) → C synthesis (C++ → Verilog) → `export_design` | the **IP block**, `export.zip` |
+| 3 | `scripts/pynq.sh`; Vivado runs [`scripts/vivado.tcl`](../scripts/vivado.tcl) | Empty project, the IP (unpacked in `ip/`) in its catalog, then [`boards/zcu104/system.tcl`](../boards/zcu104/system.tcl): the **block design** around the IP (section 2); synthesis → place and route → timing check → `.bit` | `vivado/system.runs/impl_1/*.bit`, `reports/` |
+| 4 | `scripts/pynq.sh` | Takes the `.bit`, the `.hwh` (block design description) and `xK_hw.h` (register offsets), names the first two after the kernel, adds the notebook from `software/pynq/` and `kernel.json` (`tools/models.py`), and zips it | `K_pynq.zip` |
 
 Then upload the zip to Jupyter on the board, unzip it there, and run the notebook.
+For PicoBoB and the ZedBoard, steps 3 and 4 are `scripts/opu.sh` instead: opu-system's
+Vivado and PetaLinux scripts, and `classify` ([opu.md](opu.md)).
 
-Everything stays in that one run folder. Where to look afterwards:
+Everything stays in that one folder. Where to look afterwards:
 
 ```text
-build/K/latest/hls/solution/syn/report/K_csynth.rpt   HLS estimate: latency, resources
-build/K/latest/reports/impl/                          real utilization and timing
-build/K/latest/vivado/system.xpr                      the Vivado project: open it to see the design
-build/K/latest/K_pynq.zip                             what goes to the board
-build/K/latest/run.json                               what was built: git commit, part, clock, result
+build/K/zcu104/hls/solution/syn/report/K_csynth.rpt   HLS estimate: latency, resources
+build/K/zcu104/reports/impl/                          real utilization and timing
+build/K/zcu104/vivado/system.xpr                      the Vivado project: open it to see the design
+build/K/zcu104/K_pynq.zip                             what goes to the board
+build/K/zcu104/build.txt                              what was built: git commit, part, clock
 ```
 
-`main.py bitstream` without `--skip-cosim` also runs C/RTL co-simulation in
-step 2. It's slow, so `fpga_build` skips it. Run `fpga_cosim K` (`main.py cosim
---kernel K`) separately when the RTL needs checking; its report,
-`build/K/latest/hls/solution/sim/report/K_cosim.rpt`, has the measured cycle count.
-`fpga_cosim K --dataflow-profile` also records, for every process of a
-DATAFLOW kernel, when it worked and when it waited on which stream: open the
-run's `hls/` project in the Vitis HLS GUI and the Dataflow Viewer of the top
-function shows it. Slower, so only when looking for the stage that holds the
-others up.
+`export.zip` is where the two halves of the build meet: steps 3 and 4 need nothing else,
+so one built by someone else works (`fpga_bitstream K BOARD`).
+
+`fpga_build` leaves out C/RTL co-simulation, which is slow; `fpga_build K BOARD --cosim`
+runs it in step 2. Run `fpga_cosim K` (`scripts/hls.sh K zcu104 cosim`) separately when the
+RTL needs checking; its report, `build/K/zcu104/hls/solution/sim/report/K_cosim.rpt`, has
+the measured cycle count. `fpga_cosim K BOARD --dataflow-profile` also records, for every
+process of a DATAFLOW kernel, when it worked and when it waited on which stream: open the
+build's `hls/` project in the Vitis HLS GUI and the Dataflow Viewer of the top function
+shows it. Slower, so only when looking for the stage that holds the others up.
 
 ## 2. The hardware around the kernel
 
 There is one board script per board, not per kernel: it wires whatever control
-and `m_axi` ports the kernel has. `--board` picks it (default `zcu104`; also
-`zynq7020`, the PYNQ-Z2, and `zynq7030`, HYPSO-2's FPGA, see
-[boards/README.md](../boards/README.md)).
+and `m_axi` ports the kernel has. The board argument picks it (default `zcu104`; also
+`pynqz2`; PicoBoB and the ZedBoard use opu-system's design with
+`boards/opu/add_hls_kernel.tcl`, see [boards/README.md](../boards/README.md)).
 `boards/zcu104/system.tcl` creates every block and wire of this design, with
 nothing added automatically:
 
@@ -80,13 +82,13 @@ A kernel with no `m_axi` ports gets only the control path.
 
 ### Changing it
 
-- **Looking:** after a build, open `build/K/latest/vivado/system.xpr` in Vivado
+- **Looking:** after a build, open `build/K/zcu104/vivado/system.xpr` in Vivado
   (on the lab server) and open the block design. That's exactly what was built.
 - **Changing:** edit `system.tcl`. Each block is a `create_bd_cell`, each wire
   a `connect_bd_net` (single pins: clock, reset) or `connect_bd_intf_net`
   (whole AXI buses). Examples:
-  - *A different clock:* `clock_ns` in `config/project.json` sets both the HLS
-    target and `pl_clk0`.
+  - *A different clock:* `CLOCK_NS` in `boards/zcu104/board.conf` (or `--clock-ns`)
+    sets both the HLS target and `pl_clk0`.
   - *An AXI-Stream kernel with a DMA:* add an `axi_dma` cell, connect its
     `M_AXIS_MM2S` to the kernel's input stream and the kernel's output stream to
     `S_AXIS_S2MM`, its `S_AXI_LITE` to a second `ctrl` master (`NUM_MI 2`), and
@@ -124,20 +126,21 @@ the kernel can see it.
 
 ```bash
 source fpga.sh       # once per terminal on the lab server
-fpga_help            # every command, and the main.py line it runs
+fpga_help            # every command, and the script it runs
 ```
 
-Tab completes `K` (the kernel names), and for `fpga_pynq` also `RUN`.
+Tab completes `K` (the kernel names) and `BOARD` (default `zcu104`).
 
 | Goal | Command |
 | --- | --- |
-| Which kernels there are | `fpga_kernels` |
+| Which kernels and boards there are | `fpga_kernels` |
 | Tools on PATH | `fpga_env` |
 | Test on the PC/server, no FPGA | `fpga_test K` |
-| Bitstream + board zip | `fpga_build K` |
-| Co-simulation: the RTL against the testbench, with its cycle count | `fpga_cosim K` |
-| List builds | `fpga_runs K` |
-| Re-make the zip of an old build (e.g. after editing the notebook) | `fpga_pynq K [RUN]` |
+| Bitstream + board package | `fpga_build K [BOARD]` |
+| The IP only (`export.zip`) | `fpga_ip K [BOARD]` |
+| Bitstream + package from an existing `export.zip` | `fpga_bitstream K [BOARD]` |
+| Co-simulation: the RTL against the testbench, with its cycle count | `fpga_cosim K [BOARD]` |
+| The package again (after editing the notebook, or classify) | `fpga_package K [BOARD]` |
 | Zip an image folder for upload | `fpga_zip DIR` |
 
 Other steps are plain Python scripts in `tools/` (weights, quantization,
@@ -149,9 +152,10 @@ preparing images), described in [tools/README.md](../tools/README.md).
    (copy them from `justounetsimple_opt.cpp`), plus `tb/K/K_tb.cpp`.
 2. `fpga_test K` until it passes.
 3. A new model: its entry in `tools/models.py` (the board's notebooks then take
-   it, golden and optimized). A kernel of no model: `software/pynq/K/K.ipynb`, plus
-   an `include.txt` if it needs repo files.
-4. `fpga_build K`, upload `K_pynq.zip`, and run the notebook.
+   it, golden and optimized; `classify` on the OPU boards takes every optimized kernel
+   with the inputs `din0`, ..., `dout`, `height`, `width`). A kernel of no model:
+   `software/pynq/K/K.ipynb`, copied into its zip.
+4. `fpga_build K [BOARD]`, then the notebook or [opu.md](opu.md).
 
 The first accelerator, `justoliunet` (a per-pixel 1D network, since removed;
 it is in the git history), matched the PC reference on every pixel of a real

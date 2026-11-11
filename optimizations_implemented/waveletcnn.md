@@ -32,8 +32,8 @@ Total: ~4 972 MACs per pixel (5.09 M per patch), ~21 MACs per byte read.
 |---|---|---|---|
 | `waveletcnn` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 128.67 s** for a whole capture (193.5 ms a patch), 97.23 % |
 | `waveletcnn_opt` | ZCU104 | 250 MHz | bit-exact; **measured 21.91 ms**, 8 238 cycles a patch (T 8 192), 97.22 %; 25.43 ms (8 195 cycles) at 214 MHz |
-| `waveletcnn_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle model below |
-| `waveletcnn_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | bit-exact; **measured 259.4 ms** on the ZedBoard, 29 721 cycles a patch (T 29 696), 97.22 % |
+| `waveletcnn_opt_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | built in C++, bit-exact; cycle model below |
+| `waveletcnn_opt_zynq7020` | PYNQ-Z2 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | bit-exact; **measured 259.4 ms** on the ZedBoard, 29 721 cycles a patch (T 29 696), 97.22 % |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/waveletcnn_model.py`); same class as the quantized float model on 99.66 %

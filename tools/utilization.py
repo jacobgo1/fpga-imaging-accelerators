@@ -4,8 +4,10 @@
     python tools/utilization.py [FOLDER]
 
 FOLDER (default optimizations_implemented/utilization/) holds K_utilization.rpt for each kernel K:
-build/K/RUN/reports/impl/utilization.rpt (report_utilization -hierarchical, scripts/vivado.tcl),
-renamed by kernel, and sources.txt, the run each came from ("K <- build/K/RUN/...").
+build/K/BOARD/reports/impl/utilization.rpt (PYNQ boards, scripts/vivado.tcl) or
+build/K/BOARD/sdk/utilization.rpt (OPU boards, boards/opu/add_hls_kernel.tcl), both
+report_utilization -hierarchical, renamed by kernel, and sources.txt, the build each came from
+("K <- build/K/BOARD/...").
 
 Writes optimizations_implemented/utilization.md: per board, the whole design and the kernel
 against the chip, then where each kernel's resources go. In the other files there, it fills the
@@ -102,11 +104,12 @@ def parse(text):
 
 
 def find_kernel(top):
-    """The kernel's own instance: the block design's `kernel`."""
+    """The kernel's own instance: the block design's `kernel` (PYNQ boards) or `hls_kernel`
+    (the OPU design)."""
     stack = [top]
     while stack:
         node = stack.pop()
-        if node.name == 'kernel':
+        if node.name in ('kernel', 'hls_kernel'):
             return node
         stack.extend(node.children)
     raise ValueError('no instance named kernel')

@@ -5,7 +5,7 @@
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
 
-// justoliunet_opt for the Zynq-7030 (--board zynq7030): the 7020 version made
+// justoliunet_opt for the Zynq-7030 (board picobob): the 7020 version made
 // wider with the 7030's 400 DSPs. conv1 computes two positions a cycle and
 // pool1d pools each pair as it comes. One pixel every 74 cycles (72 predicted
 // since conv1d's windows come from their own process).

@@ -5,8 +5,8 @@
 #include "../../../../common/hls_vector_shim.hpp"
 #include "../../../../common/hls_burst_maxi_shim.hpp"
 
-// The direct SpecPW-UNet kernels sized for a Zynq-7000: the 7020 (--board zynq7020
-// or zedboard, at most 205 of its 220 DSPs) and the 7030 (--board zynq7030, 400).
+// The direct SpecPW-UNet kernels sized for a Zynq-7000: the 7020 (board pynqz2
+// or zedboard, at most 205 of its 220 DSPs) and the 7030 (board picobob, 400).
 // LUTs and flip-flops are the scarce part, so every conv keeps its window in three
 // row memories (conv3x3_tiled_ram) and sends ReLU'd activations itself; the stem's
 // later layers take a few inputs a step on a few DSPs; one or two 64-bit read ports

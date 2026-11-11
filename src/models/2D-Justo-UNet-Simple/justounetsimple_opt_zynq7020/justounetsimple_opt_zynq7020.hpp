@@ -8,7 +8,7 @@
 
 namespace zscore = zscore_int8;
 
-// justounetsimple_opt for the Zynq-7020 (--board zynq7020 or zedboard): the same answers,
+// justounetsimple_opt for the Zynq-7020 (board pynqz2 or zedboard): the same answers,
 // conv1 on 216 of the 220 DSPs, everything else in LUTs, two 64-bit read ports. conv1 in
 // raster order (conv3x3_tiled, a pixel in chunks), fed from a strip buffer (pixel_buffer):
 // no patch buffer.

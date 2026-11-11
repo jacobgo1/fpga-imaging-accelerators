@@ -8,7 +8,7 @@
 
 namespace zscore = zscore_int8;
 
-// justounetsimple_opt for the Zynq-7030 (--board zynq7030): the 7020 version made wider,
+// justounetsimple_opt for the Zynq-7030 (board picobob): the 7020 version made wider,
 // conv1 on 324 of the 400 DSPs, conv2-4 on 18 each, four 64-bit read ports. conv1 in
 // raster order (conv3x3_tiled, a pixel in chunks), fed from a strip buffer (pixel_buffer):
 // no patch buffer.

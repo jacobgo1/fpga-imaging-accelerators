@@ -1,10 +1,12 @@
-# boards/zynq7030/system.tcl -- the hardware around the HLS kernel on a Zynq-7030
-# (the FPGA on HYPSO-2), wire by wire. Select it with --board zynq7030.
+# boards/pynqz2/system.tcl -- the hardware around the HLS kernel on a PYNQ-Z2
+# (Zynq-7020 with PYNQ), wire by wire. Build with: scripts/build.sh KERNEL pynqz2.
 #
 # scripts/vivado.tcl sources this after it has created an empty project for the
-# part in config/project.json and put the exported HLS IP in its catalog. Like
+# part in boards/pynqz2/board.conf and put the exported HLS IP in its catalog. Like
 # boards/zcu104/system.tcl, it works for any kernel: it wires whatever control
-# and m_axi ports the kernel has.
+# and m_axi ports the kernel has. (PicoBoB and the ZedBoard, with the OPU system,
+# use opu-system's design instead: boards/opu/add_hls_kernel.tcl wires the kernel
+# into it the same way.)
 #
 #   PS ("ps": 2 x Cortex-A9, DDR controller)
 #     FCLK_CLK0     ───────────────────────────┬──► every clock pin below
@@ -21,22 +23,14 @@
 #   - HP ports are 64 bits wide (128 on the ZCU104): half the DDR bandwidth per
 #     port at the same clock. A 128-bit m_axi port still works; its SmartConnect
 #     splits each beat in two.
-#   - The device is much smaller: about 400 DSPs (1,728 on the ZU7EV), 265 BRAM36
+#   - The device is much smaller: 220 DSPs (1,728 on the ZU7EV), 140 BRAM36
 #     and no UltraRAM. A kernel sized for the ZCU104 must be sized down for it.
 #
-# boards/zynq7020/system.tcl sources this one: the 7020 has the same processor
-# and ports. The PS preset and the XDC below come from the folder of the board
-# being built ($cfg(board)), so each board keeps its own.
-#
-# The PS: there are no Vivado board files for HYPSO-2, so its DDR, MIO and clock
-# settings cannot come from a board preset. If boards/zynq7030/ps7_preset.tcl
-# exists, it is sourced here with the PS block in $ps: put HYPSO-2's own PS
-# configuration in it as set_property -dict [list CONFIG.PCW_... ] $ps lines
-# (from the flight design's block design Tcl, write_bd_tcl). Without it the PS
-# keeps Vivado's defaults. That does not change the bitstream -- the boot loader
-# (FSBL) configures the PS, not the .bit -- but the running system must give the
-# PL what this design assumes: FCLK_CLK0 at the HLS clock, and the HP ports used
-# here enabled at 64 bits. Check that against HYPSO-2's boot configuration.
+# The PS: the PYNQ image boots it, and loading the overlay sets FCLK_CLK0 from the
+# .hwh, so no preset is needed. If boards/BOARD/ps7_preset.tcl exists, it is sourced
+# here with the PS block in $ps (set_property -dict [list CONFIG.PCW_... ] $ps lines).
+# Without it the PS keeps Vivado's defaults; the bitstream does not depend on them.
+# A boards/BOARD/system.xdc, if any, is added for PL pins.
 
 # ---------------------------------------------------------------- Blocks
 create_bd_design system
@@ -47,9 +41,8 @@ if {[file exists $preset]} {
     puts "INFO: PS configuration from $preset"
     source $preset
 } else {
-    puts "WARNING: no boards/$cfg(board)/ps7_preset.tcl: the PS keeps Vivado's default DDR/MIO settings.\
-          The bitstream does not depend on them, but the board's boot configuration must match\
-          the clock and HP ports below."
+    puts "INFO: no boards/$cfg(board)/ps7_preset.tcl: the PS keeps Vivado's default DDR/MIO settings\
+          (the bitstream does not depend on them; PYNQ sets the clock from the .hwh)."
 }
 apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
     -config {make_external "FIXED_IO, DDR" apply_board_preset "0" Master "Disable" Slave "Disable"} $ps

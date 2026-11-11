@@ -1,36 +1,40 @@
 # Software
 
-What runs on the board's ARM: two Jupyter notebooks for PYNQ, shared by every
-model, in `software/pynq/`: `classify_golden.ipynb` for the golden kernels
-(the kernel named like its model) and `classify.ipynb` for the optimized ones
-(every `*_opt*`). Each takes the register offsets from the driver header generated
-inside the exported HLS IP (`x<kernel>_hw.h`, packed next to the notebook) and
-which model it is from `kernel.json` (main.py writes it from `tools/models.py`).
-`software/opu/classify.c` is the C program every optimized kernel runs on the boards with the
-OPU system's PetaLinux, the same way. `software/opu/benchmark.sh` runs them all over the
-images there, as `software/pynq/benchmark.ipynb` does on the ZCU104 (boards/README.md).
+What runs on the board's ARM:
 
-`fpga.sh` in the repository root wraps everything below in short commands
+- `software/pynq/`: two Jupyter notebooks for PYNQ (ZCU104, PYNQ-Z2), shared by every model:
+  `classify_golden.ipynb` for the golden kernels (the kernel named like its model) and
+  `classify.ipynb` for the optimized ones (every `*_opt*`). Each takes the register offsets
+  from the driver header generated inside the exported HLS IP (`x<kernel>_hw.h`, packed next to
+  the notebook) and which model it is from `kernel.json` (`scripts/pynq.sh` writes it from
+  `tools/models.py`). `benchmark.ipynb` runs them all over the images on the ZCU104.
+- `software/opu/`: `classify`, the C++ program every optimized kernel runs on the OPU system's
+  PetaLinux (PicoBoB, the ZedBoard), as cnn-1d-picobob's `cnn_accelerator` (the same CMake
+  build, UIO classes and labels file), with the kernel's own HLS driver;
+  `process-capture.sh` and `load.sh` for the board; `benchmark.sh`, the benchmark there.
+  [docs/opu.md](../docs/opu.md).
+
+`fpga.sh` in the repository root wraps the build in short commands
 (`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)
 shows how it fits together.
 
 ## On the board with PYNQ
 
-Every successful `bitstream` build writes, next to the bitstream:
+Every successful `fpga_build K` (`scripts/build.sh K zcu104`) writes, next to the bitstream:
 
 ```text
-build/<kernel>/<run>/<kernel>_pynq/      everything the notebook needs, in one place:
+build/<kernel>/zcu104/<kernel>_pynq/      everything the notebook needs, in one place:
     <kernel>.bit  <kernel>.hwh             the design (PYNQ wants the same name for both)
     x<kernel>_hw.h                         register offsets
     classify.ipynb or classify_golden.ipynb  the notebook, from software/pynq/
     kernel.json                            which model, its patch size and scores' format
     mu_sd.txt                              (golden only) the training mean/std per band
-build/<kernel>/<run>/<kernel>_pynq.zip   the same, as one file to upload
+build/<kernel>/zcu104/<kernel>_pynq.zip   the same, as one file to upload
 ```
 
-A kernel of no model in `tools/models.py` takes its own
-notebook from `software/pynq/<kernel>/`, and any files its `include.txt` names.
-Re-package an existing build to pick up an edited notebook: `fpga_pynq <kernel>`.
+A kernel of no model in `tools/models.py` takes its own notebook (and any other files) from
+`software/pynq/<kernel>/`. Re-package an existing build to pick up an edited notebook:
+`fpga_package <kernel>`.
 
 Upload the zip in Jupyter (`http://BOARD:9090`), run `!unzip -o <kernel>_pynq.zip`
 in a notebook cell, open the notebook in `<kernel>_pynq/` and run it from the top.
@@ -50,7 +54,7 @@ Cloud (0), land (1) or sea (2) for every pixel of a HYPSO-2 capture, from
 source fpga.sh
 python3 tools/quantize_weights.py weights/fp32/justounetsimple   # once: weights/quantized/ is not in git
 fpga_test justounetsimple_opt      # Python tests + the C++ testbench, on the PC
-fpga_build justounetsimple_opt     # bitstream + build/justounetsimple_opt/latest/justounetsimple_opt_pynq.zip
+fpga_build justounetsimple_opt     # bitstream + build/justounetsimple_opt/zcu104/justounetsimple_opt_pynq.zip
 ```
 
 ### An image for the notebook

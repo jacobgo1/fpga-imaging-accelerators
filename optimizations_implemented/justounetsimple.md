@@ -25,8 +25,8 @@ the ZCU104** (the 1D model is compute-bound).
 | `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 194.4 s** for a whole capture (292.4 ms a patch), 202.3 s wall clock, 96.20 % |
 | `justounetsimple_opt` | ZCU104 | 214 MHz | **measured 18.26 ms** for a whole capture, FPGA alone (5 882 cycles a patch; memory-bound); 19.2 ms wall clock |
 | `justounetsimple_opt_tiled` | ZCU104 | 4 ns target | conv1 in raster order, no patch buffer (below); **predicted** about as fast as `justounetsimple_opt` (memory-bound, conv1 5 285 cycles a patch), 648 DSPs on conv1 instead of 864; built in C++, bit-exact; not built |
-| `justounetsimple_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider); since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** 10 570 cycles a patch (+3 %), ~60 BRAM36 fewer; not built |
-| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch), with the patch buffer; since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** the same pace (the reads), ~60 of its 84.5 BRAM36 fewer; not built |
+| `justounetsimple_opt_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider); since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** 10 570 cycles a patch (+3 %), ~60 BRAM36 fewer; not built |
+| `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch), with the patch buffer; since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** the same pace (the reads), ~60 of its 84.5 BRAM36 fewer; not built |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/justounetsimple_model.py`); same class as the float model on 99.96 % of the aegean pixels.

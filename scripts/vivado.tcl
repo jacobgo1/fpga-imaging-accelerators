@@ -1,7 +1,9 @@
-# Vivado: the block design around the HLS IP, synthesis, place and route, .bit.
-# main.py runs this in the run folder after scripts/hls.tcl has exported the IP.
+# Vivado for the PYNQ boards: the block design around the HLS IP, synthesis, place and
+# route, .bit. scripts/pynq.sh runs this in build/KERNEL/BOARD/ after writing vivado-settings.tcl
+# and unpacking export.zip in ip/. (The OPU boards are built by opu-system's scripts
+# instead: scripts/opu.sh.)
 #
-# Results, all inside the run folder:
+# Results, all inside build/KERNEL/BOARD/:
 #   vivado/system.xpr                         the project; open it in Vivado to look around
 #   vivado/system.runs/impl_1/*.bit           the bitstream
 #   reports/synth/, reports/impl/             utilization, timing, DRC, power
@@ -24,7 +26,7 @@ proc run_and_check {run args} {
 }
 
 if {[catch {
-    source settings.tcl
+    source vivado-settings.tcl
     # Cores: cfg(jobs) runs at once (launch_runs -jobs: the block design's IPs
     # are synthesized as separate runs, in parallel), each with up to 8 threads,
     # Vivado's limit. set_param holds only in the process that runs it, and
@@ -37,7 +39,7 @@ if {[catch {
     close $f
 
     # 1. An empty project, with the kernel's IP in its catalog.
-    set ip_repo [file join $cfg(run_dir) hls solution impl ip]
+    set ip_repo $cfg(ip_repo)
     create_project system [file join $cfg(run_dir) vivado] -part $cfg(part) -force
     set_property ip_repo_paths [list $ip_repo] [current_project]
     update_ip_catalog

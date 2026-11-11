@@ -1,0 +1,35 @@
+// The devicetree overlay's additions for an HLS kernel in the OPU design, as
+// cnn-1d-picobob's cnn-1d-picobob.dtsi. scripts/opu.sh fills in the @...@ words and
+// gives it to opu-system's petalinux/projects/prepare_pl_firmware.sh.
+&hls_kernel {
+    compatible = "generic-uio";
+    linux,uio-name = "hls_kernel";
+    hls_kernel_classes: classes@0 {
+        // The value the kernel gives each class; classify writes HYPSO's (sea 0,
+        // land 1, cloud 2) to its labels file.
+        compatible = "hypso,hls-kernel-classes";
+        class-sea = <2>;
+        class-land = <1>;
+        class-cloud = <0>;
+    };
+};
+
+&axi_bram_ctrl_0 {
+    status = "okay";
+    compatible = "generic-uio";
+    linux,uio-name = "bitstream_hash";
+};
+
+&{/} {
+    // Userspace IO maps in the reserved memory (CubeDMA's: it must be idle).
+    // cube_map: 0x9600000 bytes, a whole 684 x 956 x 120 uint16 cube (the largest
+    // HYPSO mode, 1216 x 537, fits too); scores_map: 0x1000000 bytes, its scores,
+    // 4 int32 a pixel. A bigger cube goes in strips.
+    hls_kernel_memory {
+        compatible = "generic-uio";
+        linux,uio-name = "hls_kernel_memory";
+        memory-region = <&reserved>;
+        reg = <@CUBE_MAP@ 0x09600000 @SCORES_MAP@ 0x01000000>;
+        reg-names = "cube_map", "scores_map";
+    };
+};

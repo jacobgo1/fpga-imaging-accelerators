@@ -1,7 +1,7 @@
 # Tools
 
 Host-side Python, run on the PC or the lab server, never on the FPGA. Unlike
-`main.py`, scripts here may depend on third-party packages: each names what it
+the build scripts, scripts here may depend on third-party packages: each names what it
 needs at the top of its file (all need numpy; reading `.nc` captures also needs
 `pip install hypso`).
 
@@ -60,7 +60,8 @@ specpw_unet_model.py      numpy model of SpecPW-UNet (sp_unet_small/medium/large
                           python tools/specpw_unet_model.py prints each size's accuracy on the
                           labelled aegean pixels.
 models.py                 every model in one table (its patch size, its scores' format), which
-                          main.py packs with the board's notebook as kernel.json, and the
+                          scripts/pynq.sh packs with the board's notebook as kernel.json
+                          (python3 tools/models.py kernel-json K), and the
                           PC's answers for a cube (golden_scores, fixed_scores), which
                           tests/test_notebooks.py checks the notebooks with. The board itself
                           is checked against the image's labels only.

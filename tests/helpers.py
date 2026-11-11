@@ -22,7 +22,10 @@ def load_module(name, path):
     return module
 
 
-kernel_dirs = load_module('main', ROOT / 'main.py').kernel_dirs
+def kernel_dirs():
+    """Every kernel's folder, by name: the folder in src/models/ holding NAME.cpp, as
+    scripts/common.sh finds it."""
+    return {cpp.stem: cpp.parent for cpp in sorted((ROOT / 'src' / 'models').rglob('*.cpp'))}
 
 
 def kernel_dir(name):

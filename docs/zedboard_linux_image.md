@@ -1,7 +1,7 @@
 # A new Linux image for the ZedBoard (rarely needed)
 
 **Not needed to test a design**: the ZedBoard's SD card already has its Linux, and a new
-bitstream is loaded while it runs ([zedboard.md](zedboard.md)). Build a new image only if
+bitstream is loaded while it runs ([opu.md](opu.md)). Build a new image only if
 the SD card is replaced or broken, or if the image itself must change (another IP address,
 a kernel option, a newer opu-system).
 

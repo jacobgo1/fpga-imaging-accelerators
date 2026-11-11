@@ -5,36 +5,40 @@
 Neural networks for HYPSO hyperspectral images (cloud / land / sea per pixel),
 turned into FPGA accelerators with Vitis HLS. Targets:
 
-- **ZCU104** (Zynq UltraScale+ ZU7EV), the default board: the family HYPSO-3
-  will fly, and what runs in the lab (PYNQ).
-- **Zynq-7030** (`--board zynq7030`): HYPSO-2's FPGA. Much smaller (400 DSPs, no
-  UltraRAM, 64-bit HP ports), so kernels must be sized for it. On PicoBoB with the
-  OPU system's PetaLinux, so the build packs `K_opu.zip` as for the ZedBoard. See
-  `boards/README.md`.
-- **Zynq-7020** (`--board zynq7020`): the PYNQ-Z2 in the lab now. Smaller still
-  (220 DSPs, 140 BRAM36, 53 K LUTs); same PS and ports as the 7030.
-- **ZedBoard** (`--board zedboard`): the same 7020 chip, on the lab's ZedBoards
-  running the OPU system's PetaLinux, not PYNQ: the build packs `K_opu.zip`
-  (.bit.bin, md5sum, devicetree overlay, load.sh) for `fpgautil`. See `boards/README.md`.
+- **ZCU104** (board `zcu104`, Zynq UltraScale+ ZU7EV), the default board: the family
+  HYPSO-3 will fly, and what runs in the lab (PYNQ, a notebook).
+- **PicoBoB** (board `picobob`, Zynq-7030): HYPSO-2's OPU. Much smaller (400 DSPs, no
+  UltraRAM, 64-bit HP ports), so kernels must be sized for it (`_zynq7030`). The OPU
+  system's PetaLinux: built with opu-system's own scripts, see `docs/opu.md`.
+- **PYNQ-Z2** (board `pynqz2`, Zynq-7020): smaller still (220 DSPs, 140 BRAM36, 53 K
+  LUTs); same PS and ports as the 7030; PYNQ.
+- **ZedBoard** (board `zedboard`): the same 7020 chip (`_zynq7020` kernels), on the lab's
+  ZedBoards running the OPU system's PetaLinux, as PicoBoB. See `docs/opu.md`.
 
 Trained models are the `.pt` files in `weights/fp32/`. **Never delete them**: all
 weights are extracted from them on demand.
 
 ## Where things run
 
-- **Laptop (Windows, Git Bash):** editing, `python main.py native` (g++) and the
+- **Laptop (Windows, Git Bash):** editing, `scripts/test.sh K` (g++) and the
   Python tests. No AMD tools.
-- **Lab server (Linux):** `source fpga.sh`, then `fpga_build K` for csynth and
+- **Lab server (Linux):** `source fpga.sh`, then `fpga_build K [BOARD]` for csynth and
   bitstreams. The user runs these and pastes results; Claude cannot.
-  - HLS log: `build/K/latest/hls.log`
-  - reports: `build/K/latest/hls/solution/syn/report/`
-- **Board:** the ZCU104 with PYNQ. Upload `K_pynq.zip`, unzip, run the notebook.
+  - HLS log: `build/K/BOARD/hls.log`
+  - reports: `build/K/BOARD/hls/solution/syn/report/`
+  - the OPU boards need opu-system next to the repository and its PetaLinux 2023.1 Docker
+    image; Vivado is the release of the HLS export, 2025.2 works (`docs/opu.md`).
+- **Board:** the ZCU104 with PYNQ: upload `K_pynq.zip`, unzip, run the notebook. PicoBoB and
+  the ZedBoard: unpack `K_opu.tar.gz` in `/media/sd-pl`, load, run `K/classify`.
 
 ## Layout
 
 ```text
-main.py              the build: python3 main.py STAGE --kernel K [--board B]
-fpga.sh              short commands for the server (Tab completes kernels, runs, boards)
+scripts/             the build, one script a step, each `KERNEL BOARD`, into build/K/BOARD/:
+                     test.sh (g++ testbench), hls.sh (Vitis HLS -> export.zip), pynq.sh (PYNQ
+                     boards: Vivado + notebook zip), opu.sh (OPU boards: opu-system's Vivado and
+                     PetaLinux scripts + classify -> K_opu.tar.gz), build.sh (all); common.sh
+fpga.sh              short commands for the server (Tab completes kernels and boards)
 src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cpp, named
                      after the kernel), the golden kernel holding the quantized network;
                      tb/K/ its self-checking testbench, with the reference it checks against
@@ -47,18 +51,24 @@ src/optimized/       streaming, integer fixed-point building blocks (how it is d
                      implementation": DSP_PACK_SHIFT for 2 multiplies per
                      DSP, HAS_URAM for patch_buffer) and passes them to the modules
 src/common/          hls::stream, hls::vector and hls::burst_maxi shims so kernels compile with plain g++
-boards/B/system.tcl  one block design per board, shared by every kernel
+boards/B/board.conf  the board's part, HLS clock and flow (pynq or opu); boards/B/system.tcl
+                     the PYNQ boards' block design, shared by every kernel; boards/opu/ the OPU
+                     boards' project script, add_hls_kernel.tcl (the kernel into opu-system's
+                     base design, an MMCM for a kernel slower than FCLK_CLK0) and the overlay
 software/pynq/        the board notebooks every model shares: classify_golden.ipynb (golden
-                     kernels), classify.ipynb (optimized); main.py packs one with kernel.json.
+                     kernels), classify.ipynb (optimized); scripts/pynq.sh packs one with kernel.json.
                      benchmark.ipynb, uploaded on its own to the top of the Jupyter folder: every
                      ZCU104 optimized kernel (from its KERNEL_pynq/) on five images, one report
-software/opu/        classify.c: the C program every optimized kernel runs on the OPU system's
-                     PetaLinux (no PYNQ); main.py builds it with the kernel's registers.
-                     benchmark.sh, copied on its own to the board: every ZedBoard optimized
-                     kernel (from its KERNEL_opu/) on five images, one report, as benchmark.ipynb
+software/opu/        classify: the C++ program every optimized kernel runs on the OPU system's
+                     PetaLinux (no PYNQ), cnn-1d-picobob's cnn_accelerator made generic (CMake,
+                     spdlog, libconfig, argparse, UIO); src/classify.cpp is its board-free core
+                     (tested on the PC); make_kernel_header.sh maps the kernel's own HLS driver to
+                     shared names; scripts/opu.sh builds it. benchmark.sh, copied on its own to
+                     the board: every optimized kernel (from its tarball) on five images, one
+                     report, as benchmark.ipynb
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
-docs/framework.md    what each build step does
+docs/framework.md    what each build step does; docs/opu.md the OPU boards, step by step
 docs/justoliunet_opt_design.md  the 1D kernels: design, performance model, next ideas
 optimizations_implemented/  one .md per model: its optimizations, stages, latency, utilization, board limits
                      utilization.md: every kernel's routed utilization, from the reports in utilization/
@@ -70,10 +80,10 @@ per-pixel networks, from src/golden/layers.hpp; numpy model
 tools/justoliunet_model.py),
 `justoliunet_opt` and `justoliunet_bn_opt` (fast, ZCU104: the raw cube in, a pixel
 every 18 cycles, integer fixed point, the DSPs on conv2 and conv3) and their ZedBoard
-versions `justoliunet_opt_zynq7020` / `justoliunet_bn_opt_zynq7020` (`--board zedboard`:
+versions `justoliunet_opt_zynq7020` / `justoliunet_bn_opt_zynq7020` (board `zedboard`:
 folded, spectral streaming, a pixel every 108 cycles, the same answers bit for bit; OPU
 program from software/opu/) and Zynq-7030 versions `justoliunet_opt_zynq7030` /
-`justoliunet_bn_opt_zynq7030` (`--board zynq7030`: the same, wider, a pixel every 74
+`justoliunet_bn_opt_zynq7030` (board `picobob`: the same, wider, a pixel every 74
 cycles); the design is in
 src/models/1D-Justo-LiuNet/justoliunet_opt/justoliunet_opt.hpp, the bit-exact model classify_fixed in
 tools/justoliunet_model.py;
@@ -86,7 +96,7 @@ buffer; 648 DSPs on conv1 instead of 864, 5 285 cycles a patch, under the reads)
 `justounetsimple_opt_zynq7020` and `justounetsimple_opt_zynq7030` (the
 same, sized for those chips (the 7030 one is the 7020's, wider: 12 bands a cycle, four
 read ports, its fifth m_axi port sharing HP3), conv1 as in `_tiled` (chunks of 8 / 12, no patch
-buffer): build them with `--board zynq7020` / `zynq7030`; same answers, they share the testbench's checks),
+buffer): build them for board `pynqz2` or `zedboard` / `picobob`; same answers, they share the testbench's checks),
 `sp_unet_small`, `sp_unet_medium`, `sp_unet_large` (golden baselines of SpecPW-UNet, the
 same network in three widths: n 32 x 32 patches per start, float, int8 weights; built
 from src/golden/layers.hpp, the network in src/models/SpecPW-UNet/specpw_unet.hpp; numpy model and the bit-exact integer model
@@ -106,20 +116,20 @@ takes two multiplies per DSP (conv3x3_tiled's PACKED mode); bit for bit classify
 act8_fracs; predicted T = 6 552 (DDR-bound, ~6 700) / 17 472 / 34 944 cycles a patch, 1 347 / 1 297 /
 1 184 DSPs; tools/models.py's fixed_scores takes the kernel's name for them),
 `sp_unet_small_opt_zynq7020` (the direct kernel for the 7020; medium and large do not
-fit the 7020 and were removed (see sp_unet.md); `--board zynq7020` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
+fit the 7020 and were removed (see sp_unet.md); board `pynqz2` or `zedboard`: at most 205 DSPs, convs with the 3x3 window in three row
 memories (conv3x3_tiled_ram), a tap or a window column a step, their ReLU inside, one 64-bit read
 port, 2-deep FIFOs between the processes; T = 76 176 cycles a patch, measured 665 ms on the
 ZedBoard; the chain in
 src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/), `sp_unet_small_opt_u8_zynq7020` (the same with
 uint8 activations as the _u8 kernels, conv3x3_tiled_ram's PACKED mode: two multiplies per DSP48E1, a group
 of one uint8 product; T = 39 456 cycles a patch, 198 DSPs designed) and `sp_unet_small_opt_u8_zynq7030`,
-`_medium_opt_u8_zynq7030`, `_large_opt_u8_zynq7030` (the same chain for the 7030, `--board zynq7030`:
+`_medium_opt_u8_zynq7030`, `_large_opt_u8_zynq7030` (the same chain for the 7030, board `picobob`:
 T = 22 194 / 78 912 / 152 352, 364 / 287 / 303 DSPs; small reads with two ports); bit for bit the _u8
 kernels; not built yet, see sp_unet.md), `spectralpointwise1d` (golden baseline of
 1D-SpectralPointwise: three 1x1 convs per pixel, 110 -> 24 -> 12 -> 3, BatchNorm folded into
 the first; numpy model and the bit-exact classify_fixed in tools/spectralpointwise1d_model.py)
 and `spectralpointwise1d_opt` (ZCU104), `spectralpointwise1d_opt_zynq7030`,
-`spectralpointwise1d_opt_zynq7020` (`--board zynq7030` / `zedboard`): DDR-bound, so the whole
+`spectralpointwise1d_opt_zynq7020` (board `picobob` / `zedboard`): DDR-bound, so the whole
 network is copied once per read port (a lane: 4, 4 and 2), convsp1 fused with the z-score word
 by word; a pixel every 3.75 / 7.5 / 15 cycles, the same answers bit for bit; the design in
 src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt.hpp, one testbench check for all),
@@ -129,7 +139,7 @@ a 1x1 projection, a 3x3 conv block and a 1x1 head) and `waveletcnn_opt`, `_zynq7
 optimizations_implemented/waveletcnn.md).
 
 The z-score every model starts with (keep raw bands 8-117, mu_sd.txt) is in one place,
-tools/preprocessing.py. tools/models.py lists every model (main.py packs its entry with the
+tools/preprocessing.py. tools/models.py lists every model (scripts/pynq.sh packs its entry with the
 board notebook as kernel.json, so one notebook serves all). The board is checked against the
 image's labels only, in the notebooks and in the ZedBoard's classify; tools/image.py makes the
 image folder (labels required).
@@ -163,7 +173,7 @@ Claude runs only the local checks below, never csynth, cosim or bitstream:
 those are the user's, on the lab server, every time.
 
 - `python -m unittest discover -s tests`: every test must pass.
-- `python main.py native --kernel K` for each changed kernel.
+- `scripts/test.sh K` for each changed kernel.
 - Say what still needs the user's build. Timing and resources only come from
   their runs: ask for the relevant `hls.log` lines (`Final II`, burst inference,
   warnings) instead of guessing.
@@ -195,7 +205,7 @@ those are the user's, on the lab server, every time.
   sp_unet_small_opt went from 11 503 to 9 856 cycles a patch with that alone, though
   HLS reported II = 1 and the right interval for every process.
 - csim passing does not prove the RTL. After changing arithmetic, ask the user
-  for a cosim (`python3 main.py cosim --kernel K`); a mismatch there is
+  for a cosim (`fpga_cosim K BOARD`, `scripts/hls.sh K BOARD cosim`); a mismatch there is
   reproducible in minutes, a mismatch on the board is not.
 - HLS knows the weights' values (loaded once from constant arrays) and sizes
   each multiplier for its weight: small weights become LUT shift-adds, zero

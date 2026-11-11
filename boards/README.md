@@ -1,26 +1,32 @@
 # Boards
 
-One script per board, `boards/<board>/system.tcl`: the hardware around the HLS
-kernel (processor, interconnect, clock, reset). It is generic: it instantiates
-whatever kernel was built and wires its ports, so **every kernel uses the same
-board script**. What differs between boards is what fits on the chip, and that
-is a property of the kernel (see below).
+One folder per board, `boards/<board>/`, with its `board.conf`: the FPGA part, the HLS clock
+(`CLOCK_NS`) and the flow, how a kernel gets onto it:
 
-| Board | `--board` | Part | Why |
+- `pynq` (`scripts/pynq.sh`): the board runs PYNQ. `system.tcl` in the board's folder is the
+  hardware around the HLS kernel (processor, interconnect, clock, reset); a notebook drives it.
+- `opu` (`scripts/opu.sh`): the board runs the OPU system's PetaLinux. The design is
+  opu-system's own (its board script, `opu_base.tcl`) with the kernel added by
+  `boards/opu/add_hls_kernel.tcl`, built by opu-system's scripts; `classify` drives it
+  ([docs/opu.md](../docs/opu.md)).
+
+Either way the scripts are generic: they instantiate whatever kernel was built and wire its
+ports, so **every kernel uses the same board files**. What differs between boards is what
+fits on the chip, and that is a property of the kernel (see below).
+
+| Board | Flow | Part | Why |
 | --- | --- | --- | --- |
-| ZCU104 | `zcu104` (default) | `xczu7ev-ffvc1156-2-e` | Zynq UltraScale+, the family HYPSO-3 will fly; runs PYNQ in the lab |
-| Zynq-7020 | `zynq7020` | `xc7z020clg400-1` | Zynq-7000, the PYNQ-Z2 in the lab (also the Zybo Z7-20; a ZedBoard is `xc7z020clg484-1`). Its `system.tcl` is the 7030's block design |
-| ZedBoard | `zedboard` | `xc7z020clg484-1` | The Zynq-7020 again, on the lab's ZedBoards running the OPU system's PetaLinux (HYPSO's Linux, no PYNQ). The 7020's block design; the build packs an OPU zip instead of the PYNQ one |
-| Zynq-7030 | `zynq7030` | `xc7z030sbg485-1` | Zynq-7000, HYPSO-2's FPGA, on PicoBoB running the OPU system's PetaLinux: the build packs an OPU zip, as for the ZedBoard. The part is opu-system's `picozed_project.tcl`'s |
+| `zcu104` (default) | `pynq` | `xczu7ev-ffvc1156-2-e` | Zynq UltraScale+, the family HYPSO-3 will fly; runs PYNQ in the lab |
+| `pynqz2` | `pynq` | `xc7z020clg400-1` | Zynq-7020, the PYNQ-Z2 in the lab. Its `system.tcl` is the Zynq-7000 block design |
+| `zedboard` | `opu` | `xc7z020clg484-1` | The Zynq-7020 again, on the lab's ZedBoards with the OPU system's PetaLinux (HYPSO's Linux, no PYNQ) |
+| `picobob` | `opu` | `xc7z030sbg485-1` | Zynq-7030, HYPSO-2's OPU, with the OPU system's PetaLinux. The part is opu-system's `picozed_project.tcl`'s |
 
-Pick the board when building: `fpga_build K --board zynq7030`, or
-`python3 main.py bitstream --kernel K --board zynq7030`. The part and script per
-board are in `config/project.json` (`boards`). Runs for a board other than the
-default end in `-BOARD` (`build/K/DATE-bitstream-zynq7030/`). A board's own
-`clock_ns` in the config sets its default clock (10 ns, 100 MHz, on both
-Zynq-7000s; `--clock-ns` still overrides it).
+Pick the board when building: `fpga_build K picobob`, or `scripts/build.sh K picobob`.
+Everything for a kernel on a board goes to `build/K/BOARD/`. A board's `CLOCK_NS` is its
+default HLS clock (5 ns on the ZCU104, 12.8 on the Zynq-7020s, 10 on PicoBoB; `--clock-ns`
+overrides it).
 
-## What every board script does with a kernel
+## What every PYNQ board script does with a kernel
 
 - `s_axi_control` (the kernel's AXI-Lite registers) on the processor's
   general-purpose master port, through a SmartConnect;
@@ -57,7 +63,7 @@ made wider for the 7030, with the same answers: conv1 at 12 bands per cycle, two
 multiplies per DSP (324 DSPs), conv2-4 at 2 input x one output channel per cycle
 on DSPs (54), four 64-bit read ports (HP0-3) with the writer sharing HP3, and the
 patch buffer in block RAM (about 60 BRAM36). conv1 sets the pace: 10,273 cycles a
-patch, about 0.10 ms at 100 MHz, 2.5x the ZCU104's. Build it with `--board zynq7030`.
+patch, about 0.10 ms at 100 MHz, 2.5x the ZCU104's. Build it for board `picobob`.
 
 `justounetsimple_opt_zynq7020` is the same model again, for the 7020's 220 DSPs:
 conv1 takes 216 of them at 8 bands per cycle, **two multiplies per DSP** (the
@@ -68,7 +74,7 @@ z-score, the address arithmetic. Two 64-bit read ports
 and one write port, the patch buffer in block RAM (56 BRAM36). The two read
 ports are its slowest stage, 15,360 cycles a patch (conv1: 14,369): about
 0.16 ms per patch at 100 MHz, 4x the ZCU104's. Build it with
-`--board zynq7020`; its zip carries `justounetsimple_opt`'s notebook, which
+board `pynqz2` (or `zedboard`); its zip carries `justounetsimple_opt`'s notebook, which
 finds the kernel and its ports from the files next to it.
 
 Every module is in `src/optimized/`; what differs between the chips (the
@@ -79,58 +85,39 @@ chips as they are (not yet built for the Zynq-7000s).
 
 ## The Zynq-7000 processor configuration
 
-There are no Vivado board files for HYPSO-2, so `zynq7030/system.tcl` cannot
-take the processor's DDR, MIO and clock settings from a board preset. Put
-HYPSO-2's own configuration in `zynq7030/ps7_preset.tcl` as
-`set_property -dict [list CONFIG.PCW_... ] $ps` lines (from the flight design's
-block design Tcl, `write_bd_tcl`); the script sources it when it exists.
-Without it the build still works and warns: those settings are not in the
-bitstream (the boot loader configures the processor), but HYPSO-2's boot
-configuration must give the FPGA what the design assumes: `FCLK_CLK0` at the HLS
-clock and the HP ports in use enabled at 64 bits.
+On the PYNQ-Z2, `pynqz2/system.tcl` takes no processor preset: the PYNQ image boots the
+processor, and loading the overlay sets `FCLK_CLK0` from the `.hwh`. A preset, if one is ever
+needed, goes in `pynqz2/ps7_preset.tcl` as `set_property -dict [list CONFIG.PCW_... ] $ps`
+lines; the script sources it when it exists. On the OPU boards the processor is
+opu-system's own (`picozed_project.tcl`, `zedboard_project.tcl`), as in HYPSO's flight design.
 
-The Zynq-7020 uses the same script (`zynq7020/system.tcl` sources it), with its
-preset, if any, in `zynq7020/ps7_preset.tcl`. On the PYNQ-Z2 none is needed:
-the PYNQ image boots the processor, and loading the overlay sets `FCLK_CLK0`
-from the `.hwh`.
+## The OPU boards: PicoBoB and the ZedBoard
 
-## The ZedBoard: the OPU system instead of PYNQ
+`boards/opu/project.tcl` is a project script in the shape of opu-system's own
+(`PicoBoB_no_comp.tcl`, cnn-1d-picobob's `cnn-1d-picobob.tcl`): the board's PS
+(`OPU_BOARD_SCRIPT` in `board.conf`: `picozed_project.tcl` or `zedboard_project.tcl`),
+`opu_base.tcl`, then `boards/opu/add_hls_kernel.tcl`, then `finish_design.tcl`.
+`scripts/opu.sh` fills in the project's name, the kernel and its clock, and runs it with
+opu-system's `vivado/run_tcl_script.sh`. What `add_hls_kernel.tcl` adds:
 
-The lab's ZedBoards run the OPU system (opu-system's PetaLinux, as on HYPSO), which
-loads designs at run time with `fpgautil` and a devicetree overlay. A `zedboard`
-bitstream run packs `build/K/RUN/K_opu/` and `K_opu.zip` (`main.py`, `package_opu`),
-and so does a `zynq7030` run, for PicoBoB (HYPSO-2's board, also the OPU system):
+- the kernel, block `hls_kernel` (the overlay refers to it by that name);
+- `s_axi_control` on one more master of the base design's `axi_interconnect_0`;
+- each `m_axi` port through its own SmartConnect to its own 64-bit HP port, in name order,
+  a fifth sharing HP3, as on the PYNQ-Z2. HP0's clock, tied to GP0's in `opu_base.tcl`,
+  moves to the kernel's;
+- the kernel's clock: `FCLK_CLK0` (100 MHz, set by the boot configuration, which a bitstream
+  loaded at run time cannot change) for a kernel built for 10 ns; an MMCM (`hls_clock`) and
+  its own reset for one built for a slower clock (12.8 ns on the ZedBoard);
+- a hook after routing that writes `utilization.rpt` (hierarchical) and `timing.rpt` next to
+  the hardware files.
 
-| File | What it is |
-| --- | --- |
-| `K.bit.bin` | the bitstream as `fpgautil` takes it (what `bootgen -process_bitstream bin` makes) |
-| `K.bit.bin.md5sum` | its hash, with the path opu-system expects: `/media/sd-pl/firmware/K.bit.bin` |
-| `K.dtsi` (`K.dtbo`) | the overlay: which bitstream the full region gets, FCLK_CLK0 at the kernel's clock, the kernel's registers (generic-uio). Compiled when `dtc` is on the server's PATH; else `load.sh` compiles it on the board |
-| `xK_hw.h` | register offsets |
-| `load.sh` | run as root on the board: checks the md5sum, removes the overlay already loaded, loads, sets FCLK_CLK0 through the SLCR if the overlay could not, prints the FPGA state, FCLK_CLK0 and the kernel's AP_CTRL (4: idle) |
-| `classify` (`classify.c`, `kernel_regs.h`) | `software/opu/classify.c`, for every optimized kernel (and any program in `software/opu/K/`), built static for the board's ARM when the server has `arm-linux-gnueabihf-gcc` (or `$OPU_CC`); the board has no compiler. `classify cube.npy scores.npy reference_fixed.npy`: runs the kernel from the reserved memory, in strips if the cube does not fit, times it and compares with the PC's answer |
+The base design (AXI UART, timer, bitstream-hash ROM) stays in the bitstream, so a design with
+a kernel is still an OPU design: opu-services and `obip fpga hash` work with it loaded.
+`boards/opu/hls_kernel.dtsi` is the overlay's part: the kernel and the bitstream hash as UIO
+devices, and two maps in the reserved memory (`MEMORY_BASE` in `board.conf`) for the cube
+and the scores.
 
-Copy the folder's files to `/media/sd-pl/firmware/` on the board, then
-`sh /media/sd-pl/firmware/load.sh`.
-
-To run every optimized ZedBoard kernel on every image, as `benchmark.ipynb` does on
-the ZCU104, use `software/opu/benchmark.sh`. Put it in one folder on the board with each
-kernel's `K_opu/` and each image's folder (`cube.npy`, `labels.npy`), then as root run
-`sh benchmark.sh`. For each kernel it copies the files to the firmware folder, runs
-`load.sh`, and runs `classify` on each image. It writes `benchmark_results/benchmark_DATE.md`,
-with a `.csv` and a `.log` of everything the programs printed beside it. `classify`
-prints the kernel's own cycle count too, for the kernels that keep one.
-
-A bitstream loaded at run time cannot change the PS: FCLK_CLK0 is set by the
-overlay (`xlnx,fclk`), or by `load.sh` if that did not take, and the HP ports keep
-the boot loader's settings (64 bits, as on the lab's ZedBoard). `classify` uses the
-reserved memory CubeDMA uses: CubeDMA must be idle. The bitstream replaces the whole PL, so the OPU base design
-(opu-system's `opu_base.tcl`: an AXI UART, GPIOs, a bitstream-hash ROM) is gone
-until the next boot: use a development image (`build_all -d`), where opu-services
-does not start by itself. To keep the base design, add the kernel to opu-system's
-`ZedBoard_no_comp.tcl` instead.
-
-## Writing a board script
+## Writing a board script (PYNQ boards)
 
 `scripts/vivado.tcl` has already created a project with the board's part and
 added the exported HLS IP to its catalog before sourcing the script. Populate
@@ -139,7 +126,7 @@ added the exported HLS IP to its catalog before sourcing the script. Populate
 | Variable | Meaning |
 | --- | --- |
 | `cfg(root)` | Absolute repository path |
-| `cfg(run_dir)` | This run's build directory — keep generated files here |
+| `cfg(run_dir)` | The build folder, `build/KERNEL/BOARD/` — keep generated files here |
 | `cfg(board)` / `cfg(part)` / `cfg(clock_ns)` | Board name, device and HLS clock target |
 | `cfg(top)` | HLS kernel top name (not the board-level top) |
 | `ip_repo` | Exported HLS IP catalog directory |
@@ -149,5 +136,5 @@ interconnect and clock/reset logic it needs; assign addresses; validate, save
 and generate the block design; add its HDL wrapper and make `system_wrapper`
 the top; and constrain any pins it uses (`boards/<board>/system.xdc`). Never
 suppress unconstrained-pin DRCs to force a bitstream, and read the
-unconstrained-path section of the timing report. Then add the board to `boards`
-in `config/project.json`.
+unconstrained-path section of the timing report. Then give the board its
+`board.conf` (`PART`, `CLOCK_NS`, `FLOW=pynq`).

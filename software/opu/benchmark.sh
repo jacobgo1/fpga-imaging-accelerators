@@ -1,23 +1,23 @@
 #!/bin/sh
-# benchmark.sh -- every optimized ZedBoard kernel on every image, one report: the OPU
-# system's counterpart of software/pynq/benchmark.ipynb (no Python on the board).
+# benchmark.sh -- every optimized kernel on every image on a board with the OPU system
+# (the lab's ZedBoards, PicoBoB), one report: the counterpart of
+# software/pynq/benchmark.ipynb (no Python on the board).
 #
-# Put it in a folder on the board with, next to it:
-#   - each kernel's KERNEL_opu/ (or KERNEL_opu.zip): its bitstream, load.sh and classify,
-#     as fpga_build KERNEL --board zedboard packs them. A kernel without one is skipped.
+# Put it in /media/sd-pl on the board with, next to it:
+#   - each kernel's KERNEL_opu.tar.gz (fpga_build KERNEL zedboard), or it unpacked:
+#     firmware/ and KERNEL/ (classify, load.sh). A kernel without one is skipped.
 #   - each image, IMAGE/ (or IMAGE.zip) with cube.npy and labels.npy, from tools/image.py.
 # Then, as root:  sh benchmark.sh
 #
-# For each kernel: its files go to /media/sd-pl/firmware, load.sh loads it, and classify
-# runs it on every image. The report goes to benchmark_results/benchmark_DATE.md, every
-# run also in a .csv beside it. A run that fails is written down and the others go on.
-# The bitstream replaces the whole PL: use a development image, as for one kernel.
+# For each kernel: its load.sh loads it, and classify runs it on every image. The report
+# goes to benchmark_results/benchmark_DATE.md, every run also in a .csv beside it. A run
+# that fails is written down and the others go on.
 
 KERNELS="${KERNELS:-justoliunet_opt_zynq7020 justoliunet_bn_opt_zynq7020 justounetsimple_opt_zynq7020
 sp_unet_small_opt_zynq7020 sp_unet_small_opt_u8_zynq7020 spectralpointwise1d_opt_zynq7020
 waveletcnn_opt_zynq7020}"
 IMAGES="${IMAGES:-trondheim hawkebay lakealexandria saldanha maputo}"
-FIRMWARE="${FIRMWARE:-/media/sd-pl/firmware}"     # where load.sh loads from
+export FIRMWARE="${FIRMWARE:-$(cd "$(dirname "$0")" && pwd)/firmware}"   # where load.sh loads from
 
 cd "$(dirname "$0")" || exit 1
 RESULTS=benchmark_results
@@ -25,7 +25,7 @@ mkdir -p "$RESULTS" || exit 1
 STAMP=$(date +%Y-%m-%d_%H%M)
 CSV="$RESULTS/benchmark_$STAMP.csv"
 REPORT="$RESULTS/benchmark_$STAMP.md"
-SCORES="$RESULTS/scores.npy"                      # each run's, overwritten by the next
+LABELS="$RESULTS/labels.bin"                      # each run's, overwritten by the next
 LOG="$RESULTS/benchmark_$STAMP.log"               # everything load.sh and classify said
 
 # A folder from its zip, when the folder is not there yet.
@@ -45,11 +45,13 @@ for image in $IMAGES; do
 done
 found="" skipped=""
 for k in $KERNELS; do
-    if unpack "${k}_opu" classify; then found="$found $k"; else skipped="$skipped $k"; fi
+    # A kernel's tarball, when its folder is not there yet.
+    if [ ! -e "$k/classify" ] && [ -f "${k}_opu.tar.gz" ]; then tar -xzf "${k}_opu.tar.gz" || exit 1; fi
+    if [ -e "$k/classify" ]; then found="$found $k"; else skipped="$skipped $k"; fi
 done
-[ -n "$found" ] || { echo "no KERNEL_opu/classify for any of the kernels in $(pwd)" >&2; exit 1; }
+[ -n "$found" ] || { echo "no KERNEL/classify for any of the kernels in $(pwd)" >&2; exit 1; }
 echo "kernels:$found"
-[ -z "$skipped" ] || echo "skipped (no KERNEL_opu/classify):$skipped"
+[ -z "$skipped" ] || echo "skipped (no KERNEL/classify):$skipped"
 echo "images:  $IMAGES"
 
 # One row per run; error is empty when it ran.
@@ -63,21 +65,21 @@ for k in $found; do
     # The 1D networks' cycles are given per pixel, the 2D ones' per 32 x 32 patch.
     case $k in justoliunet*|spectralpointwise1d*) unit=pixel ;; *) unit=patch ;; esac
     echo "$k:"
-    out=$( { cp "${k}_opu"/* "$FIRMWARE"/ && sh "$FIRMWARE/load.sh"; } 2>&1 )
+    out=$(sh "$k/load.sh" 2>&1)
     status=$?
     printf '== %s: load.sh\n%s\n' "$k" "$out" >> "$LOG"
-    mhz=$(echo "$out" | sed -n 's/^FCLK_CLK0: \([0-9]*\) kHz.*/\1/p' | awk '{print $1 / 1000}')
-    if [ $status -ne 0 ] || [ -z "$mhz" ]; then
+    if [ $status -ne 0 ]; then
         for image in $IMAGES; do failed "$image" "$k" "load.sh: $(echo "$out" | tail -n 1)"; done
         continue
     fi
     for image in $IMAGES; do
-        out=$("./${k}_opu/classify" "$image/cube.npy" "$SCORES" 2>&1)
+        out=$("./$k/classify" --input "$image/cube.npy" --labels "$image/labels.npy" --output "$LABELS" 2>&1)
         status=$?
         printf '== %s on %s\n%s\n' "$k" "$image" "$out" >> "$LOG"
         if [ $status -ne 0 ]; then failed "$image" "$k" "$(echo "$out" | tail -n 1)"; continue; fi
         # classify's lines, as numbers (a kernel without its own count has no "own count").
-        echo "$out" | awk -v image="$image" -v k="$k" -v unit="$unit" -v mhz="$mhz" '
+        echo "$out" | awk -v image="$image" -v k="$k" -v unit="$unit" '
+            /^kernel: .*built for/ { mhz = $(NF - 1) }
             /pixels, .* patches/  { h = $1; w = $3; p = $5 }
             /^cube into memory:/  { load = $4 }
             /^FPGA:/              { fpga = $2 }
@@ -91,7 +93,7 @@ for k in $found; do
             printf "  %s: %.2f ms FPGA%s, %.2f%%\n", $1, $9, own, $12 ? 100 * $13 / $12 : 0 }'
     done
 done
-rm -f "$SCORES"
+rm -f "$LABELS"
 
 # The report: each kernel's mean over the images it ran on, as the notebook's.
 awk -F, -v stamp="$STAMP" -v images="$IMAGES" -v skipped="$skipped" '
@@ -109,7 +111,7 @@ awk -F, -v stamp="$STAMP" -v images="$IMAGES" -v skipped="$skipped" '
         runs[++nruns] = $0
     }
     END {
-        print "# Optimized kernels on the ZedBoard, " stamp "\n"
+        print "# Optimized kernels on the OPU system, " stamp "\n"
         print "Images: " shapes ".\n"
         print "## Mean over the images\n"
         print "| Kernel | MHz | Images | Cycles (own count) | Own count (ms) | FPGA (ms) | Cube into memory (s) | Wall clock (s) " \
@@ -141,7 +143,7 @@ awk -F, -v stamp="$STAMP" -v images="$IMAGES" -v skipped="$skipped" '
                    r[11] == "" ? "-" : sprintf("%.3f", r[11] / (r[4] * 1000)), r[9], r[10],
                    r[11] == "" ? "-" : sprintf("%.2f a %s", r[11] / units, r[3]), r[12] ? 100 * r[13] / r[12] : 0
         }
-        if (skipped != "") print "\nSkipped, no `KERNEL_opu/classify`:" skipped "."
+        if (skipped != "") print "\nSkipped, no `KERNEL/classify`:" skipped "."
     }' "$CSV" > "$REPORT"
 
 cat "$REPORT"

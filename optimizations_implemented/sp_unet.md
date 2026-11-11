@@ -46,11 +46,11 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | uint8 activations, every 3x3 conv two multiplies per DSP; **predicted** ~6 700 cycles a patch (DDR-bound; the convs 6 552), ~17.9 ms at 250 MHz, 1 347 DSPs; not built yet |
 | `sp_unet_medium_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 17 472 cycles a patch, 46.5 ms at 250 MHz, 1 297 DSPs; not built yet |
 | `sp_unet_large_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 34 944 cycles a patch, 93.1 ms at 250 MHz, 1 184 DSPs; not built yet |
-| `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
+| `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
-| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (`--board zynq7020` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; **predicted** 39 456 cycles a patch, ~345 ms at 76.189 MHz, 198 DSPs designed; not built yet |
-| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (`--board zynq7030`) | 10 ns | the same for the 7030, two read ports; **predicted** 22 194 cycles a patch, ~148 ms at 100 MHz, 364 DSPs; not built yet |
+| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; **predicted** 39 456 cycles a patch, ~345 ms at 76.189 MHz, 198 DSPs designed; not built yet |
+| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | the same for the 7030, two read ports; **predicted** 22 194 cycles a patch, ~148 ms at 100 MHz, 364 DSPs; not built yet |
 | `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 78 912 cycles a patch, ~526 ms, 287 DSPs; not built yet |
 | `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 152 352 cycles a patch, ~1.01 s, 303 DSPs; not built yet (LUTs the likeliest limit) |
 
@@ -206,7 +206,7 @@ changed nothing.
 
 ## The Zynq-7020 kernels (`sp_unet_SIZE_opt_zynq7020`)
 
-The direct kernels sized for the PYNQ-Z2's Zynq-7020 (`--board zynq7020`): the same
+The direct kernels sized for the PYNQ-Z2's Zynq-7020 (board `pynqz2`): the same
 arithmetic, the same answers bit for bit (the same testbench checks, the same notebook), on a
 chip with 220 DSP48E1 (these use at most 205), 53 k LUTs, 106 k flip-flops, 140 BRAM36, no
 UltraRAM and 64-bit HP ports. The design: `src/models/SpecPW-UNet/Small/sp_unet_small_opt_zynq7020/
@@ -308,9 +308,9 @@ made each lane's write its own cycle, 5-13x slower (intervals 1 399 385 553 / 1 
 - **Speed**: Winograd would need 2.3x fewer multiplies, but more LUTs, which this chip has least of;
   not tried here.
 
-On the ZedBoard (`--board zedboard`, the same chip, the OPU system's PetaLinux) the build packs
-`K_opu.zip` with the generic `classify` program (`software/opu/classify.c`):
-`classify cube.npy scores.npy`, against the image's labels.
+On the ZedBoard (board `zedboard`, the same chip, the OPU system's PetaLinux) the build packs
+`K_opu.tar.gz` with the generic `classify` program (`software/opu/`):
+`classify --input cube.npy --labels labels.npy --output labels.bin` (docs/opu.md).
 
 ## The uint8 kernels (`sp_unet_SIZE_opt_u8`)
 
@@ -450,7 +450,7 @@ DSPs the fewest output lanes, since each needs a rounding unit):
   140 / 265 BRAM36 by this estimate; to check in the reports.
 - **On the build, check:** the DSP count (convs as the tables: 146 / 276 / 252 / 276, the Bind Op
   Report's `mul` on DSPs, one per packed product), Final II = 1 on every conv, LUTs (large first),
-  and the cycles a patch with cosim (`python3 main.py cosim --kernel K --board B`): the packed
+  and the cycles a patch with cosim (`scripts/hls.sh K B cosim`): the packed
   split is new RTL on the DSP48E1, and csim passing does not prove it.
 
 **Testbench.** `tb/sp_unet_SIZE_opt_u8_zynq70X0/` with the shared `check_kernel_u8`: bit for bit

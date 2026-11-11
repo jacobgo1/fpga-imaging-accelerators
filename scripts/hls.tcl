@@ -1,11 +1,10 @@
 # Vitis HLS: C simulation, C++ -> Verilog, co-simulation, IP export.
-# main.py runs this in the run folder, after writing settings.tcl there.
+# scripts/hls.sh runs this in build/KERNEL/BOARD/, after writing settings.tcl there.
 # Each stage does what the ones before it do, then its own step:
-#   csim       csim_design     the testbench, compiled by HLS
-#   csynth     csynth_design   C++ -> Verilog, with the latency/resource report
-#   cosim      cosim_design    the testbench driving the generated Verilog
-#   ip         export_design   the Verilog as an IP block for Vivado (cosim first, unless skipped)
-#   bitstream  export_design   the same; main.py then runs Vivado
+#   csim     csim_design     the testbench, compiled by HLS
+#   csynth   csynth_design   C++ -> Verilog, with the latency/resource report
+#   cosim    cosim_design    the testbench driving the generated Verilog
+#   ip       export_design   the Verilog as an IP block for Vivado (cosim first if cfg(cosim))
 if {[catch {
     source settings.tcl
     # A project named "hls" in this folder; its one solution is called "solution".
@@ -18,7 +17,6 @@ if {[catch {
     open_solution -reset solution -flow_target vivado
     set_part $cfg(part)
     create_clock -period $cfg(clock_ns) -name default
-    if {$cfg(directives) ne ""} { source $cfg(directives) }
 
     csim_design -clean
     if {$cfg(stage) ne "csim"} {
@@ -28,8 +26,7 @@ if {[catch {
         set report [file join $cfg(run_dir) hls solution syn report $cfg(top)_csynth.rpt]
         if {![file exists $report]} { error "C synthesis failed: no $report" }
     }
-    set exports [expr {$cfg(stage) in {ip bitstream}}]
-    if {$cfg(stage) eq "cosim" || ($exports && !$cfg(skip_cosim))} {
+    if {$cfg(stage) in {cosim ip} && $cfg(cosim)} {
         # --dataflow-profile: also record every DATAFLOW process's working and
         # stalled cycles, and every signal, for the Dataflow Viewer (slower).
         if {$cfg(profile)} {
@@ -38,8 +35,8 @@ if {[catch {
             cosim_design -rtl verilog -tool xsim -trace_level port
         }
     }
-    if {$exports} {
-        # Writes the IP to hls/solution/impl/ip/, where vivado.tcl picks it up.
+    if {$cfg(stage) eq "ip"} {
+        # Writes the IP, and the same as one zip, to hls/solution/impl/ip/.
         export_design -format ip_catalog -rtl verilog
     }
     close_project

@@ -5,7 +5,7 @@
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
 
-// justoliunet_opt for the Zynq-7020 (--board zedboard): the same answers, bit for bit.
+// justoliunet_opt for the Zynq-7020 (board zedboard): the same answers, bit for bit.
 // 220 DSPs cannot compute positions side by side, so each layer takes one output
 // position at a time, folded over steps, and its input arrives one position at a
 // time (position_windows, conv1d.hpp). One pixel every 108 cycles, one read port.

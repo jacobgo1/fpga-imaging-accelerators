@@ -5,7 +5,7 @@
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
 
-// spectralpointwise1d_opt for the Zynq-7020 (--board zedboard): the same lanes,
+// spectralpointwise1d_opt for the Zynq-7020 (board zedboard): the same lanes,
 // two of them on 64-bit ports, a pixel every 15 cycles. convsp1 and the z-score on
 // DSPs (200 of 220), convsp2 and convsp3 in LUTs.
 

@@ -2,7 +2,7 @@
 
 Notes on the optimized 1D-Justo-LiuNet kernels: `justoliunet_opt` and `justoliunet_bn_opt`
 for the ZCU104 (committed in `5ae5ec0`, 2026-10-16), and `justoliunet_opt_zynq7020` and
-`justoliunet_bn_opt_zynq7020` for the lab's ZedBoards (2026-10-19, `--board zedboard`).
+`justoliunet_bn_opt_zynq7020` for the lab's ZedBoards (2026-10-19, board `zedboard`).
 Why they are built the way they are, a performance model, predictions for the Zynq-7030
 (HYPSO-2), and the ideas that use the 1D (spectral) model better than the 2D design does.
 
@@ -114,7 +114,7 @@ LUTs (estimates).
 
 ### The ZedBoard (Zynq-7020) design as built
 
-`justoliunet_opt_zynq7020`, `justoliunet_bn_opt_zynq7020` (`--board zedboard`; 78.1 MHz,
+`justoliunet_opt_zynq7020`, `justoliunet_bn_opt_zynq7020` (board `zedboard`; 78.1 MHz,
 220 DSP48E1, 53.2 k LUTs, 64-bit HP ports). The same techniques as the ZCU104 (every layer
 about the same cycles a pixel, DSPs on conv2 and conv3, two multiplies per DSP, uint8,
 burst reads) and the same formats, so the same answers bit for bit. What had to change:
@@ -155,7 +155,7 @@ in HLS, it is right at every level; `conv1d` uses that form.
 
 ### The Zynq-7030 design as built
 
-`justoliunet_opt_zynq7030`, `justoliunet_bn_opt_zynq7030` (`--board zynq7030`; 100 MHz):
+`justoliunet_opt_zynq7030`, `justoliunet_bn_opt_zynq7030` (board `picobob`; 100 MHz):
 the ZedBoard design, wider. A streamed layer takes in at most one position a cycle, so
 conv1's 102 outputs were the floor; here conv1 takes its windows from the whole map
 (`map_windows`) at 2 positions a cycle (`pool1d` pools each pair as it comes).
@@ -287,7 +287,7 @@ $T = 81$ on the 7030 at 100 MHz a frame takes ~0.9 ms, against a frame period of
 ## 6. Next steps
 
 1. Build and measure the current kernels (section 2's checklist; for the ZedBoard:
-   `fpga_build justoliunet_opt_zynq7020 --board zedboard`, 216 DSPs expected, then on the
+   `fpga_build justoliunet_opt_zynq7020 zedboard`, 216 DSPs expected, then on the
    board `classify cube.npy scores.npy`, against the image's labels).
 2. Prototype A on the ZCU104: conv3, conv4 and dense hard-wired (weights as compile-time
    constants, not loaded into registers), DSPs on conv2 and conv1. Its csynth report

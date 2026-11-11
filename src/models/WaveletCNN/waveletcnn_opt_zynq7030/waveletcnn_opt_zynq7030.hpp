@@ -8,7 +8,7 @@
 
 namespace zscore = zscore_int8;
 
-// waveletcnn_opt for the Zynq-7030 (--board zynq7030): the same answers, four
+// waveletcnn_opt for the Zynq-7030 (board picobob): the same answers, four
 // 64-bit read ports (the writer shares HP3), one conv output channel a cycle.
 
 constexpr int PATCH_SIZE = 32;

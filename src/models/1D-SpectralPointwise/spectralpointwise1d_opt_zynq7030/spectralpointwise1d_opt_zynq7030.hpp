@@ -5,7 +5,7 @@
 #include "../../../common/hls_vector_shim.hpp"
 #include "../../../common/hls_burst_maxi_shim.hpp"
 
-// spectralpointwise1d_opt for the Zynq-7030 (--board zynq7030): the ZCU104's four
+// spectralpointwise1d_opt for the Zynq-7030 (board picobob): the ZCU104's four
 // lanes on 64-bit ports (the writer shares HP3), a pixel every 7.5 cycles. convsp1
 // on DSPs (384 of 400), the rest in LUTs.
 

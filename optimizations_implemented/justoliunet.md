@@ -29,8 +29,8 @@ Work per pixel, counting only outputs the pools keep (conv1 uses 102 of 105, con
 |---|---|---|---|
 | `justoliunet` | ZCU104 (any) | 5 ns | golden baseline: float, plain loops, `n` pixels per start; **measured 1 041.7 s** for a whole capture (1.595 ms a pixel), 1 066.9 s wall clock, 97.04 % |
 | `justoliunet_opt` | ZCU104 | 214 MHz | **measured 54.86 ms** per 598 × 1092 capture, FPGA alone (62.9 ms at 187.5 MHz); 128 ms wall clock |
-| `justoliunet_opt_zynq7020` | ZedBoard (`--board zedboard`) | 78.1 MHz (PLL: 76.189 MHz) | **measured 925.7 ms** on the ZedBoard, FPGA alone (108.0 cycles/pixel) |
-| `justoliunet_opt_zynq7030` | Zynq-7030 (`--board zynq7030`) | 100 MHz | built in C++, bit-exact; cycle model only |
+| `justoliunet_opt_zynq7020` | ZedBoard (board `zedboard`) | 78.1 MHz (PLL: 76.189 MHz) | **measured 925.7 ms** on the ZedBoard, FPGA alone (108.0 cycles/pixel) |
+| `justoliunet_opt_zynq7030` | Zynq-7030 (board `picobob`) | 100 MHz | built in C++, bit-exact; cycle model only |
 
 All optimized kernels give the same answers bit for bit (`classify_fixed` in
 `tools/justoliunet_model.py`). Accuracy on the labelled aegean pixels: fixed point 96.73 %,

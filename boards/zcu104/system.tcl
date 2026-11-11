@@ -24,7 +24,7 @@
 # only s_axilite gets the control path alone.
 #
 # To change the design, edit this file. To look at what it produced, open
-# build/KERNEL/latest/vivado/system.xpr in Vivado and open the block design.
+# build/KERNEL/zcu104/vivado/system.xpr in Vivado and open the block design.
 
 # ---------------------------------------------------------------- Project
 set bp [lindex [get_board_parts -quiet -latest_file_version *zcu104*] 0]

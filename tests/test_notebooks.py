@@ -3,7 +3,7 @@
 software/pynq/classify_golden.ipynb runs the golden kernels, classify.ipynb the
 optimized ones. Their code cells run against a fake `pynq` whose kernel computes with the
 PC's models (tools/models.py: golden_forward, fixed_scores), on an image folder made by
-tools/image.py prepare, with the kernel.json main.py packs. The notebooks check the board
+tools/image.py prepare, with the kernel.json scripts/pynq.sh packs. The notebooks check the board
 against the labels only; here their answers are checked against the PC's (golden_scores,
 fixed_scores). That checks the register traffic, the preprocessing and patching, the strips
 and the stitching -- not PYNQ or the board.
@@ -138,7 +138,7 @@ class NotebookTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def prepare(self, model, kernel, regs, h, w, labels=True):
-        """A board folder as main.py packs it for KERNEL (register map, kernel.json, mu_sd.txt)
+        """A board folder as scripts/pynq.sh packs it for KERNEL (register map, kernel.json, mu_sd.txt)
         and an image zip next to it: a raw cube of counts whose z-scores are N(0, 1), the
         dropped bands 65535, so a wrong band selection shows. self.cube: that cube."""
         kept, mean, inv_std = self.preprocessing.read_preprocessing()
