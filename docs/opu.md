@@ -144,7 +144,8 @@ As cnn-1d-picobob's README:
 ```
 
 `process-capture.sh` writes `/media/sd-pl/hsi0/sp_unet_small_opt_u8_zynq7030-labels.bin`
-and its log to `/media/sd-pl/hsi0/logs/`. Download them as cnn-1d's README shows.
+and its log to `/media/sd-pl/hsi0/logs/`. Download them as cnn-1d's README shows. The
+flatsat, step by step (ws2, powering the OPU, captures, switching it off): [flatsat.md](flatsat.md).
 
 ### On the lab's ZedBoard, over ssh
 

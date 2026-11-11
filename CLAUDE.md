@@ -72,6 +72,7 @@ software/opu/        cnn_accelerator: cnn-1d-picobob's program with its file nam
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does; docs/opu.md the OPU boards, step by step
+docs/flatsat.md      running a _zynq7030 kernel on the HYPSO-2 flatsat through hypso-cli
 docs/justoliunet_opt_design.md  the 1D kernels: design, performance model, next ideas
 optimizations_implemented/  one .md per model: its optimizations, stages, latency, utilization, board limits
                      utilization.md: every kernel's routed utilization, from the reports in utilization/

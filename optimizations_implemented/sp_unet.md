@@ -49,8 +49,8 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
-| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; **predicted** 39 456 cycles a patch, ~345 ms at 76.189 MHz, 198 DSPs designed; not built yet |
-| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | the same for the 7030, two read ports; **predicted** 22 194 cycles a patch, ~148 ms at 100 MHz, 364 DSPs; not built yet |
+| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; 198 DSPs designed (208 routed); **measured 437.8 ms** on the ZedBoard at 76.189 MHz (50 156 cycles a patch; predicted 39 456, +27 %), 93.68 % on the five images |
+| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | the same for the 7030, two read ports; 364 DSPs designed; **measured 180.7 ms** on the HYPSO-2 flatsat (PicoBoB) at 100.0 MHz, a 598 x 1092 capture (27 168 cycles a patch; predicted 22 194, +22 %) |
 | `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 78 912 cycles a patch, ~526 ms, 287 DSPs; not built yet |
 | `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 152 352 cycles a patch, ~1.01 s, 303 DSPs; not built yet (LUTs the likeliest limit) |
 
@@ -719,3 +719,9 @@ Routed, kernel alone (without the interconnects); by process in
   (native, and on a real crop in the tests); not built. `sp_unet_opt_zynq7020.hpp` is now
   `sp_unet_opt_zynq7000.hpp`, shared, with `READ_PORTS` in each kernel's header;
   `sp_unet_small_opt_zynq7020` is bit-exact as before (native). `input_max` moved to `dsp_pack.hpp`.
+- 2026-11-10: measured. `sp_unet_small_opt_u8_zynq7020` on the ZedBoard (benchmark.sh, five images):
+  437.8 ms, 50 156 cycles a patch at 76.189 MHz (predicted 39 456), 93.68 %, as the ZCU104's
+  `_u8` kernel. `sp_unet_small_opt_u8_zynq7030` on the HYPSO-2 flatsat, loaded with `obip fpga reload`
+  and run by `classify` on a capture's `binned_cube.bip` (598 x 1092, no labels): 180.7 ms, 27 168
+  cycles a patch at 100.0 MHz (predicted 22 194); the cube from the SD card into memory 6.7 s, 7.1 s
+  in all. Both with the earlier flow (main.py, classify.c).
