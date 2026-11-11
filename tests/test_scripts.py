@@ -108,20 +108,23 @@ echo "hash  /media/sd-pl/firmware/$3.bit.bin" > "$4/$3.bit.bin.md5sum"
 echo DTBO > "$4/$3.dtbo"
 '''
 
-# docker: the PetaLinux image is there, opu-system's Vivado image with FAKE_VIVADO_IMAGE, the
-# cross-compiling one not (a local compiler is).
+# docker: the PetaLinux image and cnn-1d's cnn-dev-image are there, opu-system's Vivado image
+# with FAKE_VIVADO_IMAGE. A run of cnn-dev-image (cnn-1d's start_docker) "builds" cnn_accelerator
+# in the folder it mounts, after checking the kernel's driver is there.
 FAKE_DOCKER = r'''#!/bin/bash
 echo "docker $*" >> "$FAKE_LOG"
-case "$3" in
-    petalinux:2023.1) exit 0 ;;
-    vivado:2023.1) [ -n "$FAKE_VIVADO_IMAGE" ] ;;
-    *) exit 1 ;;
-esac
-'''
-FAKE_CMAKE = r'''#!/bin/bash
-echo "cmake $*" >> "$FAKE_LOG"
-if [ "$1" = --build ]; then echo ARM > "$2/classify"; else
-    while [ $# -gt 0 ]; do [ "$1" = -B ] && mkdir -p "$2"; shift; done; fi
+if [ "$1 $2" = "image inspect" ]; then
+    case "$3" in
+        petalinux:2023.1|cnn-dev-image) exit 0 ;;
+        vivado:2023.1) [ -n "$FAKE_VIVADO_IMAGE" ]; exit ;;
+        *) exit 1 ;;
+    esac
+fi
+if [ "$1" = run ] && [[ "$*" == *cnn-dev-image* ]]; then
+    while [ $# -gt 0 ]; do [ "$1" = -v ] && mount="${2%%:*}"; shift; done
+    ls "$mount"/xcnn_driver/x*.c >/dev/null && [ -f "$mount/xcnn_driver/kernel.h" ] || exit 1
+    mkdir -p "$mount/build-cross" && echo ARM > "$mount/build-cross/cnn_accelerator"
+fi
 '''
 
 KERNEL_CPP = 'void k_opt(const int *din0, int *dout, int height, int width) { dout[0] = din0[0] + height + width; }\n'
@@ -132,7 +135,8 @@ def fake_repository(root):
     """The scripts, boards and software, one kernel and its golden one, under ROOT."""
     root = Path(root)
     for folder in ('scripts', 'boards', 'software'):
-        shutil.copytree(ROOT / folder, root / folder)
+        # Not what a local build of cnn_accelerator left (git ignores it too).
+        shutil.copytree(ROOT / folder, root / folder, ignore=shutil.ignore_patterns('build-cross', 'xcnn_driver'))
     (root / 'tools').mkdir()
     shutil.copy2(ROOT / 'tools/models.py', root / 'tools')
     shutil.copy2(ROOT / 'mu_sd.txt', root)
@@ -150,7 +154,8 @@ class ExecutableTests(unittest.TestCase):
     def test_every_script_is_executable(self):
         # The scripts call each other as programs, and git keeps the bit for other machines.
         # The tests below run them with bash, so they would not notice a missing one.
-        scripts = sorted([*(ROOT / 'scripts').glob('*.sh'), *(ROOT / 'software/opu').glob('*.sh')])
+        scripts = sorted([*(ROOT / 'scripts').glob('*.sh'), *(ROOT / 'software/opu/scripts').glob('*.sh'),
+                          *(ROOT / 'software/opu/scripts').glob('*_docker')])
         self.assertTrue(scripts)
         missing = [str(p.relative_to(ROOT)) for p in scripts if not os.access(p, os.X_OK)]
         self.assertEqual(missing, [], 'chmod +x these (and commit the mode)')
@@ -169,8 +174,6 @@ class ScriptTests(unittest.TestCase):
         self.fake('vitis_hls', FAKE_VITIS.replace('PYTHON', PYTHON))
         self.fake('vivado', FAKE_VIVADO.replace('PYTHON', PYTHON))
         self.fake('docker', FAKE_DOCKER)
-        self.fake('cmake', FAKE_CMAKE)
-        self.fake('arm-linux-gnueabihf-g++', '#!/bin/sh\n')
         self.fake('python3', f'#!/bin/sh\nexec "{PYTHON}" "$@"\n')
         self.opu = self.dir / 'opu-system'
         for path, text in (('vivado/run_tcl_script.sh', FAKE_RUN_TCL),
@@ -355,17 +358,18 @@ class ScriptTests(unittest.TestCase):
         self.assertIsNone(re.search('@[A-Z_]+@', dtsi))
         self.assertIn(f'petalinux ./prepare_pl_firmware.sh ./{project}/{project}.xsa k_opt ./{project}/output '
                       f'./{project}/{project}.dtsi', self.log.read_text())
-        # 3. classify, with the kernel's driver and kernel.h.
+        # 3. cnn_accelerator, built by cnn-1d's scripts with the kernel's driver and kernel.h.
         driver = self.out(board='picobob') / 'driver'
         self.assertEqual(sorted(p.name for p in driver.iterdir()),
                          ['kernel.h', 'xk_opt.c', 'xk_opt.h', 'xk_opt_hw.h', 'xk_opt_linux.c', 'xk_opt_sinit.c'])
         self.assertIn('#define KERNEL_CLOCK_MHZ 100.000', (driver / 'kernel.h').read_text())
-        self.assertIn('-DKERNEL_DRIVER_DIR=', self.log.read_text())
+        self.assertIn('cnn-dev-image /bin/bash -c cd build-cross && cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-arm.cmake',
+                      self.log.read_text())
         # 4. The tarball, to unpack in /media/sd-pl.
         with tarfile.open(self.out(board='picobob') / 'k_opt_opu.tar.gz') as tar:
             names = sorted(m.name for m in tar.getmembers() if m.isfile())
         self.assertEqual(names, ['firmware/k_opt.bit.bin', 'firmware/k_opt.bit.bin.md5sum', 'firmware/k_opt.dtbo',
-                                 'k_opt/classify', 'k_opt/load.sh', 'k_opt/process-capture.sh'])
+                                 'k_opt/cnn_accelerator', 'k_opt/load.sh', 'k_opt/process-capture.sh'])
         self.assertIn('obip fpga reload k_opt.bit.bin -o k_opt.dtbo', result.stdout)
 
     def test_opu_zedboard_project_and_memory(self):

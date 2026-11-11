@@ -9,13 +9,13 @@
 #   2. PetaLinux, through opu-system's docker/run-petalinux-docker.sh and
 #      prepare_pl_firmware.sh: KERNEL.bit.bin, its md5sum and the devicetree overlay
 #      KERNEL.dtbo (boards/opu/hls_kernel.dtsi: the kernel and its memory for UIO)
-#   3. classify (software/opu/), built for the board's ARM with the kernel's own HLS
-#      driver, in the Docker image fpga-opu-dev (or with a local ARM compiler)
+#   3. cnn_accelerator (software/opu/, cnn-1d-picobob's program) for the board's ARM,
+#      with the kernel's own HLS driver, by cnn-1d's scripts in Docker cnn-dev-image
 #   4. build/KERNEL/BOARD/KERNEL_opu.tar.gz, to unpack in /media/sd-pl on the board:
 #        firmware/KERNEL.bit.bin, .bit.bin.md5sum, .dtbo
-#        KERNEL/classify, process-capture.sh, load.sh
+#        KERNEL/cnn_accelerator, process-capture.sh, load.sh
 #
-# --driver: steps 3 and 4 only (after changing classify).
+# --driver: steps 3 and 4 only (after changing cnn_accelerator).
 # opu-system: FPGA_OPU_SYSTEM, else ../opu-system next to this repository, with its Vivado
 # 2023.1 (in /opt/Xilinx or its Docker image vivado:2023.1) and PetaLinux Docker image
 # petalinux:2023.1 (opu-system's README). Steps 1 and 2 are cnn-1d-picobob's
@@ -139,42 +139,31 @@ if [ $driver_only -eq 0 ]; then
         "$pl/$PROJECT.dtsi" "$out/firmware/"
 fi
 
-# 3. classify, with the kernel's HLS driver.
-echo "== 3. classify for $KERNEL"
+# 3. cnn_accelerator, cnn-1d-picobob's program, with this kernel's HLS driver in
+# software/opu/xcnn_driver/ (where cnn-1d keeps its own), built by its scripts in Docker.
+echo "== 3. cnn_accelerator for $KERNEL"
 for file in "$KERNEL.bit.bin" "$KERNEL.bit.bin.md5sum" "$KERNEL.dtbo"; do
     [ -f "$out/firmware/$file" ] || die "no $out/firmware/$file: run scripts/opu.sh $KERNEL $BOARD without --driver"
 done
-driver="$out/driver"
-rm -rf "$driver" "$out/driver-build"
-mkdir -p "$driver"
-unzip -q -o -j "$export_zip" '*drivers/*/src/*' -d "$driver" \
+app="$FPGA_ROOT/software/opu"
+docker image inspect cnn-dev-image >/dev/null 2>&1 \
+    || die "no Docker image cnn-dev-image: make it once with software/opu/scripts/setup_docker"
+rm -rf "$app/xcnn_driver" "$app/build-cross/cnn_accelerator"
+mkdir -p "$app/xcnn_driver"
+unzip -q -o -j "$export_zip" '*drivers/*/src/*' -d "$app/xcnn_driver" \
     || die "no HLS driver (drivers/*/src/) in $export_zip"
-"$FPGA_ROOT/software/opu/make_kernel_header.sh" "$driver" "$clock_mhz" > "$driver/kernel.h"
-relative="build/$KERNEL/$BOARD"
-cmake_steps="cmake -S software/opu -B $relative/driver-build -DCMAKE_BUILD_TYPE=Release \
--DCMAKE_TOOLCHAIN_FILE=\$PWD/software/opu/cmake/toolchain-arm.cmake -DKERNEL_DRIVER_DIR=\$PWD/$relative/driver \
-&& cmake --build $relative/driver-build -j $(job_count)"
-if docker image inspect fpga-opu-dev >/dev/null 2>&1; then
-    # As cnn-1d-picobob's cross-compile.sh: the repository is /home/hypso in the container.
-    # :z lets the container read the mount on SELinux hosts (Fedora); elsewhere it does nothing.
-    docker run --rm -v "$FPGA_ROOT:/home/hypso:z" --user "$(id -u):$(id -g)" fpga-opu-dev \
-        /bin/bash -c "cd /home/hypso && $cmake_steps"
-elif command -v arm-linux-gnueabihf-g++ >/dev/null && command -v cmake >/dev/null; then
-    (cd "$FPGA_ROOT" && eval "$cmake_steps")
-else
-    die "nothing to build classify with: make the Docker image once with
-  docker build --network=host -t fpga-opu-dev $FPGA_ROOT/software/opu/docker
-or install cmake and g++-arm-linux-gnueabihf, then: scripts/opu.sh $KERNEL $BOARD --driver"
-fi
-[ -f "$out/driver-build/classify" ] || die "classify was not built; see the output above"
+"$app/scripts/make_kernel_header.sh" "$app/xcnn_driver" "$clock_mhz" > "$app/xcnn_driver/kernel.h"
+"$app/scripts/cross-compile.sh"
+[ -f "$app/build-cross/cnn_accelerator" ] || die "cnn_accelerator was not built; see the output above"
+rm -rf "$out/driver"
+cp -r "$app/xcnn_driver" "$out/driver"         # what it was built with, kept with the build
 
 # 4. The package.
 package="$out/opu"
 rm -rf "$package" "$out/${KERNEL}_opu.tar.gz"
 mkdir -p "$package/firmware" "$package/$KERNEL"
 cp "$out/firmware/$KERNEL.bit.bin" "$out/firmware/$KERNEL.bit.bin.md5sum" "$out/firmware/$KERNEL.dtbo" "$package/firmware/"
-cp "$out/driver-build/classify" "$FPGA_ROOT/software/opu/load.sh" "$FPGA_ROOT/software/opu/process-capture.sh" \
-    "$package/$KERNEL/"
+cp "$app/build-cross/cnn_accelerator" "$app/scripts/load.sh" "$app/scripts/process-capture.sh" "$package/$KERNEL/"
 tar -C "$package" -czf "$out/${KERNEL}_opu.tar.gz" firmware "$KERNEL"
 
 cat <<EOF
@@ -184,6 +173,6 @@ For the board: $out/${KERNEL}_opu.tar.gz
     HYPSO:          obip fpga reload $KERNEL.bit.bin -o $KERNEL.dtbo     (hypso-cli)
                     /media/sd-pl/$KERNEL/process-capture.sh hsi0
     the lab, ssh:   sh /media/sd-pl/$KERNEL/load.sh
-                    /media/sd-pl/$KERNEL/classify --input cube.npy --labels labels.npy --output labels.bin
+                    /media/sd-pl/$KERNEL/process-capture.sh IMAGE
   docs/opu.md has every step.
 EOF

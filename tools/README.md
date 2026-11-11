@@ -78,7 +78,10 @@ test_specpw_unet) skip.
 
 ```text
 image.py                  prepare: capture -> cube.npy (uint16 raw counts), labels.npy and
-                          meta.json (the picture's bands).
+                          meta.json (the picture's bands); binned_cube.bip and
+                          capture_config.ini, the same cube as a capture, for the OPU boards.
+                          score: an OPU board's labels file (or benchmark.sh's results)
+                          against labels.npy: accuracy and IoU.
 ```
 
 One image folder serves every kernel: prepare it and zip it.

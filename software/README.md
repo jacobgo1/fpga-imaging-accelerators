@@ -8,11 +8,11 @@ What runs on the board's ARM:
   from the driver header generated inside the exported HLS IP (`x<kernel>_hw.h`, packed next to
   the notebook) and which model it is from `kernel.json` (`scripts/pynq.sh` writes it from
   `tools/models.py`). `benchmark.ipynb` runs them all over the images on the ZCU104.
-- `software/opu/`: `classify`, the C++ program every optimized kernel runs on the OPU system's
-  PetaLinux (PicoBoB, the ZedBoard), as cnn-1d-picobob's `cnn_accelerator` (the same CMake
-  build, UIO classes and labels file), with the kernel's own HLS driver;
-  `process-capture.sh` and `load.sh` for the board; `benchmark.sh`, the benchmark there.
-  [docs/opu.md](../docs/opu.md).
+- `software/opu/`: cnn-1d-picobob's program `cnn_accelerator`, with its file names and scripts,
+  which every optimized kernel runs on the OPU system's PetaLinux (PicoBoB, the ZedBoard) with
+  the kernel's own HLS driver; `scripts/process-capture.sh` and `scripts/load.sh` for the board;
+  `scripts/benchmark.sh`, the benchmark there. [docs/opu.md](../docs/opu.md),
+  [docs/opu_flow.md](../docs/opu_flow.md) (what differs from cnn-1d's).
 
 `fpga.sh` in the repository root wraps the build in short commands
 (`source fpga.sh; fpga_help`), and [docs/framework.md](../docs/framework.md)
@@ -68,7 +68,9 @@ python3 tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy --
 fpga_zip aegean_unet               # upload aegean_unet.zip above the designs' folders, once
 ```
 
-The folder holds `cube.npy` (the raw cube, uint16), `labels.npy` and `meta.json`.
+The folder holds `cube.npy` (the raw cube, uint16), `labels.npy` and `meta.json`, and for the
+OPU boards the same cube as a capture has it, `binned_cube.bip` with `capture_config.ini`
+(`tools/image.py score` then counts the board's accuracy on the PC).
 Reading a `.nc` capture needs `pip install hypso`, as in
 training; a raw `(H, W, 120)` `.npy` works too. `--crop ROW COL HEIGHT WIDTH`
 takes a region only (do, for the golden kernels: they are slow).

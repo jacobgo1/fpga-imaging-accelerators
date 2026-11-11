@@ -28,8 +28,8 @@ looks there, it is unpacked there once, and each notebook writes its results
 (`aegean_unet_fpga_scores.npy`) next to itself.
 
 PicoBoB and the ZedBoard: unpack the tarball in `/media/sd-pl`, load it
-(`obip fpga reload K.bit.bin -o K.dtbo`, or `load.sh`) and run `K/classify` or
-`K/process-capture.sh`: [docs/opu.md](docs/opu.md).
+(`obip fpga reload K.bit.bin -o K.dtbo`, or `load.sh`) and run `K/process-capture.sh`
+(cnn-1d-picobob's, with its `cnn_accelerator`): [docs/opu.md](docs/opu.md).
 
 ## The scripts
 
@@ -41,7 +41,7 @@ the board (`zcu104`, `pynqz2`, `picobob`, `zedboard`: `boards/BOARD/board.conf`)
 | `scripts/test.sh KERNEL` | the kernel and its testbench with g++, run. No AMD tools | (`build/KERNEL/native/`) |
 | `scripts/hls.sh KERNEL BOARD [STAGE]` | Vitis HLS. `csim`: the testbench in HLS; `csynth`: ... then C++ → Verilog; `cosim`: ... then the Verilog against the testbench; `ip` (the default): ... then the IP. `--cosim` adds cosim to `ip`, `--clock-ns NS` overrides the board's clock | `hls/`, `hls.log`, `export.zip` |
 | `scripts/pynq.sh KERNEL BOARD` | PYNQ boards: Vivado with `boards/BOARD/system.tcl`, then the zip for the notebook. `--package`: only the zip again | `vivado/`, `reports/`, `KERNEL_pynq.zip` |
-| `scripts/opu.sh KERNEL BOARD` | OPU boards: opu-system's Vivado and PetaLinux scripts, then `classify` for the board. `--driver`: only classify and the tarball again | `sdk/`, `firmware/`, `KERNEL_opu.tar.gz` |
+| `scripts/opu.sh KERNEL BOARD` | OPU boards: opu-system's Vivado and PetaLinux scripts, then cnn-1d's `cnn_accelerator` for the board. `--driver`: only cnn_accelerator and the tarball again | `sdk/`, `firmware/`, `KERNEL_opu.tar.gz` |
 | `scripts/build.sh KERNEL BOARD` | `hls.sh ... ip`, then `pynq.sh` or `opu.sh` | all of the above |
 | `scripts/kernels.sh` | the kernels and the boards | |
 | `scripts/get-petalinux.sh [HOST]` | once, for the OPU boards: the PetaLinux Docker image from the FPGA workstation (`fpgaws`) | |
@@ -108,7 +108,7 @@ tb/KERNEL/         self-checking testbenches, with the references they check aga
 boards/BOARD/      board.conf; for the PYNQ boards system.tcl, the block design around the kernel
 boards/opu/        the OPU boards' project script, the kernel's part of the design, the overlay
 software/pynq/     the notebooks every model shares, packed into the zip for the board
-software/opu/      classify, the C++ program for the OPU boards (as cnn-1d-picobob's)
+software/opu/      cnn-1d-picobob's cnn_accelerator for the OPU boards, its files and scripts
 tools/             Python: weights, quantization, image preparation (tools/README.md)
 tests/             tests of all the above, no AMD tools or board needed
 docs/              how it works, project description, experiment notes

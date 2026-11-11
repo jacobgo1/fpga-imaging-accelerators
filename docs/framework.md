@@ -2,7 +2,7 @@
 
 There are two halves. **On the lab server**, the scripts in `scripts/` turn a kernel's C++
 into a bitstream and a package for the board. **On the board**, a Jupyter notebook (PYNQ:
-the ZCU104, the PYNQ-Z2) or the program `classify` (the OPU system: PicoBoB, the ZedBoard)
+the ZCU104, the PYNQ-Z2) or cnn-1d-picobob's program `cnn_accelerator` (the OPU system: PicoBoB, the ZedBoard)
 loads that bitstream and drives the kernel. The example used here is `justounetsimple_opt`
 on the ZCU104, but every kernel goes the same way; the OPU boards are in [opu.md](opu.md).
 
@@ -19,7 +19,7 @@ That runs `scripts/build.sh justounetsimple_opt zcu104`, which does four things 
 
 Then upload the zip to Jupyter on the board, unzip it there, and run the notebook.
 For PicoBoB and the ZedBoard, steps 3 and 4 are `scripts/opu.sh` instead: opu-system's
-Vivado and PetaLinux scripts, and `classify` ([opu.md](opu.md)).
+Vivado and PetaLinux scripts, and `cnn_accelerator` ([opu.md](opu.md)).
 
 Everything stays in that one folder. Where to look afterwards:
 
@@ -140,7 +140,7 @@ Tab completes `K` (the kernel names) and `BOARD` (default `zcu104`).
 | The IP only (`export.zip`) | `fpga_ip K [BOARD]` |
 | Bitstream + package from an existing `export.zip` | `fpga_bitstream K [BOARD]` |
 | Co-simulation: the RTL against the testbench, with its cycle count | `fpga_cosim K [BOARD]` |
-| The package again (after editing the notebook, or classify) | `fpga_package K [BOARD]` |
+| The package again (after editing the notebook, or cnn_accelerator) | `fpga_package K [BOARD]` |
 | Zip an image folder for upload | `fpga_zip DIR` |
 
 Other steps are plain Python scripts in `tools/` (weights, quantization,
@@ -152,7 +152,7 @@ preparing images), described in [tools/README.md](../tools/README.md).
    (copy them from `justounetsimple_opt.cpp`), plus `tb/K/K_tb.cpp`.
 2. `fpga_test K` until it passes.
 3. A new model: its entry in `tools/models.py` (the board's notebooks then take
-   it, golden and optimized; `classify` on the OPU boards takes every optimized kernel
+   it, golden and optimized; `cnn_accelerator` on the OPU boards takes every optimized kernel
    with the inputs `din0`, ..., `dout`, `height`, `width`). A kernel of no model:
    `software/pynq/K/K.ipynb`, copied into its zip.
 4. `fpga_build K [BOARD]`, then the notebook or [opu.md](opu.md).

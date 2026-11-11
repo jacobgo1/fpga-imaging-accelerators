@@ -1,12 +1,12 @@
 #!/bin/bash
-# make_kernel_header.sh DRIVER_DIR CLOCK_MHZ > kernel.h
+# make_kernel_header.sh DRIVER_DIR CLOCK_MHZ > DRIVER_DIR/kernel.h
 #
-# kernel.h for classify: the HLS-generated driver in DRIVER_DIR (xKERNEL.h, xKERNEL.c,
-# xKERNEL_linux.c from the export's drivers/KERNEL_v1_0/src/) under names that do not
-# depend on the kernel, so one program serves every kernel. CLOCK_MHZ: the clock the
-# kernel was built for, for classify to print. A kernel classify can run has the inputs
-# din0, din1, ... (each reads the same cube), dout, height and width; cycles if it keeps
-# its own count.
+# kernel.h for cnn_accelerator (src/xcnn_device.cpp): the HLS-generated driver in
+# DRIVER_DIR (xKERNEL.h, xKERNEL.c, xKERNEL_linux.c from the export's
+# drivers/KERNEL_v1_0/src/) under names that do not depend on the kernel, so the same
+# program serves every kernel. CLOCK_MHZ: the clock the kernel was built for, for the log.
+# A kernel it can run has the inputs din0, din1, ... (each reads the same cube), dout,
+# height and width; cycles if it keeps its own count.
 set -e
 fail() {
     echo "make_kernel_header.sh: $*" >&2
@@ -23,12 +23,12 @@ prefix="$(grep -oE '\bX[A-Za-z0-9_]+_Start\(' "$header" | head -n 1 | sed 's/_St
 [ -n "$prefix" ] || fail "$header: no ..._Start function"
 has() { grep -qE "\b${prefix}_$1\(" "$header"; }
 for function in Set_din0 Set_dout Set_height Set_width; do
-    has "$function" || fail "$header: no ${prefix}_$function: classify runs kernels with the inputs din0, ..., dout, height and width (an optimized kernel)"
+    has "$function" || fail "$header: no ${prefix}_$function: cnn_accelerator runs kernels with the inputs din0, ..., dout, height and width (an optimized kernel)"
 done
 dins="$(grep -oE "\b${prefix}_Set_din[0-9]+\(" "$header" | sed "s/^${prefix}_Set_//; s/($//" | sort -u | sort -t n -k 2 -n)"
 
-echo "// $prefix's HLS driver under the names classify uses. Made by"
-echo "// software/opu/make_kernel_header.sh from $(basename "$header")."
+echo "// $prefix's HLS driver under the names src/xcnn_device.cpp uses. Made by"
+echo "// software/opu/scripts/make_kernel_header.sh from $(basename "$header")."
 echo "#pragma once"
 echo "#include <cstdint>"
 echo "#include \"$(basename "$header")\""

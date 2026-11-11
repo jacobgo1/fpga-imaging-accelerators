@@ -28,3 +28,6 @@ Thumbs.db
 /aegean/
 
 .*
+# cnn_accelerator per kernel (scripts/opu.sh): the kernel's driver and the build
+/software/opu/xcnn_driver/
+/software/opu/build-cross/

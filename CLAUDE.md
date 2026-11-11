@@ -29,7 +29,7 @@ weights are extracted from them on demand.
   - the OPU boards need opu-system next to the repository with its Vivado and PetaLinux
     2023.1 Docker images; an export from Vitis HLS 2025.2 works (`docs/opu.md`).
 - **Board:** the ZCU104 with PYNQ: upload `K_pynq.zip`, unzip, run the notebook. PicoBoB and
-  the ZedBoard: unpack `K_opu.tar.gz` in `/media/sd-pl`, load, run `K/classify`.
+  the ZedBoard: unpack `K_opu.tar.gz` in `/media/sd-pl`, load, run `K/process-capture.sh`.
 
 ## Layout
 
@@ -37,7 +37,7 @@ weights are extracted from them on demand.
 scripts/             the build, one script a step, each `KERNEL BOARD`, into build/K/BOARD/:
                      test.sh (g++ testbench), hls.sh (Vitis HLS -> export.zip), pynq.sh (PYNQ
                      boards: Vivado + notebook zip), opu.sh (OPU boards: opu-system's Vivado and
-                     PetaLinux scripts + classify -> K_opu.tar.gz), build.sh (all); common.sh
+                     PetaLinux scripts + cnn_accelerator -> K_opu.tar.gz), build.sh (all); common.sh
 fpga.sh              short commands for the server (Tab completes kernels and boards)
 src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cpp, named
                      after the kernel), the golden kernel holding the quantized network;
@@ -59,13 +59,16 @@ software/pynq/        the board notebooks every model shares: classify_golden.ip
                      kernels), classify.ipynb (optimized); scripts/pynq.sh packs one with kernel.json.
                      benchmark.ipynb, uploaded on its own to the top of the Jupyter folder: every
                      ZCU104 optimized kernel (from its KERNEL_pynq/) on five images, one report
-software/opu/        classify: the C++ program every optimized kernel runs on the OPU system's
-                     PetaLinux (no PYNQ), cnn-1d-picobob's cnn_accelerator made generic (CMake,
-                     spdlog, libconfig, argparse, UIO); src/classify.cpp is its board-free core
-                     (tested on the PC); make_kernel_header.sh maps the kernel's own HLS driver to
-                     shared names; scripts/opu.sh builds it. benchmark.sh, copied on its own to
-                     the board: every optimized kernel (from its tarball) on five images, one
-                     report, as benchmark.ipynb
+software/opu/        cnn_accelerator: cnn-1d-picobob's program with its file names, run by every
+                     optimized kernel on the OPU system's PetaLinux (no PYNQ). Files that can be
+                     are byte-for-byte cnn-1d's; the rest have only the changes these kernels
+                     need (docs/opu_flow.md, step 3): keep it that way. scripts/
+                     make_kernel_header.sh maps the kernel's own HLS driver to shared names
+                     (xcnn_driver/kernel.h); scripts/opu.sh builds it with cnn-1d's
+                     cross-compile.sh. tests/test_opu_driver.py builds the real sources on the PC
+                     against a fake board. scripts/benchmark.sh, copied on its own to
+                     the board: every optimized kernel (from its tarball) on five images, the
+                     times and each run's labels; tools/image.py score counts the accuracy on the PC
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does; docs/opu.md the OPU boards, step by step
@@ -141,8 +144,8 @@ optimizations_implemented/waveletcnn.md).
 The z-score every model starts with (keep raw bands 8-117, mu_sd.txt) is in one place,
 tools/preprocessing.py. tools/models.py lists every model (scripts/pynq.sh packs its entry with the
 board notebook as kernel.json, so one notebook serves all). The board is checked against the
-image's labels only, in the notebooks and in the ZedBoard's classify; tools/image.py makes the
-image folder (labels required).
+image's labels only, in the notebooks and, for the OPU boards, by tools/image.py score on the PC;
+tools/image.py makes the image folder (labels required).
 
 ## How a model is built (follow justounetsimple_opt)
 

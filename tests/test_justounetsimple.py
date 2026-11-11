@@ -1,5 +1,5 @@
 """justounetsimple: the numpy models against the C++ kernels. The board notebook, shared by every
-model, is tests/test_notebooks.py's; the OPU program, test_opu_classify.py's.
+model, is tests/test_notebooks.py's; the OPU program, test_opu_driver.py's.
 """
 import gc
 from pathlib import Path

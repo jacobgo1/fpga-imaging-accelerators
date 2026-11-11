@@ -6,9 +6,10 @@ and where this repository adds to or works around opu-system. [opu.md](opu.md) i
 how-to; this is the map.
 
 In short: **opu-system's scripts do the hardware build exactly as for any other OPU design.**
-This repository adds what is specific to an HLS kernel: the HLS step before them, the
-kernel's part of the block design and the overlay that they take as input, and the
-program that runs the kernel on the board after them. It does the same as cnn-1d-picobob's
+This repository adds what is specific to an HLS kernel: the HLS step before them, and the
+kernel's part of the block design and the overlay that they take as input. After them comes
+cnn-1d-picobob's program, `cnn_accelerator`, with its files and scripts, changed only where
+these kernels differ from the CNN-1D. It does the same as cnn-1d-picobob's
 `build-firmware.sh`, for any kernel.
 
 ## The picture
@@ -46,13 +47,14 @@ program that runs the kernel on the board after them. It does the same as cnn-1d
         ▼                                                                   K.bit.bin, K.bit.bin.md5sum, K.dtbo
  build/K/BOARD/firmware/
         │
-        │  scripts/opu.sh, step 3: classify (software/opu/) for the ARM, in Docker fpga-opu-dev,
-        │                          with the kernel's driver from export.zip
+        │  scripts/opu.sh, step 3: the kernel's driver from export.zip into software/opu/xcnn_driver/,
+        │                          then cnn-1d's software/opu/scripts/cross-compile.sh (Docker
+        │                          cnn-dev-image) builds cnn_accelerator for the ARM
         │  scripts/opu.sh, step 4: the tarball
         ▼
  build/K/BOARD/K_opu.tar.gz ──► the board's /media/sd-pl:
                                   firmware/K.bit.bin, K.bit.bin.md5sum, K.dtbo
-                                  K/classify, K/load.sh, K/process-capture.sh
+                                  K/cnn_accelerator, K/load.sh, K/process-capture.sh
 ```
 
 `scripts/build.sh K BOARD` runs `hls.sh` and then `opu.sh`; `fpga_build K BOARD` in
@@ -96,8 +98,8 @@ What runs, in order, and whose it is:
 
 What `add_hls_kernel.tcl` adds to opu-system's design, for any HLS kernel:
 
-- the IP from `K_BOARD_hls_export/` as the block `hls_kernel` (the overlay and `classify`
-  find it by that name);
+- the IP from `K_BOARD_hls_export/` as the block `hls_kernel` (the overlay and
+  `cnn_accelerator` find it by that name);
 - its control registers (`s_axi_control`) on one more master of `axi_interconnect_0`
   (opu_base's 3 become 4);
 - each of its memory ports (`m_axi_gmem0`, ...) through its own SmartConnect to its own HP
@@ -129,22 +131,29 @@ docker/run-petalinux-docker.sh ./prepare_pl_firmware.sh ./K_BOARD/K_BOARD.xsa K 
 
 `opu.sh` copies the three files to `build/K/BOARD/firmware/`.
 
-### 3. classify: the program on the board (this repository, from cnn-1d)
+### 3. cnn_accelerator: the program on the board (cnn-1d-picobob's)
 
-opu-system is not involved. `software/opu/` is cnn-1d-picobob's C++ program
-(`cnn_accelerator`) made to run any kernel.
+opu-system is not involved. `software/opu/` is cnn-1d-picobob's program with its file names;
+the files that can be the same are, byte for byte, and the others have only the changes these
+kernels need (their input is the cube alone, their output 4 int32 a pixel, their driver named
+after them):
 
-| File | Whose | Role |
+| File | Compared with cnn-1d-picobob's | Role |
 | --- | --- | --- |
-| `software/opu/make_kernel_header.sh` | ours | Writes `kernel.h`: maps this kernel's own HLS driver functions (`XK_Set_din0`, `XK_Start`, ...) to fixed names, so the same program serves every kernel. |
-| `software/opu/src/main.cpp`, `classify.*`, `kernel_device.*`, `capture_config.*` | ours, cnn-1d's structure | Reads the cube (`binned_cube.bip` + `capture_config.ini`, or a `.npy`), puts it in `cube_map`, starts the kernel through UIO, reads `scores_map`, writes the labels (sea 0, land 1, cloud 2), prints the times. |
-| `software/opu/src/uio_memory_device.*` | cnn-1d, unchanged | The UIO classes: find a UIO device by name, map its memory. |
-| `software/opu/CMakeLists.txt` | ours, cnn-1d's | The build: spdlog, libconfig, argparse, the kernel's driver. |
-| `software/opu/cmake/*.cmake` | cnn-1d, unchanged | Fetching the libraries; the ARM toolchain. |
-| `software/opu/docker/Dockerfile` | cnn-1d, unchanged | The image `fpga-opu-dev` it is compiled in (Ubuntu 20.04's ARM compiler, so it runs on the board's older C library). |
+| `src/uio_memory_device.{h,cpp}` | the same | Find a UIO device by name, map its memory. |
+| `cmake/*.cmake` | the same | Fetch spdlog, libconfig, argparse; the ARM toolchain. |
+| `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh` | the same | The image `cnn-dev-image` (Ubuntu 20.04's ARM compiler), and the build in it into `build-cross/`. |
+| `CMakeLists.txt` | changed: the driver's files by pattern | The build. |
+| `src/cnn_config.{h,cpp}` | changed: no `--cnn-config`, no rad matrix | The options, the capture config. |
+| `src/xcnn_device.{h,cpp}` | changed: the driver through `kernel.h`; `cycles()` | Starts the kernel; the class values from the devicetree. |
+| `src/main.cpp` | changed: no rad matrix; the class out of the kernel's scores; the kernel's cycle count logged | Cube into `cube_map`, kernel, labels file. |
+| `scripts/process-capture.sh` | changed: the kernel's name from its folder, no `--cnn-config` | One capture in `/media/sd-pl/CAPTURE`. |
+| `scripts/make_kernel_header.sh` | ours | Writes `xcnn_driver/kernel.h`: this kernel's own HLS driver functions (`XK_Set_din0`, `XK_Start`, ...) under fixed names, so the same program serves every kernel. |
 
-`opu.sh` takes the driver from `export.zip` into `build/K/BOARD/driver/`, writes `kernel.h`,
-and compiles `classify` in the Docker image `fpga-opu-dev` (as cnn-1d's `cross-compile.sh`).
+`opu.sh` unzips the driver from `export.zip` into `software/opu/xcnn_driver/` (where cnn-1d
+keeps its own `xcnn_driver/`; git ignores it), writes `kernel.h` there, and runs cnn-1d's
+`scripts/cross-compile.sh`, which builds `build-cross/cnn_accelerator` in `cnn-dev-image`. It
+keeps a copy of the driver in `build/K/BOARD/driver/`.
 
 ### 4. The tarball (this repository)
 
@@ -152,9 +161,9 @@ and compiles `classify` in the Docker image `fpga-opu-dev` (as cnn-1d's `cross-c
 
 ```text
 firmware/K.bit.bin, K.bit.bin.md5sum, K.dtbo     from step 2
-K/classify                                       from step 3
+K/cnn_accelerator                                from step 3
 K/load.sh                                        ours: md5sum check, fpgautil, checks hls_kernel is there
-K/process-capture.sh                             cnn-1d's, with classify: one capture in /media/sd-pl/CAPTURE
+K/process-capture.sh                             cnn-1d's: one capture in /media/sd-pl/CAPTURE
 ```
 
 ### 5. On the board
@@ -166,8 +175,13 @@ loads it the standard way:
 | --- | --- | --- |
 | `obip fpga reload K.bit.bin -o K.dtbo` (hypso-cli) | HYPSO / opu-services | Loads the bitstream and the overlay on PicoBoB in flight. |
 | `K/load.sh` | ours | The same over ssh on a lab board (`fpgautil -b K.bit.bin -o K.dtbo`). |
-| `K/process-capture.sh hsi0` | cnn-1d's | Runs `classify` on `/media/sd-pl/hsi0/binned_cube.bip`, writes `hsi0/K-labels.bin` and a log. |
-| `K/classify` | ours | The kernel on a cube, through the UIO devices the overlay made. |
+| `K/process-capture.sh hsi0` | cnn-1d's | Runs `cnn_accelerator` on `/media/sd-pl/hsi0/binned_cube.bip`, writes `hsi0/K-labels.bin` and a log. |
+| `K/cnn_accelerator` | cnn-1d's | The kernel on a capture, through the UIO devices the overlay made. |
+
+For a lab image, `tools/image.py prepare` writes the same files a capture has
+(`binned_cube.bip`, `capture_config.ini`), so `process-capture.sh IMAGE` runs on it; the
+accuracy is counted on the PC with `tools/image.py score`. `scripts/benchmark.sh` (ours) runs
+every kernel on every image and keeps the labels for that.
 
 Because the base design is still in the bitstream, `obip fpga hash` and the rest of
 opu-services work with the kernel loaded.
@@ -187,7 +201,8 @@ is all outside git, in the places cnn-1d's `build-firmware.sh` uses:
 | `petalinux/projects/dtbo-project/` | PetaLinux's overlay project | opu-system's `prepare_pl_firmware.sh`, the first time |
 
 Additions, which opu-system has no counterpart for: `scripts/hls.sh`, the kernel script
-`add_hls_kernel.tcl`, the overlay `hls_kernel.dtsi`, `classify`, `load.sh`, the tarball.
+`add_hls_kernel.tcl`, the overlay `hls_kernel.dtsi`, `make_kernel_header.sh`, `load.sh`,
+`benchmark.sh`, the tarball. The program is cnn-1d-picobob's, as in step 3.
 
 Three places where `opu.sh` goes beyond what `build-firmware.sh` does, each because something
 would not otherwise work:
@@ -216,7 +231,7 @@ would not otherwise work:
 | Kernel in the design | `firmware/add-cnn-accelerator.tcl` | `boards/opu/add_hls_kernel.tcl`, any HLS kernel |
 | Overlay | `firmware/cnn-1d-picobob.dtsi` | `boards/opu/hls_kernel.dtsi`, filled in per board |
 | Vivado + PetaLinux | `scripts/build-firmware.sh` → opu-system's scripts | `scripts/opu.sh` → the same opu-system scripts |
-| Program | `cnn_accelerator`, `scripts/cross-compile.sh` | `classify`, compiled by `opu.sh` |
+| Program | `cnn_accelerator`, driver in `xcnn_driver/`, `scripts/cross-compile.sh` | the same files in `software/opu/` (changes in step 3), driver put in `xcnn_driver/` by `opu.sh`, the same `cross-compile.sh` |
 | On the board | `obip fpga reload`, `process-capture.sh` | the same, plus `load.sh` for the lab |
 
 ## The other boards

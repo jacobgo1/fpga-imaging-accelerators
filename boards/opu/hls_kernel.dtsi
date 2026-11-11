@@ -5,7 +5,7 @@
     compatible = "generic-uio";
     linux,uio-name = "hls_kernel";
     hls_kernel_classes: classes@0 {
-        // The value the kernel gives each class; classify writes HYPSO's (sea 0,
+        // The value the kernel gives each class; cnn_accelerator writes HYPSO's (sea 0,
         // land 1, cloud 2) to its labels file.
         compatible = "hypso,hls-kernel-classes";
         class-sea = <2>;

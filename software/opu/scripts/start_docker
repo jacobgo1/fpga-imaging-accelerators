@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Absolute path to this script, e.g. /home/user/bin/foo.sh
+SCRIPT=$(readlink -f "$0")
+# Absolute path this script is in, thus /home/user/bin
+SCRIPTPATH=$(dirname "$SCRIPT")
+
+if [ $# -eq 2 ]
+  then
+    USER_ID=$1
+    GROUP_ID=$2
+  else
+    USER_ID=$(id -u)
+    GROUP_ID=$(id -g)
+fi
+
+echo "using uid $USER_ID and gid $GROUP_ID"
+if [ $# -eq 0 ]
+  then
+    command="bash"
+  else
+    command="$*"
+fi
+
+docker run -it --rm -v $SCRIPTPATH/../:/home/hypso/ --user $USER_ID:$GROUP_ID cnn-dev-image /bin/bash -c "$command"

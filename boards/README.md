@@ -7,7 +7,7 @@ One folder per board, `boards/<board>/`, with its `board.conf`: the FPGA part, t
   hardware around the HLS kernel (processor, interconnect, clock, reset); a notebook drives it.
 - `opu` (`scripts/opu.sh`): the board runs the OPU system's PetaLinux. The design is
   opu-system's own (its board script, `opu_base.tcl`) with the kernel added by
-  `boards/opu/add_hls_kernel.tcl`, built by opu-system's scripts; `classify` drives it
+  `boards/opu/add_hls_kernel.tcl`, built by opu-system's scripts; cnn-1d-picobob's `cnn_accelerator` drives it
   ([docs/opu.md](../docs/opu.md)).
 
 Either way the scripts are generic: they instantiate whatever kernel was built and wire its

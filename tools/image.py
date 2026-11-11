@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Make an image folder for the board's notebooks (numpy).
+"""Make an image folder for the boards (numpy), and score what an OPU board made of it.
 
     python tools/image.py prepare CAPTURE-l1a.nc --labels CAPTURE-l1a_labels.npy \\
         --out aegean_unet [--crop ROW COL HEIGHT WIDTH]
+    python tools/image.py score LABELS.bin IMAGE_DIR
+    python tools/image.py score RESULTS_DIR --images DIR
 
-Writes, into --out:
+prepare writes, into --out:
     cube.npy               the raw L1a cube (H x W x 120; uint16 when the values are raw
-                           counts), what the board classifies
+                           counts), what the PYNQ notebooks classify
+    binned_cube.bip        the same cube as HYPSO stores a capture, and
+    capture_config.ini     its size (frame_count = H, row_count = W): what cnn_accelerator
+                           reads on the OPU boards (only for a uint16 cube)
     labels.npy             the labels, remapped as in training: what the board is checked against
     meta.json              where it came from, and the RGB bands for the picture
 
-One folder serves every kernel; the notebooks and the ZedBoard's classify check the board's
-classes against the labels.
-Classes: 0 cloud, 1 land, 2 sea.
+score: cnn_accelerator's labels file (H x W uint8, HYPSO's values: sea 0, land 1, cloud 2)
+against IMAGE_DIR/labels.npy: accuracy and IoU per class, as the notebooks count them. For a
+folder from software/opu/scripts/benchmark.sh (KERNEL/IMAGE-labels.bin), every file in it,
+each against --images/IMAGE/labels.npy, as a table.
+Classes (labels.npy): 0 cloud, 1 land, 2 sea.
 """
 import argparse
 import json
@@ -89,12 +96,72 @@ def prepare(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     np.save(out / 'cube.npy', cube)
+    if cube.dtype == np.uint16:
+        # As a capture is stored, frame by frame (the cube's rows), each pixel's bands together
+        cube.tofile(out / 'binned_cube.bip')
+        (out / 'capture_config.ini').write_text(
+            f'frame_count = {cube.shape[0]}\nrow_count = {cube.shape[1]}\naoi_y = 0\nexposure = 0.0\n')
+    else:
+        print('not raw counts (uint16): no binned_cube.bip for the OPU boards')
     np.save(out / 'labels.npy', labels)
     (out / 'meta.json').write_text(json.dumps({
         'cube': str(args.cube), 'crop': [row, col, height, width],
         'rgb_bands': args.rgb or rgb_default or DEFAULT_RGB}, indent=2))
     print(f'Written to {out}: {cube.shape[0]} x {cube.shape[1]} pixels. Zip it (fpga_zip '
           f"{out.as_posix()}) and upload it to the folder above the designs' folders, once for all of them.")
+
+
+HYPSO_TO_CLASS = np.array([2, 1, 0], dtype=np.int64)   # sea 0, land 1, cloud 2 -> 2, 1, 0
+CLASS_NAMES = ('cloud', 'land', 'sea')
+
+
+def score_one(labels_bin, image_dir):
+    """Counts for one labels file against the image's labels: labelled pixels, correct ones,
+    and per class the pixels both call it and either calls it."""
+    truth = np.load(Path(image_dir) / 'labels.npy')
+    hypso = np.fromfile(labels_bin, dtype=np.uint8)
+    if hypso.size != truth.size:
+        raise SystemExit(f'{labels_bin}: {hypso.size} labels, {image_dir}/labels.npy has {truth.size}')
+    if hypso.max(initial=0) > 2:
+        raise SystemExit(f'{labels_bin}: values above 2, not a labels file')
+    classes = HYPSO_TO_CLASS[hypso].reshape(truth.shape)
+    known = (truth >= 0) & (truth < 3)
+    c, t = classes[known], truth[known]
+    both = [int(((c == k) & (t == k)).sum()) for k in range(3)]
+    either = [int(((c == k) | (t == k)).sum()) for k in range(3)]
+    return int(known.sum()), int((c == t).sum()), both, either
+
+
+def describe(counts):
+    labelled, correct, both, either = counts
+    accuracy = 100 * correct / labelled if labelled else 0
+    iou = [b / e if e else None for b, e in zip(both, either)]
+    present = [v for v in iou if v is not None]
+    return accuracy, iou, sum(present) / len(present) if present else None
+
+
+def score(args):
+    path = Path(args.labels)
+    if path.is_file():
+        if not args.image:
+            raise SystemExit('score LABELS.bin IMAGE_DIR: the image folder with labels.npy')
+        counts = score_one(path, args.image)
+        accuracy, iou, miou = describe(counts)
+        print(f'accuracy: {accuracy:.2f}% of {counts[0]} labelled pixels')
+        print('IoU: ' + ', '.join(f'{n} {"-" if v is None else f"{v:.3f}"}' for n, v in zip(CLASS_NAMES, iou))
+              + ('' if miou is None else f', mIoU {miou:.3f}'))
+        return
+    images = Path(args.images or '.')
+    runs = sorted(path.glob('*/*-labels.bin'))
+    if not runs:
+        raise SystemExit(f'no KERNEL/IMAGE-labels.bin in {path}')
+    print('| Kernel | Image | Accuracy | IoU cloud | IoU land | IoU sea | mIoU |')
+    print('| --- | --- | --- | --- | --- | --- | --- |')
+    for run in runs:
+        image = run.name[:-len('-labels.bin')]
+        accuracy, iou, miou = describe(score_one(run, images / image))
+        cells = ' | '.join('-' if v is None else f'{v:.3f}' for v in iou)
+        print(f'| `{run.parent.name}` | {image} | {accuracy:.2f}% | {cells} | {"-" if miou is None else f"{miou:.3f}"} |')
 
 
 def main():
@@ -108,7 +175,12 @@ def main():
     p.add_argument('--crop', type=int, nargs=4, metavar=('ROW', 'COL', 'HEIGHT', 'WIDTH'),
                    help='a region only (a full capture is 665 patches)')
     p.add_argument('--rgb', type=int, nargs=3, metavar=('R', 'G', 'B'), help='raw band indices for the picture')
-    prepare(parser.parse_args())
+    p = sub.add_parser('score', help="an OPU board's labels file against the image's labels")
+    p.add_argument('labels', help="cnn_accelerator's labels file, or a benchmark.sh results folder")
+    p.add_argument('image', nargs='?', help='the image folder with labels.npy (for one labels file)')
+    p.add_argument('--images', help='for a results folder: where the image folders are (default: here)')
+    args = parser.parse_args()
+    (prepare if args.command == 'prepare' else score)(args)
     return 0
 
 

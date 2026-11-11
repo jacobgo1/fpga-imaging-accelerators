@@ -17,7 +17,7 @@ Which script is opu-system's and which is ours, step by step: [opu_flow.md](opu_
 | 1 | `scripts/hls.sh K picobob` | Vitis HLS: csim, csynth, export | `export.zip` (the IP and its driver) |
 | 2 | `scripts/opu.sh K picobob`, through opu-system's `vivado/run_tcl_script.sh` (or its steps with the Vivado on PATH, below) | Vivado: `boards/opu/project.tcl`, the same as opu-system's own project scripts: `picozed_project.tcl` (`zedboard_project.tcl`), `opu_base.tcl`, then `boards/opu/add_hls_kernel.tcl`, then `finish_design.tcl` | `sdk/`: `system.xsa`, `bitstream.bit`, the bitstream hash, `utilization.rpt`, `timing.rpt` |
 | 3 | ... through opu-system's `docker/run-petalinux-docker.sh` | PetaLinux: `prepare_pl_firmware.sh` with the xsa and `boards/opu/hls_kernel.dtsi` | `firmware/`: `K.bit.bin`, `K.bit.bin.md5sum`, `K.dtbo` |
-| 4 | ... in the Docker image `fpga-opu-dev` | `classify` (`software/opu/`) for the board's ARM, with the kernel's own HLS driver from `export.zip` | `driver-build/classify` |
+| 4 | ... through cnn-1d's `software/opu/scripts/cross-compile.sh` (Docker `cnn-dev-image`) | `cnn_accelerator` (`software/opu/`, cnn-1d-picobob's program) for the board's ARM, with the kernel's own HLS driver from `export.zip` | `driver/` (what it was built with) |
 | 5 | ... | the tarball | `K_opu.tar.gz` |
 
 Step 1 can be someone else's: put their `export.zip` in `build/K/BOARD/` and run
@@ -27,8 +27,8 @@ The tarball unpacks in `/media/sd-pl` on the board:
 
 ```text
 firmware/K.bit.bin, K.bit.bin.md5sum, K.dtbo     what obip fpga reload and fpgautil load
-K/classify                                       runs the kernel on a capture
-K/process-capture.sh                             classify on /media/sd-pl/CAPTURE, as cnn-1d's
+K/cnn_accelerator                                runs the kernel on a capture
+K/process-capture.sh                             cnn_accelerator on /media/sd-pl/CAPTURE, as cnn-1d's
 K/load.sh                                        loads the firmware over ssh (the lab's boards)
 ```
 
@@ -51,32 +51,36 @@ The overlay (`hls_kernel.dtsi`) makes the kernel a UIO device `hls_kernel`, the 
 `bitstream_hash`, and two maps in the reserved memory CubeDMA uses, `hls_kernel_memory`:
 `cube_map`, 0x9600000 bytes (a whole cube, even 684 x 956 x 120), and `scores_map`, 0x1000000
 bytes (4 int32 a pixel), from 0x20000000 on PicoBoB and 0x10000000 on the ZedBoard. CubeDMA
-must be idle while classify runs. The overlay also says which value the kernel gives each class
+must be idle while cnn_accelerator runs. The overlay also says which value the kernel gives each class
 (`class-cloud = <0>` ...), as cnn-1d's does.
 
-### classify
+### cnn_accelerator
 
-`software/opu/` is cnn-1d's `cnn_accelerator` made generic: the same CMake build (spdlog,
-libconfig, argparse), the same UIO classes, the same devicetree lookup of the class values and
-the same labels file. What differs is the kernel: `make_kernel_header.sh` maps the kernel's own
-HLS driver (`xK.h`, `xK_linux.c`) to shared names, so one program serves every optimized kernel
+`software/opu/` is cnn-1d-picobob's program, with its file names and its scripts:
+
+| File | Compared with cnn-1d-picobob's |
+| --- | --- |
+| `src/uio_memory_device.{h,cpp}`, `cmake/*.cmake`, `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh` | the same, byte for byte |
+| `CMakeLists.txt` | the driver's files are found by name (`xcnn_driver/x*.c`), as each kernel's are named after it |
+| `src/cnn_config.{h,cpp}` | without `--cnn-config` and the rad matrix (`CnnConfig`, `readCnnConfig`, `configIsValid`): these kernels take only the cube |
+| `src/xcnn_device.{h,cpp}` | the kernel's driver through `kernel.h` instead of `XCnn_1d_top_*`; the cube on every input port; `cycles()` |
+| `src/main.cpp` | no rad matrix; the kernel writes 4 int32 a pixel (3 scores, then the class), and the class is what goes to the labels file; logs the kernel's own cycle count |
+| `scripts/process-capture.sh` | the kernel's name from its folder, no `--cnn-config` |
+| `scripts/make_kernel_header.sh`, `load.sh`, `benchmark.sh` | ours |
+
+`make_kernel_header.sh` writes `xcnn_driver/kernel.h`, which maps the kernel's own HLS driver
+(`xK.h`, `xK_linux.c`) to fixed names, so the same program serves every optimized kernel
 (inputs `din0`, `din1`, ..., `dout`, `height`, `width`, and `cycles` if the kernel counts them).
+`opu.sh` puts the kernel's driver in `software/opu/xcnn_driver/` (where cnn-1d keeps its own,
+git ignores it) and runs cnn-1d's `cross-compile.sh`, so one kernel at a time.
 
 ```text
-classify --input binned_cube.bip --capture-config capture_config.ini --output labels.bin
-classify --input cube.npy --output labels.bin [--labels labels.npy] [--scores scores.npy]
+cnn_accelerator --input binned_cube.bip --capture-config capture_config.ini --output labels.bin
 ```
 
-- `--input`: the raw cube, H x W x 120 uint16: HYPSO's `binned_cube.bip` (its size from the
-  capture config: H = `frame_count`, W = `row_count`), or a `cube.npy` from `tools/image.py`;
-- `--output`: the labels, H x W uint8, HYPSO's values: sea 0, land 1, cloud 2;
-- `--labels`: true labels (0 cloud, 1 land, 2 sea, others unlabelled): accuracy and IoU per class;
-- `--scores`: what the kernel wrote, H x W x 4 int32 (3 scores x 2^16, then the class);
-- `--log-level`, `--log-file`: as cnn-1d's.
-
-A cube that does not fit `cube_map` goes in strips of 32-row multiples, with the same answers.
-It prints the times (cube into memory, FPGA, labels to the file, wall clock) and, with
-`--labels`, the accuracy, as the PYNQ notebooks do.
+As cnn-1d's: the cube H x W x 120 uint16 (H = `frame_count`, W = `row_count` in the capture
+config), the labels H x W uint8 in HYPSO's values (sea 0, land 1, cloud 2), `--log-level` and
+`--log-file`. The whole cube must fit `cube_map`, as cnn-1d's must fit its map.
 
 ## Once: before the first build
 
@@ -100,14 +104,17 @@ On the lab server:
    A machine without it uses the `vivado` on PATH (`fpga_env`) the way `run_tcl_script.sh`
    would (the same repoDir substitution and flags); opu-system's `check_vivado.tcl` then
    prints `BD_TCL-109` for a release other than 2023.1, and the build carries on.
-3. **The Docker image for classify** (as cnn-1d's `scripts/setup_docker`):
+3. **cnn-1d's Docker image `cnn-dev-image`**, which `cnn_accelerator` is compiled in. If
+   cnn-1d-picobob is set up on the machine it is already there; otherwise:
 
    ```bash
-   docker build --network=host -t fpga-opu-dev software/opu/docker
+   software/opu/scripts/setup_docker
    ```
 
-   Without it `opu.sh` uses `arm-linux-gnueabihf-g++` and `cmake` on PATH; prefer the image:
-   its Ubuntu 20.04 C library is older than the board's, a newer compiler's may not be.
+   On Fedora (SELinux), let Docker read the folder once:
+   `chcon -R -t container_file_t software/opu`. cnn-1d's `start_docker` uses Docker's default
+   network to fetch spdlog, libconfig and argparse the first time; where that network has no
+   DNS, the build stops at "Could not resolve host: github.com".
 
 opu-system's git is not changed: the build puts its files where cnn-1d's `build-firmware.sh`
 does (`vivado/projects/`, `vivado/tcl-scripts/tmp/`, `petalinux/projects/K_BOARD/`).
@@ -147,29 +154,38 @@ The board is shared: check who is on it first (`ssh zb05 'uptime; who'`).
 K=sp_unet_small_opt_zynq7020
 scp build/$K/zedboard/${K}_opu.tar.gz zb05:/media/sd-pl/
 ssh zb05 "cd /media/sd-pl && tar -xzf ${K}_opu.tar.gz && sh $K/load.sh"
-ssh zb05 "cd /media/sd-pl && $K/classify --input aegean_unet/cube.npy --labels aegean_unet/labels.npy --output labels.bin --scores scores.npy"
+ssh zb05 "cd /media/sd-pl && $K/process-capture.sh aegean_unet"
+scp zb05:/media/sd-pl/aegean_unet/$K-labels.bin .
+python3 tools/image.py score $K-labels.bin aegean_unet
 ```
 
 A good `load.sh` prints `K.bit.bin: OK` (the md5sum), `FPGA: operating` and
 `K loaded: /sys/class/uio/uioN`. It stays loaded until the next reboot (`ssh zb05 reboot`
 gives the board back its own design).
 
-The test image: `cube.npy` (uint16) and `labels.npy` from `tools/image.py prepare` in a
-folder on the board. An older float32 `cube.npy` is refused: make a uint16 copy of it with
-`numpy` first (`np.save('cube_u16.npy', c.astype(np.uint16))`, its values are whole counts).
+The test image: a folder from `tools/image.py prepare` in `/media/sd-pl` on the board, with
+`binned_cube.bip` and `capture_config.ini` (the same as a capture's); `process-capture.sh` runs on
+it as on a capture. The accuracy is counted on the PC, against the folder's `labels.npy`, by
+`tools/image.py score`. An image made before `prepare` wrote `binned_cube.bip`: run `prepare`
+again.
 
 ### Every kernel on every image
 
-`software/opu/benchmark.sh`, the counterpart of `benchmark.ipynb`: copy it and each kernel's
-tarball to `/media/sd-pl/`, with each image's folder (`cube.npy`, `labels.npy`), then as root
-`sh benchmark.sh` (`KERNELS=...` and `IMAGES=...` to choose). It loads each kernel with its
-`load.sh`, runs it on each image and writes `benchmark_results/benchmark_DATE.md`, with a
-`.csv` and a `.log` of everything the programs printed.
+`software/opu/scripts/benchmark.sh`: copy it and each kernel's tarball to `/media/sd-pl/`, with
+each image's folder (`binned_cube.bip`, `capture_config.ini`), then as root `sh benchmark.sh`
+(`KERNELS=...` and `IMAGES=...` to choose). It loads each kernel with its `load.sh`, runs it on
+each image and writes `benchmark_results/DATE/`: the times (`benchmark.md`, `.csv`), everything
+the programs printed (`.log`), and each run's labels (`KERNEL/IMAGE-labels.bin`). Copy that
+folder to the PC and score them all against the images' labels:
 
-## After changing classify
+```bash
+python3 tools/image.py score benchmark_results/DATE --images DIR_WITH_THE_IMAGE_FOLDERS
+```
 
-`fpga_package K BOARD` (`scripts/opu.sh K BOARD --driver`) builds classify again and packs the
-tarball, from the firmware already built.
+## After changing cnn_accelerator
+
+`fpga_package K BOARD` (`scripts/opu.sh K BOARD --driver`) builds cnn_accelerator again and packs
+the tarball, from the firmware already built.
 
 ## When something goes wrong
 
@@ -183,7 +199,8 @@ tarball, from the firmware already built.
 | `the input device is not a TTY` | `run-petalinux-docker.sh` runs `docker run -it` | run the build in a terminal, not through a pipe or `nohup` |
 | `no Docker image petalinux:2023.1` | opu-system's PetaLinux is not set up | `scripts/get-petalinux.sh fpgaws` |
 | `the routed design fails timing` | the kernel does not meet the clock it was built for | `build/K/BOARD/sdk/timing.rpt`; build the kernel for a slower clock (`--clock-ns`) |
-| `nothing to build classify with` | no `fpga-opu-dev` image and no ARM compiler | the `docker build` above, then `fpga_package K BOARD` |
-| `Initializing K (UIO hls_kernel) failed: Device not found` | the design is not loaded (a reboot, or another design) | `load.sh` / `obip fpga reload` again |
+| `no Docker image cnn-dev-image` | cnn-1d's image is not on the machine | `software/opu/scripts/setup_docker`, then `fpga_package K BOARD` |
+| `Could not resolve host: github.com` while building cnn_accelerator | Docker's default network has no DNS on this machine | fix Docker's DNS (e.g. `"dns"` in `/etc/docker/daemon.json`), or build where it works |
+| `K initialize failed: Device not found` | the design is not loaded (a reboot, or another design) | `load.sh` / `obip fpga reload` again |
 | `md5sum: ... FAILED` | the `.bit.bin` on the board is not the one built | copy the tarball again |
-| `the reserved memory is too small for 32 rows` | a very wide cube | it does not fit the maps in `hls_kernel.dtsi` |
+| `Buffer size ... exceeds reserved memory size` | the cube or its scores do not fit the maps in `hls_kernel.dtsi` | a smaller capture, or bigger maps |

@@ -1,85 +1,178 @@
-// classify: runs an HLS kernel on a capture on the OPU system's PetaLinux (PicoBoB,
-// the lab's ZedBoards), as cnn-1d-picobob's cnn_accelerator runs the 1D CNN. Every
-// optimized kernel takes the raw cube and gives the same scores, so one program serves
-// all; scripts/opu.sh builds it with the kernel's own HLS driver.
-//
-//   classify --input binned_cube.bip --capture-config capture_config.ini --output labels.bin
-//   classify --input cube.npy --output labels.bin [--labels labels.npy] [--scores scores.npy]
-//
-// The kernel's registers come from UIO (hls_kernel), its buffers from the reserved
-// memory (hls_kernel_memory: the cube map and the scores map, both in the overlay).
-// UIO maps them uncached, so the kernel reads what the ARM wrote and the ARM what the
-// kernel wrote, without cache flushes.
-#include "capture_config.h"
-#include "classify.h"
-#include "kernel_device.h"
+#include "cnn_config.h"
 #include "uio_memory_device.h"
+#include "xcnn_device.h"
 #include <chrono>
-#include <cstdio>
-#include <iostream>
+#include <filesystem>
+#include <fstream>
 #include <spdlog/spdlog.h>
+#include <thread>
 
-std::string kernel_uio_name = "hls_kernel";
-std::string kernel_compatible = "hls-kernel-classes";
+using dn_t = u16;
+using output_t = u8;
+// The kernel writes 4 int32 a pixel: its 3 scores, then the class
+using score_t = int32_t;
+constexpr size_t SCORES_OUT = 4;
+
+std::string accelerator_name = "hls_kernel";
+std::string accelerator_compatible = "hls-kernel-classes";
 std::string memory_name = "hls_kernel_memory";
-const auto max_runtime = std::chrono::seconds(60);
 
-void kernel_main(ProgramConfig &program_config) {
-  long height = 0, width = 0;
-  if (program_config.capture_config_file) {
-    auto capture_config = readCaptureConfig(*program_config.capture_config_file);
-    spdlog::debug("Capture config loaded: rows={}, frames={}, aoi_y={}, "
-                  "exposure={}",
-                  capture_config.row_count, capture_config.frame_count,
-                  capture_config.aoi_y, capture_config.exposure);
-    height = capture_config.frame_count;
-    width = capture_config.row_count;
+void checkBuffer(size_t required_size, UioMap &memory) {
+  if (required_size > memory.maxSize()) {
+    throw std::runtime_error("Buffer size " + std::to_string(required_size) +
+                             " exceeds reserved memory size " +
+                             std::to_string(memory.maxSize()) + " for map " +
+                             memory.name());
   }
-  Cube cube = openCube(program_config.input_file, height, width);
-  spdlog::info("Cube {}: {} x {} pixels", program_config.input_file.string(),
-               cube.height, cube.width);
+}
 
-  UioDevice memory(memory_name);
-  if (memory.getNumMaps() < 2) {
-    throw std::runtime_error("Expected at least 2 maps for " + memory_name +
-                             " but found " +
-                             std::to_string(memory.getNumMaps()));
+void checkFile(size_t required_size, const std::filesystem::path &path) {
+  auto file_size = std::filesystem::file_size(path);
+  if (file_size < required_size) {
+    throw std::runtime_error("Trying to read " + std::to_string(required_size) +
+                             " bytes from " + path.string() +
+                             ", but it only contains " +
+                             std::to_string(file_size) + " bytes");
   }
-  UioMap cube_memory = memory.getMap(0);
-  UioMap scores_memory = memory.getMap(1);
-  cube_memory.mapMemory(cube_memory.maxSize());
-  scores_memory.mapMemory(scores_memory.maxSize());
+}
 
-  KernelDevice kernel(kernel_uio_name, kernel_compatible);
-  if (!kernel.isIdle()) {
-    throw std::runtime_error("Kernel not idle: is another program using it?");
+void readBipFile(std::filesystem::path bip_path, CaptureConfig &config,
+                 UioMap &bip_memory) {
+  auto n_bytes =
+      (config.row_count * config.frame_count * BANDS_RAW) * sizeof(dn_t);
+  checkBuffer(n_bytes, bip_memory);
+  checkFile(n_bytes, bip_path);
+
+  spdlog::debug("Loading {} bytes of BIP data from {}", n_bytes,
+                bip_path.string());
+  std::ifstream bip_file(bip_path, std::ios::binary);
+  if (!bip_file) {
+    throw std::runtime_error("Failed to read BIP file: " + bip_path.string());
+  }
+  bip_memory.mapMemory(n_bytes);
+  bip_file.read(reinterpret_cast<char *>(bip_memory.data()), n_bytes);
+  auto bytes_read = bip_file.gcount();
+  bip_memory.unmapMemory();
+  bip_file.close();
+  if (bytes_read != static_cast<std::streamsize>(n_bytes)) {
+    bip_memory.unmapMemory();
+    throw std::runtime_error("Failed to read expected amount of data from BIP "
+                             "file at offset 0: expected " +
+                             std::to_string(n_bytes) + " but read " +
+                             std::to_string(bytes_read));
+  }
+}
+
+void writeOutputFile(std::filesystem::path output_path, CaptureConfig &config,
+                     UioMap &output_memory, LabelValues label_values) {
+  auto n_pixels = config.row_count * config.frame_count;
+  auto n_bytes = n_pixels * sizeof(output_t);
+  auto n_score_bytes = n_pixels * SCORES_OUT * sizeof(score_t);
+  checkBuffer(n_score_bytes, output_memory);
+
+  spdlog::debug("Writing {} bytes of output data to {}", n_bytes,
+                output_path.string());
+  std::ofstream output_file(output_path, std::ios::binary);
+  if (!output_file) {
+    throw std::runtime_error(
+        "Failed to write output file: " + output_path.string() + ": " +
+        std::string(strerror(errno)));
+  }
+  output_memory.mapMemory(n_score_bytes);
+
+  // Keep each pixel's class, the last of its scores
+  auto scores = reinterpret_cast<const score_t *>(output_memory.data());
+  std::vector<output_t> labels(n_pixels);
+  for (size_t i = 0; i < n_pixels; i++) {
+    labels[i] = static_cast<output_t>(scores[i * SCORES_OUT + SCORES_OUT - 1]);
+  }
+  if (!(label_values == default_label_values)) {
+    // The values of our classes do not match those that we want. Translate
+    // before saving t o file
+    for (size_t i = 0; i < n_bytes; i++) {
+      uint8_t labelval = labels[i];
+      if (labelval == label_values.sea) {
+        labels[i] = default_label_values.sea;
+      } else if (labelval == label_values.land) {
+        labels[i] = default_label_values.land;
+      } else {
+        labels[i] = default_label_values.cloud;
+      }
+    }
+  }
+  output_file.write(reinterpret_cast<const char *>(labels.data()), n_bytes);
+  output_memory.unmapMemory();
+  if (!output_file) {
+    throw std::runtime_error(
+        "Failed to write output file: " + output_path.string() + ": " +
+        std::string(strerror(errno)));
+  }
+  output_file.close();
+}
+
+void cnn_main(ProgramConfig &program_config) {
+
+  std::chrono::steady_clock::time_point start_time;
+  CaptureConfig capture_config;
+  AddressConfig addresses;
+
+  start_time = std::chrono::steady_clock::now();
+  capture_config = readCaptureConfig(program_config.capture_config_file);
+  spdlog::debug("Configuration loaded: rows={}, frames={}, aoi_y={}, "
+                "exposure={}",
+                capture_config.row_count, capture_config.frame_count,
+                capture_config.aoi_y, capture_config.exposure);
+
+  UioDevice cnn_1d_memory(memory_name);
+  if (cnn_1d_memory.getNumMaps() < 2) {
+    throw std::runtime_error(
+        "Expected at least 2 maps for " + memory_name + " but found " +
+        std::to_string(cnn_1d_memory.getNumMaps()));
+  }
+  UioMap dn_memory = cnn_1d_memory.getMap(0);
+  UioMap output_memory = cnn_1d_memory.getMap(1);
+
+  start_time = std::chrono::steady_clock::now();
+  addresses.dn_address = dn_memory.physicalAddress();
+  readBipFile(program_config.bip_file, capture_config, dn_memory);
+  auto data_load_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start_time)
+                            .count();
+  spdlog::info("Input data loaded in {} ms", data_load_time);
+
+  start_time = std::chrono::steady_clock::now();
+  addresses.output_address = output_memory.physicalAddress();
+  CnnDevice cnn(capture_config, addresses, accelerator_name,
+                accelerator_compatible);
+
+  if (!cnn.isReady()) {
+    throw std::runtime_error("CNN device not ready to start");
   }
 
-  Outputs outputs;
-  outputs.labels = program_config.output_file;
-  outputs.scores = program_config.scores_file;
-  outputs.truth = program_config.truth_file;
-  outputs.kernel_values = kernel.getLabelValues();
-  auto start = [&](uint64_t cube_address, uint64_t scores_address,
-                   uint32_t h, uint32_t w) {
-    return kernel.run(cube_address, scores_address, h, w, max_runtime);
-  };
-  Result result = classify(
-      cube,
-      {reinterpret_cast<uint8_t *>(cube_memory.data()),
-       cube_memory.physicalAddress(), cube_memory.size()},
-      {reinterpret_cast<uint8_t *>(scores_memory.data()),
-       scores_memory.physicalAddress(), scores_memory.size()},
-      start, outputs);
-  result.has_cycles = kernelHasCycles();
-  spdlog::info("Input data loaded in {:.0f} ms", 1e3 * result.load_s);
-  spdlog::info("Kernel finished in {:.1f} ms, {} start(s)", 1e3 * result.fpga_s,
-               result.starts);
-  spdlog::info("Labels written to {} in {:.0f} ms",
-               program_config.output_file.string(), 1e3 * result.save_s);
-  std::printf("kernel:             %s, built for %.3f MHz\n", KERNEL_NAME,
-              static_cast<double>(KERNEL_CLOCK_MHZ));
-  printResult(result, outputs, std::cout);
+  const auto max_runtime = std::chrono::seconds(30);
+  auto cnn_start_time = std::chrono::steady_clock::now();
+  cnn.start();
+  do {
+    if (std::chrono::steady_clock::now() - start_time > max_runtime) {
+      throw std::runtime_error("Timeout waiting for device to finish");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  } while (!cnn.isIdle());
+  auto cnn_runtime = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - cnn_start_time)
+                         .count();
+  spdlog::info("CNN finished in {} ms", cnn_runtime);
+  if (kernelHasCycles()) {
+    spdlog::info("CNN's own count: {} cycles", cnn.cycles());
+  }
+  writeOutputFile(program_config.output_file, capture_config, output_memory,
+                  cnn.getLabelValues());
+
+  auto runtime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start_time)
+                        .count();
+  spdlog::info("CNN processing completed and output written in {} ms",
+               runtime_ms);
 }
 
 int main(int argc, char *argv[]) {
@@ -93,17 +186,15 @@ int main(int argc, char *argv[]) {
   }
 
   try {
-    kernel_main(program_config);
+    cnn_main(program_config);
   } catch (const std::exception &e) {
     spdlog::error("Error: {}", e.what());
-    std::fprintf(stderr, "classify: %s\n", e.what());
     return 1;
   }
 
-  const auto total = std::chrono::duration<double>(
-                         std::chrono::steady_clock::now() - program_start)
-                         .count();
-  spdlog::info("Total runtime {:.0f} ms", 1e3 * total);
-  std::printf("wall clock:         %8.3f s\n", total);
+  const auto total_duration_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - program_start);
+  spdlog::info("Total runtime {} ms", total_duration_ms.count());
   return 0;
 }

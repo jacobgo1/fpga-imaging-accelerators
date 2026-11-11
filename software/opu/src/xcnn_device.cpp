@@ -1,9 +1,11 @@
-#include "kernel_device.h"
+#include "xcnn_device.h"
 #include <byteswap.h>
-#include <filesystem>
 #include <fstream>
 #include <spdlog/spdlog.h>
-#include <stdexcept>
+
+template <typename Tin, typename Tout> Tout direct_conversion(Tin input) {
+  return reinterpret_cast<Tout &>(input);
+}
 
 /**
  * Recursively look through device-tree for file called "compatible" and return
@@ -61,7 +63,7 @@ int get_class_value(const std::filesystem::path &node_path,
   return bswap_32(result);
 }
 
-const char *kernel_strerror(int errcode) {
+const char *xcnn_strerror(int errcode) {
   switch (errcode) {
   case XST_SUCCESS:
     return "Success";
@@ -76,59 +78,51 @@ const char *kernel_strerror(int errcode) {
   }
 }
 
-KernelDevice::KernelDevice(std::string uio_name, std::string compatible) {
+CnnDevice::CnnDevice(CaptureConfig &capture_config, AddressConfig &addresses,
+                     std::string uio_name, std::string compatible) {
   int ret = kernelInitialize(&device, uio_name.c_str());
   if (ret != XST_SUCCESS) {
-    throw std::runtime_error("Initializing " + std::string(KERNEL_NAME) +
-                             " (UIO " + uio_name + ") failed: " +
-                             std::string(kernel_strerror(ret)) +
-                             ". Is its bitstream and overlay loaded?");
+    throw std::runtime_error(std::string(KERNEL_NAME) + " initialize failed: " +
+                             std::string(xcnn_strerror(ret)));
   }
+  // Every input port of the kernel reads the cube; its output is the scores
+  kernelSetInputs(&device, addresses.dn_address);
+  kernelSetOutput(&device, addresses.output_address);
+  kernelSetSize(&device, capture_config.frame_count, capture_config.row_count);
 
-  auto node = find_compatible_node(compatible);
-  auto sea_class = node.empty() ? -1 : get_class_value(node, "sea");
-  auto land_class = node.empty() ? -1 : get_class_value(node, "land");
-  auto cloud_class = node.empty() ? -1 : get_class_value(node, "cloud");
+  auto cnn_node = find_compatible_node(compatible);
+  auto sea_class = get_class_value(cnn_node, "sea");
+  auto land_class = get_class_value(cnn_node, "land");
+  auto cloud_class = get_class_value(cnn_node, "cloud");
   if (sea_class < 0 || land_class < 0 || cloud_class < 0) {
-    spdlog::warn("Could not read class values from kernel node {}, using the "
-                 "kernel's (cloud 0, land 1, sea 2)",
-                 node.string());
-    label_values = kernel_label_values;
+    spdlog::warn("Could not read class values from CNN node {}, using default "
+                 "label values",
+                 cnn_node.string());
+    label_values = default_label_values;
   } else {
     label_values = {static_cast<uint8_t>(sea_class),
                     static_cast<uint8_t>(land_class),
                     static_cast<uint8_t>(cloud_class)};
   }
-  spdlog::info("KernelDevice {} initialized, built for {} MHz. Its classes "
+
+  spdlog::info("CnnDevice initialized for {} (built for {} MHz): width={}, "
+               "height={}, dn_address=0x{:x}, output_address=0x{:x}. Labels "
                "are: sea={}, land={}, cloud={}",
-               KERNEL_NAME, KERNEL_CLOCK_MHZ, label_values.sea,
-               label_values.land, label_values.cloud);
+               KERNEL_NAME, KERNEL_CLOCK_MHZ, capture_config.row_count,
+               capture_config.frame_count, addresses.dn_address,
+               addresses.output_address, label_values.sea, label_values.land,
+               label_values.cloud);
 }
 
-KernelDevice::~KernelDevice() { kernelRelease(&device); }
+CnnDevice::~CnnDevice() { kernelRelease(&device); }
 
-uint64_t KernelDevice::run(uint64_t cube_address, uint64_t scores_address,
-                           uint32_t height, uint32_t width,
-                           std::chrono::seconds timeout) {
-  if (!isIdle()) {
-    throw std::runtime_error("The kernel is not idle");
-  }
-  kernelSetInputs(&device, cube_address); // every input port reads the cube
-  kernelSetOutput(&device, scores_address);
-  kernelSetSize(&device, height, width);
-  spdlog::debug("Start: {} x {} pixels, cube at 0x{:x}, scores at 0x{:x}",
-                height, width, cube_address, scores_address);
-  const auto start = std::chrono::steady_clock::now();
-  kernelStart(&device);
-  // Polled without sleeping: a start takes milliseconds, a sleep would add to it.
-  while (!kernelIsDone(&device)) {
-    if (std::chrono::steady_clock::now() - start > timeout) {
-      throw std::runtime_error("Timeout waiting for the kernel to finish");
-    }
-  }
-  return kernelCycles(&device);
-}
+void CnnDevice::start() { kernelStart(&device); }
 
-bool KernelDevice::isReady() { return kernelIsReady(&device); }
+bool CnnDevice::isReady() { return kernelIsReady(&device); }
 
-bool KernelDevice::isIdle() { return kernelIsIdle(&device); }
+bool CnnDevice::isDone() { return kernelIsDone(&device); }
+
+bool CnnDevice::isIdle() { return kernelIsIdle(&device); }
+
+// The kernel's own count of its cycles in the last run, 0 if it keeps none
+uint64_t CnnDevice::cycles() { return kernelCycles(&device); }

@@ -28,7 +28,7 @@ Tab completes both. Everything for KERNEL on BOARD goes to build/KERNEL/BOARD/.
   fpga_cosim KERNEL [BOARD]     the testbench driving the RTL (checks it, and its report
                                 has the real cycle count)              scripts/hls.sh KERNEL BOARD cosim
   fpga_package KERNEL [BOARD]   the package again without rebuilding (after editing a
-                                notebook or classify)                  scripts/pynq.sh ... --package
+                                notebook or cnn_accelerator)           scripts/pynq.sh ... --package
                                                                        / scripts/opu.sh ... --driver
   fpga_zip DIR                  DIR -> DIR.zip, an image to upload once, in the folder above
                                 the designs' folders (or next to one notebook)
