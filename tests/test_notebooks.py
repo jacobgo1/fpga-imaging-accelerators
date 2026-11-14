@@ -159,8 +159,10 @@ class NotebookTests(unittest.TestCase):
                 self.assertEqual(self.image.main(), 0)
         finally:
             sys.argv = saved
-        # The same cube as a capture stores it, for the OPU boards' cnn_accelerator.
-        self.assertEqual((image / 'binned_cube.bip').read_bytes(), self.cube.tobytes())
+        # The same cube as a capture stores it (each pixel's bands reversed), for the OPU
+        # boards' cnn_accelerator.
+        self.assertEqual((image / 'binned_cube.bip').read_bytes(),
+                         np.ascontiguousarray(self.cube[..., ::-1]).tobytes())
         self.assertEqual((image / 'capture_config.ini').read_text(),
                          f'frame_count = {h}\nrow_count = {w}\naoi_y = 0\nexposure = 0.0\n')
         with zipfile.ZipFile(board / 'aegean_unet.zip', 'w') as z:

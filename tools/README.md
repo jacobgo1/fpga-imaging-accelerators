@@ -79,7 +79,8 @@ test_specpw_unet) skip.
 ```text
 image.py                  prepare: capture -> cube.npy (uint16 raw counts), labels.npy and
                           meta.json (the picture's bands); binned_cube.bip and
-                          capture_config.ini, the same cube as a capture, for the OPU boards.
+                          capture_config.ini, the same cube as a capture (its bands in the
+                          capture's order, the reverse of the .nc's), for the OPU boards.
                           score: an OPU board's labels file (or benchmark.sh's results)
                           against labels.npy: accuracy and IoU.
 ```

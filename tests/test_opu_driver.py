@@ -209,7 +209,8 @@ class AcceleratorTests(unittest.TestCase):
         want = model.with_class(model.classify_fixed(cube))
         rng = np.random.default_rng(6)
         labels = np.where(rng.random((h, w)) < 0.8, want[..., 3], rng.integers(0, 4, (h, w)))
-        cube.tofile(folder / 'binned_cube.bip')
+        # As HYPSO stores it: each pixel's bands in the reverse order to the .nc's
+        np.ascontiguousarray(cube[..., ::-1]).tofile(folder / 'binned_cube.bip')
         (folder / 'capture_config.ini').write_text(f'frame_count = {h}\nexposure = 47.32\nrow_count = {w}\naoi_y = 62\n')
         np.save(folder / 'labels.npy', labels)
         return cube, labels, want

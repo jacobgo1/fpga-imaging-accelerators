@@ -1,7 +1,9 @@
 #include "cnn_config.h"
 #include "uio_memory_device.h"
 #include "xcnn_device.h"
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <spdlog/spdlog.h>
@@ -36,10 +38,13 @@ void checkFile(size_t required_size, const std::filesystem::path &path) {
   }
 }
 
+// Pixels read, band-reversed and copied into the reserved memory at a time
+constexpr size_t CHUNK_PIXELS = 4096;
+
 void readBipFile(std::filesystem::path bip_path, CaptureConfig &config,
                  UioMap &bip_memory) {
-  auto n_bytes =
-      (config.row_count * config.frame_count * BANDS_RAW) * sizeof(dn_t);
+  auto n_pixels = config.row_count * config.frame_count;
+  auto n_bytes = (n_pixels * BANDS_RAW) * sizeof(dn_t);
   checkBuffer(n_bytes, bip_memory);
   checkFile(n_bytes, bip_path);
 
@@ -50,17 +55,41 @@ void readBipFile(std::filesystem::path bip_path, CaptureConfig &config,
     throw std::runtime_error("Failed to read BIP file: " + bip_path.string());
   }
   bip_memory.mapMemory(n_bytes);
-  bip_file.read(reinterpret_cast<char *>(bip_memory.data()), n_bytes);
-  auto bytes_read = bip_file.gcount();
+  // HYPSO stores each pixel's bands in the reverse order to the L1a .nc cubes
+  // the networks were trained on (.nc = .bip with the bands reversed, exactly):
+  // reverse them on the way in. In plain memory, then copied over in one go:
+  // the reserved memory is slow for small reads and writes.
+  auto dst = reinterpret_cast<dn_t *>(bip_memory.data());
+  std::vector<dn_t> chunk(CHUNK_PIXELS * BANDS_RAW);
+  std::chrono::steady_clock::duration reverse_time{};
+  size_t done = 0;
+  while (done < n_pixels) {
+    auto n = std::min(CHUNK_PIXELS, n_pixels - done);
+    auto chunk_bytes = n * BANDS_RAW * sizeof(dn_t);
+    bip_file.read(reinterpret_cast<char *>(chunk.data()), chunk_bytes);
+    if (bip_file.gcount() != static_cast<std::streamsize>(chunk_bytes)) {
+      bip_memory.unmapMemory();
+      throw std::runtime_error(
+          "Failed to read expected amount of data from BIP file at offset " +
+          std::to_string(done * BANDS_RAW * sizeof(dn_t)) + ": expected " +
+          std::to_string(chunk_bytes) + " but read " +
+          std::to_string(bip_file.gcount()));
+    }
+    auto t = std::chrono::steady_clock::now();
+    for (size_t p = 0; p < n; p++) {
+      std::reverse(chunk.begin() + p * BANDS_RAW,
+                   chunk.begin() + (p + 1) * BANDS_RAW);
+    }
+    reverse_time += std::chrono::steady_clock::now() - t;
+    std::memcpy(dst + done * BANDS_RAW, chunk.data(), chunk_bytes);
+    done += n;
+  }
   bip_memory.unmapMemory();
   bip_file.close();
-  if (bytes_read != static_cast<std::streamsize>(n_bytes)) {
-    bip_memory.unmapMemory();
-    throw std::runtime_error("Failed to read expected amount of data from BIP "
-                             "file at offset 0: expected " +
-                             std::to_string(n_bytes) + " but read " +
-                             std::to_string(bytes_read));
-  }
+  spdlog::debug(
+      "Bands reversed in {} ms",
+      std::chrono::duration_cast<std::chrono::milliseconds>(reverse_time)
+          .count());
 }
 
 void writeOutputFile(std::filesystem::path output_path, CaptureConfig &config,

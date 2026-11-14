@@ -98,7 +98,9 @@ def prepare(args):
     np.save(out / 'cube.npy', cube)
     if cube.dtype == np.uint16:
         # As a capture is stored, frame by frame (the cube's rows), each pixel's bands together
-        cube.tofile(out / 'binned_cube.bip')
+        # and in the reverse order to the .nc's (the .nc is the raw .bip with the bands reversed;
+        # cnn_accelerator reverses them back)
+        np.ascontiguousarray(cube[..., ::-1]).tofile(out / 'binned_cube.bip')
         (out / 'capture_config.ini').write_text(
             f'frame_count = {cube.shape[0]}\nrow_count = {cube.shape[1]}\naoi_y = 0\nexposure = 0.0\n')
     else:

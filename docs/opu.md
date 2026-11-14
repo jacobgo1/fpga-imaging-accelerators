@@ -64,7 +64,7 @@ must be idle while cnn_accelerator runs. The overlay also says which value the k
 | `CMakeLists.txt` | the driver's files are found by name (`xcnn_driver/x*.c`), as each kernel's are named after it |
 | `src/cnn_config.{h,cpp}` | without `--cnn-config` and the rad matrix (`CnnConfig`, `readCnnConfig`, `configIsValid`): these kernels take only the cube |
 | `src/xcnn_device.{h,cpp}` | the kernel's driver through `kernel.h` instead of `XCnn_1d_top_*`; the cube on every input port; `cycles()` |
-| `src/main.cpp` | no rad matrix; the kernel writes 4 int32 a pixel (3 scores, then the class), and the class is what goes to the labels file; logs the kernel's own cycle count |
+| `src/main.cpp` | no rad matrix; each pixel's 120 bands reversed while the cube is loaded (see below); the kernel writes 4 int32 a pixel (3 scores, then the class), and the class is what goes to the labels file; logs the kernel's own cycle count |
 | `scripts/process-capture.sh` | the kernel's name from its folder, no `--cnn-config` |
 | `scripts/make_kernel_header.sh`, `load.sh`, `benchmark.sh` | ours |
 
@@ -169,6 +169,14 @@ The test image: a folder from `tools/image.py prepare` in `/media/sd-pl` on the 
 it as on a capture. The accuracy is counted on the PC, against the folder's `labels.npy`, by
 `tools/image.py score`. An image made before `prepare` wrote `binned_cube.bip`: run `prepare`
 again.
+
+**The band order.** A capture's `binned_cube.bip` (on the OPU, and the data server's `CAPTURE.bip`)
+has each pixel's 120 bands in the reverse order to `products/dn` in its `-l1a.nc`: the `.nc` is the
+`.bip` with the bands reversed, value for value (checked on 9 captures, 2025-2026, both sizes). The
+networks were trained on the `.nc` order, so `cnn_accelerator` reverses every pixel's bands while
+loading the cube (the log's `Bands reversed in N ms`), and `prepare` writes `binned_cube.bip` in
+the capture's order. `cube.npy`, for the PYNQ notebooks, stays in the `.nc` order. An image made by
+`prepare` before 2026-11-14 has its `binned_cube.bip` in the `.nc` order: run `prepare` again.
 
 ### The labels as a picture
 

@@ -725,3 +725,10 @@ Routed, kernel alone (without the interconnects); by process in
   and run by `classify` on a capture's `binned_cube.bip` (598 x 1092, no labels): 180.7 ms, 27 168
   cycles a patch at 100.0 MHz (predicted 22 194); the cube from the SD card into memory 6.7 s, 7.1 s
   in all. Both with the earlier flow (main.py, classify.c).
+- 2026-11-14: `sp_unet_small_opt_u8_zynq7030` on the HYPSO-2 flatsat with cnn_accelerator, on
+  balticAlgae_2026-08-25 (598 x 1092): 180.7 ms, 18 066 698 cycles at 100 MHz (27 168 a patch);
+  7.30 s in all, 6.8 s of it the cube off the SD card. No pixel came out sea: a capture's `.bip`
+  stores each pixel's bands in the reverse order to the `.nc` cubes every model was trained and
+  tested on. The bit-exact model on the raw cube gives the board's labels 100 %; with the bands
+  reversed, 24.8 % sea and 94.4 % the same as the OPU's cnn-1d. cnn_accelerator now reverses the
+  bands on load (every kernel, no rebuild of the bitstream); not yet measured on the flatsat.

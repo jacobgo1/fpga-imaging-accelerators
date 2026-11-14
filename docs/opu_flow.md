@@ -147,7 +147,7 @@ after them):
 | `CMakeLists.txt` | changed: the driver's files by pattern | The build. |
 | `src/cnn_config.{h,cpp}` | changed: no `--cnn-config`, no rad matrix | The options, the capture config. |
 | `src/xcnn_device.{h,cpp}` | changed: the driver through `kernel.h`; `cycles()` | Starts the kernel; the class values from the devicetree. |
-| `src/main.cpp` | changed: no rad matrix; the class out of the kernel's scores; the kernel's cycle count logged | Cube into `cube_map`, kernel, labels file. |
+| `src/main.cpp` | changed: no rad matrix; each pixel's bands reversed on the way in (a capture stores them in the reverse order to the .nc cubes the networks were trained on); the class out of the kernel's scores; the kernel's cycle count logged | Cube into `cube_map`, kernel, labels file. |
 | `scripts/process-capture.sh` | changed: the kernel's name from its folder, no `--cnn-config` | One capture in `/media/sd-pl/CAPTURE`. |
 | `scripts/make_kernel_header.sh` | ours | Writes `xcnn_driver/kernel.h`: this kernel's own HLS driver functions (`XK_Set_din0`, `XK_Start`, ...) under fixed names, so the same program serves every kernel. |
 
