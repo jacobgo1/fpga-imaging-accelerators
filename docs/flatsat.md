@@ -91,6 +91,12 @@ fpga_build sp_unet_small_opt_u8_zynq7030 picobob
 Only cnn_accelerator changed: `fpga_package sp_unet_small_opt_u8_zynq7030 picobob`. The result is
 `build/sp_unet_small_opt_u8_zynq7030/picobob/sp_unet_small_opt_u8_zynq7030_opu.tar.gz`.
 
+`fpga_package` needs the build in a dated run (`build/K/picobob/DATE_TIME/`). The
+`sp_unet_small_opt_u8_zynq7030` picobob build of 2026-11-11 is not: its files, `export.zip`
+among them, are straight in `picobob/`, and `fpga_package` would move `export.zip` into a new,
+empty run and stop for want of the firmware. Its package was remade by hand on 2026-11-14,
+with the band fix (tarball md5 `782545f1...`), and is on ws2 already: for it, start at step 3.
+
 ## 2. Copy it to ws2, from the lab server
 
 Still on the server, in the same folder (`ws2` is in the server's `~/.ssh/config`; it asks for
@@ -136,11 +142,7 @@ shell remote timeout 12 300
 ```
 
 Repeat `csp ping 12` until it answers (a minute or two). If it never does, check that the EPS
-took the command: `shell remote oneshot 4 3 hkout`. To watch the OPU boot, in a second `ws2`
-terminal: `picocom -b 115200 /dev/ttyUSB0` (`sudo killall picocom` if it says busy). That is
-the OPU's serial console (a USB cable from the OPU to ws2, 115 200 baud): everything it
-prints, live, also before it answers on CAN. Start it before powering on to see the boot;
-keep it open during the run. Quit with **Ctrl-A, then Ctrl-X** (Ctrl-C goes to the OPU).
+took the command: `shell remote oneshot 4 3 hkout`.
 
 What the three commands do:
 
@@ -153,6 +155,26 @@ What the three commands do:
   Sent too early it fails (`failed: 71 (Protocol error)`) and the limit stays 10 s: on
   2026-11-13 that is what happened, and the run in step 6 stopped after 13 s with no labels.
   `shell remote timeout 12` (no number) prints the value now in force.
+
+### The live log: the OPU's serial console
+
+Everything the OPU prints, as it prints it: the boot, opu-services, errors from a run. It comes
+over a USB cable from the OPU to ws2, not over CAN, so it works before the OPU answers on the
+bus and while its remote shell is busy. In a **second terminal on ws2** (a second SSH login, or
+a second tmux window: Ctrl-B, then C; Ctrl-B, then a number to switch), before powering on:
+
+```sh
+picocom -b 115200 /dev/ttyUSB0
+```
+
+- `Terminal ready` and then nothing until the OPU is on: that is right.
+- It says the device is busy: someone left a picocom open.
+  `sudo killall picocom`, then the command again.
+- Quit with **Ctrl-A, then Ctrl-X**. Ctrl-C goes to the OPU, not to picocom.
+- Keep it open during the run; close it at the end (step 9), or the next one finds it busy.
+
+The log of a run itself (`cnn_accelerator`'s times) is not here but in a file on the OPU,
+read with `cat` (step 6).
 
 ## 4. Upload and unpack
 
@@ -300,11 +322,20 @@ own 1D CNN writes `cnn-1d-labels.bin`) and its log to `/media/sd-pl/hsi1/logs/`:
 shell remote oneshot 12 10 cat /media/sd-pl/hsi1/logs/sp_unet_small_opt_u8_zynq7030.log
 ```
 
+What a good log has, in order:
+
+- `Bands reversed in N ms` (`process-capture.sh` logs at debug level, so it is there): the
+  reversal described above. A package without it (before 2026-11-14) labels no pixel as sea: see "When something
+  goes wrong".
+- `Input data loaded in ... ms`: the cube off the SD card, the reversal included.
+- `CNN finished in ... ms` and `CNN's own count: ... cycles`.
+- `Total runtime ... ms`.
+
 Check the clock once per design, in the log: the kernel's own count of cycles over the ARM's
-FPGA time should be the clock it was built for. On 2026-11-10 (the earlier `classify.c`):
-598 x 1092, FPGA 180.7 ms, 18 066 885 cycles, so 100.0 MHz; the cube from the SD card into
-memory took 6.7 s, 7.1 s in all. `obip fpga reload` has no fallback when the overlay cannot
-set the clock, unlike `load.sh`.
+FPGA time should be the clock it was built for. On 2026-11-14, on balticAlgae (598 x 1092):
+loaded in 6 794 ms, the kernel 180.7 ms, 18 066 698 cycles, so 100.0 MHz; 7.30 s in all
+(before the band fix). `obip fpga reload` has no fallback when the overlay cannot set the
+clock, unlike `load.sh`.
 
 ### cnn-1d on the same capture, to compare
 
@@ -360,6 +391,23 @@ start labels.png
 no `-meta.json`, so `labels-meta.json` gives it the size. For a capture from the data server, its
 own `-meta.json` and `--scaled` with its scaled-radiance picture lay the labels as that picture
 (`docs/opu.md`, "The labels as a picture").
+
+### Checking the band fix, on balticAlgae
+
+The labels the bit-exact model gives on balticAlgae's cube with its bands reversed are on the lab
+server: `~/Documents/MartinOgJacob/flatsat-results/2026-11-14/balticAlgae-model-bands_reversed-labels.bin`
+(24.8 % sea, 94.4 % the same as cnn-1d). The board's must be the same, byte for byte. Run on
+`flatsat-dataset/balticAlgae_2026-08-25T10-45-37Z` (step 5, "Running on a capture from
+flatsat-dataset"), with the labels downloaded as `/home/hypso/MartinOgJacob/balticAlgae-labels.bin`.
+Then on the lab server:
+
+```sh
+cd ~/Documents/MartinOgJacob/flatsat-results/2026-11-14
+scp ws2:MartinOgJacob/balticAlgae-labels.bin balticAlgae-bandfix-labels.bin
+cmp balticAlgae-bandfix-labels.bin balticAlgae-model-bands_reversed-labels.bin && echo identical
+```
+
+`identical`: the fix works on the board. `differ: byte ...`: send the log.
 
 ## 8. Switch the OPU off
 
@@ -417,6 +465,7 @@ Over SSH, run hypso-cli in `tmux new -s hypso`: a dropped connection then leaves
 | back at the `ws2` prompt after Ctrl-C | Ctrl-C quits hypso-cli; the OPU is as it was, a command on it runs on | start hypso-cli again; wait for the command's limit before the next |
 | `K initialize failed: Device not found` | the design or its overlay is not loaded | `obip fpga reload K.bit.bin -o K.dtbo`, then the `uio` check |
 | the cube's size does not match | the cube is not what `capture_config.ini` says (not 120 bands, or cut short) | read `capture_config.ini` and `ls -l` the capture (step 5) |
+| the labels have no sea, or look nothing like the capture | the bands in the wrong order: a package from before 2026-11-14, whose `cnn_accelerator` does not reverse them (the old run on balticAlgae: 0 % sea) | package again (step 1) and upload it (steps 2 and 4); check with "Checking the band fix" (step 7) |
 | the kernel does not finish | the design is not running (clock, wrong bitstream) | check the clock (step 6); `obip fpga reset` |
 
 More, for the build and cnn_accelerator: [opu.md](opu.md), "When something goes wrong".
