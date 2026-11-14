@@ -20,7 +20,7 @@ these kernels differ from the CNN-1D. It does the same as cnn-1d-picobob's
  src/models/.../K.cpp
         │  scripts/hls.sh + hls.tcl  (Vitis HLS)
         ▼
- build/K/BOARD/export.zip  (the IP + its C driver)
+ build/K/BOARD/latest/export.zip  (the IP + its C driver)
         │
         │  scripts/opu.sh, step 1 ───────────── unzips it into ───────► vivado/projects/K_BOARD_hls_export/
         │    fills in boards/opu/project.tcl ── writes ──────────────► vivado/tcl-scripts/tmp/K_BOARD.tcl
@@ -35,7 +35,7 @@ these kernels differ from the CNN-1D. It does the same as cnn-1d-picobob's
         │                                                                   ▼
         │    copies back ◄──────────────────────────────────────────── vivado/projects/K_BOARD/K_BOARD.sdk/
         ▼                                                                   system.xsa, bitstream.bit, ...
- build/K/BOARD/sdk/
+ build/K/BOARD/latest/sdk/
         │
         │  scripts/opu.sh, step 2
         │    copies the xsa + fills in boards/opu/hls_kernel.dtsi ──► petalinux/projects/K_BOARD/
@@ -45,14 +45,14 @@ these kernels differ from the CNN-1D. It does the same as cnn-1d-picobob's
         │                                                                    the first time, makes dtbo-project/)
         │    copies back ◄──────────────────────────────────────────── petalinux/projects/K_BOARD/output/
         ▼                                                                   K.bit.bin, K.bit.bin.md5sum, K.dtbo
- build/K/BOARD/firmware/
+ build/K/BOARD/latest/firmware/
         │
         │  scripts/opu.sh, step 3: the kernel's driver from export.zip into software/opu/xcnn_driver/,
         │                          then cnn-1d's software/opu/scripts/cross-compile.sh (Docker
         │                          cnn-dev-image) builds cnn_accelerator for the ARM
         │  scripts/opu.sh, step 4: the tarball
         ▼
- build/K/BOARD/K_opu.tar.gz ──► the board's /media/sd-pl:
+ build/K/BOARD/latest/K_opu.tar.gz ──► the board's /media/sd-pl:
                                   firmware/K.bit.bin, K.bit.bin.md5sum, K.dtbo
                                   K/cnn_accelerator, K/load.sh, K/process-capture.sh
 ```
@@ -70,7 +70,7 @@ these kernels differ from the CNN-1D. It does the same as cnn-1d-picobob's
 | `scripts/hls.sh K BOARD` | Writes `settings.tcl` (the board's FPGA part and clock from `boards/BOARD/board.conf`, the kernel's sources) and runs Vitis HLS with `scripts/hls.tcl`. |
 | `scripts/hls.tcl` | C simulation, C synthesis, export as IP. |
 
-Output: `build/K/BOARD/export.zip`. That zip is what cnn-1d calls `firmware/export.zip`. It
+Output: `build/K/BOARD/latest/export.zip`. That zip is what cnn-1d calls `firmware/export.zip`. It
 holds the IP (`component.xml`, the Verilog) and the C driver HLS generates for it
 (`drivers/K_v1_0/src/xK.h`, `xK_hw.h`, `xK.c`, `xK_linux.c`). opu-system is not involved.
 
@@ -110,7 +110,7 @@ What `add_hls_kernel.tcl` adds to opu-system's design, for any HLS kernel:
 - addresses for everything, and a hook after routing that writes `utilization.rpt` and
   `timing.rpt` into the `.sdk` folder.
 
-Then `opu.sh` copies the `.sdk` folder to `build/K/BOARD/sdk/` and stops if `timing.rpt` says
+Then `opu.sh` copies the `.sdk` folder to `build/K/BOARD/latest/sdk/` and stops if `timing.rpt` says
 the timing is not met.
 
 ### 2. PetaLinux: what the board loads (opu-system's scripts, our overlay)
@@ -129,7 +129,7 @@ docker/run-petalinux-docker.sh ./prepare_pl_firmware.sh ./K_BOARD/K_BOARD.xsa K 
 | `petalinux/projects/prepare_pl_firmware.sh` | opu-system | The first time: creates `dtbo-project/`, a minimal PetaLinux project only for overlays. Every time: adds an app from the xsa and the dtsi to it, builds it, and copies out `K.bit.bin` (the bitstream as the FPGA manager loads it), `K.bit.bin.md5sum` (with the board's path `/media/sd-pl/firmware/`), and `K.dtbo` (the devicetree overlay). |
 | `boards/opu/hls_kernel.dtsi` → `K_BOARD.dtsi` | **ours** | The overlay's additions, as cnn-1d's `cnn-1d-picobob.dtsi`: the kernel as a UIO device `hls_kernel` (with which value the kernel gives each class), the hash ROM as `bitstream_hash`, and two maps in the reserved memory (`hls_kernel_memory`: `cube_map` and `scores_map`) for the cube in and the scores out. `opu.sh` fills in the addresses from `MEMORY_BASE` in `board.conf` (PicoBoB 0x20000000, ZedBoard 0x10000000). |
 
-`opu.sh` copies the three files to `build/K/BOARD/firmware/`.
+`opu.sh` copies the three files to `build/K/BOARD/latest/firmware/`.
 
 ### 3. cnn_accelerator: the program on the board (cnn-1d-picobob's)
 
@@ -143,6 +143,7 @@ after them):
 | `src/uio_memory_device.{h,cpp}` | the same | Find a UIO device by name, map its memory. |
 | `cmake/*.cmake` | the same | Fetch spdlog, libconfig, argparse; the ARM toolchain. |
 | `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh` | the same | The image `cnn-dev-image` (Ubuntu 20.04's ARM compiler), and the build in it into `build-cross/`. |
+| `scripts/show_result.py` | the same | On the PC: a labels file as a picture, optionally laid as the capture's scaled-radiance RGB picture (`docs/opu.md`). |
 | `CMakeLists.txt` | changed: the driver's files by pattern | The build. |
 | `src/cnn_config.{h,cpp}` | changed: no `--cnn-config`, no rad matrix | The options, the capture config. |
 | `src/xcnn_device.{h,cpp}` | changed: the driver through `kernel.h`; `cycles()` | Starts the kernel; the class values from the devicetree. |
@@ -153,11 +154,11 @@ after them):
 `opu.sh` unzips the driver from `export.zip` into `software/opu/xcnn_driver/` (where cnn-1d
 keeps its own `xcnn_driver/`; git ignores it), writes `kernel.h` there, and runs cnn-1d's
 `scripts/cross-compile.sh`, which builds `build-cross/cnn_accelerator` in `cnn-dev-image`. It
-keeps a copy of the driver in `build/K/BOARD/driver/`.
+keeps a copy of the driver in `build/K/BOARD/latest/driver/`.
 
 ### 4. The tarball (this repository)
 
-`opu.sh` packs `build/K/BOARD/K_opu.tar.gz`:
+`opu.sh` packs `build/K/BOARD/latest/K_opu.tar.gz`:
 
 ```text
 firmware/K.bit.bin, K.bit.bin.md5sum, K.dtbo     from step 2
@@ -226,7 +227,7 @@ would not otherwise work:
 
 | | cnn-1d-picobob | this repository |
 | --- | --- | --- |
-| HLS | by hand, in the Vitis HLS GUI, → `firmware/export.zip` | `scripts/hls.sh` → `build/K/BOARD/export.zip` |
+| HLS | by hand, in the Vitis HLS GUI, → `firmware/export.zip` | `scripts/hls.sh` → `build/K/BOARD/latest/export.zip` |
 | Project script | `firmware/cnn-1d-picobob.tcl`, written for it | `boards/opu/project.tcl`, filled in per kernel |
 | Kernel in the design | `firmware/add-cnn-accelerator.tcl` | `boards/opu/add_hls_kernel.tcl`, any HLS kernel |
 | Overlay | `firmware/cnn-1d-picobob.dtsi` | `boards/opu/hls_kernel.dtsi`, filled in per board |

@@ -1,7 +1,7 @@
 #!/bin/bash
 # opu.sh KERNEL BOARD [--driver]: a board with the OPU system's PetaLinux (picobob,
-# zedboard), the way opu-system and cnn-1d-picobob build theirs. From
-# build/KERNEL/BOARD/export.zip (scripts/hls.sh, or someone else's):
+# zedboard), the way opu-system and cnn-1d-picobob build theirs, in the newest run with an
+# export.zip, build/KERNEL/BOARD/DATE_TIME/ (scripts/hls.sh, or someone else's):
 #
 #   1. Vivado, through opu-system's vivado/run_tcl_script.sh: the board's OPU design
 #      (opu_base.tcl: UART, timer, bitstream hash) with the kernel added
@@ -11,7 +11,7 @@
 #      KERNEL.dtbo (boards/opu/hls_kernel.dtsi: the kernel and its memory for UIO)
 #   3. cnn_accelerator (software/opu/, cnn-1d-picobob's program) for the board's ARM,
 #      with the kernel's own HLS driver, by cnn-1d's scripts in Docker cnn-dev-image
-#   4. build/KERNEL/BOARD/KERNEL_opu.tar.gz, to unpack in /media/sd-pl on the board:
+#   4. build/KERNEL/BOARD/latest/KERNEL_opu.tar.gz, to unpack in /media/sd-pl on the board:
 #        firmware/KERNEL.bit.bin, .bit.bin.md5sum, .dtbo
 #        KERNEL/cnn_accelerator, process-capture.sh, load.sh
 #
@@ -33,9 +33,9 @@ load_board "$2"
 driver_only=0
 [ $# -eq 3 ] && { [ "$3" = --driver ] || die "$usage"; driver_only=1; }
 
+last_build
 out="$(build_dir)"
 export_zip="$out/export.zip"
-[ -f "$export_zip" ] || die "no $export_zip: run scripts/hls.sh $KERNEL $BOARD first, or put someone else's export.zip there"
 OPU="${FPGA_OPU_SYSTEM:-$FPGA_ROOT/../opu-system}"
 PROJECT="${KERNEL}_${BOARD}"           # the project in opu-system
 clock_ns="$(build_info clock_ns)"

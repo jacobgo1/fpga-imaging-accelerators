@@ -4,8 +4,8 @@
     python tools/utilization.py [FOLDER]
 
 FOLDER (default optimizations_implemented/utilization/) holds K_utilization.rpt for each kernel K:
-build/K/BOARD/reports/impl/utilization.rpt (PYNQ boards, scripts/vivado.tcl) or
-build/K/BOARD/sdk/utilization.rpt (OPU boards, boards/opu/add_hls_kernel.tcl), both
+build/K/BOARD/latest/reports/impl/utilization.rpt (PYNQ boards, scripts/vivado.tcl) or
+build/K/BOARD/latest/sdk/utilization.rpt (OPU boards, boards/opu/add_hls_kernel.tcl), both
 report_utilization -hierarchical, renamed by kernel, and sources.txt, the build each came from
 ("K <- build/K/BOARD/...").
 

@@ -1,11 +1,11 @@
 #!/bin/bash
 # pynq.sh KERNEL BOARD [--package]: a board with PYNQ (zcu104, pynqz2). From
-# build/KERNEL/BOARD/export.zip (scripts/hls.sh, or someone else's): Vivado with
+# the newest run's export.zip (scripts/hls.sh, or someone else's): Vivado with
 # scripts/vivado.tcl and boards/BOARD/system.tcl, then the zip for the board's notebook:
 #
-#   build/KERNEL/BOARD/KERNEL_pynq.zip   KERNEL.bit, KERNEL.hwh (PYNQ finds it by the .bit's
-#                                        name), xKERNEL_hw.h (register offsets), the notebook,
-#                                        kernel.json (which model), mu_sd.txt (golden kernels)
+#   build/KERNEL/BOARD/latest/KERNEL_pynq.zip   KERNEL.bit, KERNEL.hwh (PYNQ finds it by the .bit's
+#                                               name), xKERNEL_hw.h (register offsets), the notebook,
+#                                               kernel.json (which model), mu_sd.txt (golden kernels)
 #
 # --package: only the zip again, from the last bitstream (e.g. after editing the notebook).
 set -e
@@ -18,6 +18,7 @@ load_board "$2"
 [ "$FLOW" = pynq ] || die "$BOARD runs the OPU system, not PYNQ: scripts/opu.sh $KERNEL $BOARD"
 package_only=0
 [ $# -eq 3 ] && { [ "$3" = --package ] || die "$usage"; package_only=1; }
+last_build
 out="$(build_dir)"
 
 if [ $package_only -eq 0 ]; then

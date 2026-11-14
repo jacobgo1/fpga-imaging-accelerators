@@ -45,9 +45,52 @@ load_board() {
     source "$conf"
 }
 
-# Where everything for KERNEL on BOARD goes, overwritten by the next build of the same.
-build_dir() {
+# Every build of KERNEL on BOARD is a run of its own, build/KERNEL/BOARD/DATE_TIME/, kept so
+# builds can be compared; build/KERNEL/BOARD/latest links to the last one written to. One
+# board's runs never move another board's latest.
+board_dir() {
     echo "$FPGA_ROOT/build/$KERNEL/$BOARD"
+}
+
+# BUILD_DIR: a new run, made the latest. hls.sh starts every build with one.
+new_build() {
+    local base="$(board_dir)" name n=1
+    name="$(date '+%Y-%m-%d_%H-%M-%S')"
+    while [ -e "$base/$name" ]; do n=$((n + 1)); name="$(date '+%Y-%m-%d_%H-%M-%S')-$n"; done
+    mkdir -p "$base/$name"
+    BUILD_DIR="$base/$name"
+    point_latest
+}
+
+# BUILD_DIR: the newest run with an export.zip, for the steps after HLS (pynq.sh, opu.sh), made
+# the latest. Someone else's export.zip, put straight in build/KERNEL/BOARD/, starts a run.
+last_build() {
+    local base="$(board_dir)" run
+    if [ -f "$base/export.zip" ]; then
+        new_build
+        mv "$base/export.zip" "$BUILD_DIR/"
+        echo "export: someone else's" > "$BUILD_DIR/build.txt"
+        return
+    fi
+    BUILD_DIR=""
+    # Run names sort by date; latest is a link, not a run.
+    for run in "$base"/[0-9][0-9][0-9][0-9]-*/; do
+        [ -f "$run/export.zip" ] && BUILD_DIR="${run%/}"
+    done
+    [ -n "$BUILD_DIR" ] || die "no export.zip in $base/*/: run scripts/hls.sh $KERNEL $BOARD first, or put someone else's export.zip in $base/"
+    point_latest
+}
+
+# build/KERNEL/BOARD/latest -> BUILD_DIR, relative so the build folder can move.
+point_latest() {
+    local base="$(board_dir)"
+    rm -rf "$base/latest"
+    ln -s "$(basename "$BUILD_DIR")" "$base/latest" 2>/dev/null \
+        || echo "could not link $base/latest; the build is in $BUILD_DIR" >&2
+}
+
+build_dir() {
+    echo "$BUILD_DIR"
 }
 
 # Cores for Vivado: FPGA_JOBS, else every core this process may use.
@@ -75,7 +118,7 @@ need() {
 # The export (export.zip in the build folder) unpacked in DIR: an IP catalog.
 unpack_export() {
     local export_zip="$(build_dir)/export.zip"
-    [ -f "$export_zip" ] || die "no $export_zip: run scripts/hls.sh $KERNEL $BOARD first, or put someone else's export.zip there"
+    [ -f "$export_zip" ] || die "no $export_zip: run scripts/hls.sh $KERNEL $BOARD first, or put someone else's export.zip in $(board_dir)/"
     rm -rf "$1"
     mkdir -p "$1"
     unzip -q -o "$export_zip" -d "$1"

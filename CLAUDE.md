@@ -24,8 +24,8 @@ weights are extracted from them on demand.
   Python tests. No AMD tools.
 - **Lab server (Linux):** `source fpga.sh`, then `fpga_build K [BOARD]` for csynth and
   bitstreams. The user runs these and pastes results; Claude cannot.
-  - HLS log: `build/K/BOARD/hls.log`
-  - reports: `build/K/BOARD/hls/solution/syn/report/`
+  - HLS log: `build/K/BOARD/latest/hls.log` (each build a run, `build/K/BOARD/DATE_TIME/`)
+  - reports: `build/K/BOARD/latest/hls/solution/syn/report/`
   - the OPU boards need opu-system next to the repository with its Vivado and PetaLinux
     2023.1 Docker images; an export from Vitis HLS 2025.2 works (`docs/opu.md`).
 - **Board:** the ZCU104 with PYNQ: upload `K_pynq.zip`, unzip, run the notebook. PicoBoB and
@@ -34,7 +34,7 @@ weights are extracted from them on demand.
 ## Layout
 
 ```text
-scripts/             the build, one script a step, each `KERNEL BOARD`, into build/K/BOARD/:
+scripts/             the build, one script a step, each `KERNEL BOARD`, into a run build/K/BOARD/DATE_TIME/ (latest/):
                      test.sh (g++ testbench), hls.sh (Vitis HLS -> export.zip), pynq.sh (PYNQ
                      boards: Vivado + notebook zip), opu.sh (OPU boards: opu-system's Vivado and
                      PetaLinux scripts + cnn_accelerator -> K_opu.tar.gz), build.sh (all); common.sh
@@ -68,7 +68,8 @@ software/opu/        cnn_accelerator: cnn-1d-picobob's program with its file nam
                      cross-compile.sh. tests/test_opu_driver.py builds the real sources on the PC
                      against a fake board. scripts/benchmark.sh, copied on its own to
                      the board: every optimized kernel (from its tarball) on five images, the
-                     times and each run's labels; tools/image.py score counts the accuracy on the PC
+                     times and each run's labels; tools/image.py score counts the accuracy on the PC,
+                     scripts/show_result.py (cnn-1d's) makes a labels file a picture
 tools/               weights, numpy reference models, image preparation (tools/README.md)
 tests/               Python tests of all of the above, no AMD tools needed
 docs/framework.md    what each build step does; docs/opu.md the OPU boards, step by step

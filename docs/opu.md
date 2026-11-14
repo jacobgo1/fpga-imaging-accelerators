@@ -12,7 +12,7 @@ Which script is opu-system's and which is ours, step by step: [opu_flow.md](opu_
 
 `fpga_build K picobob` (`scripts/build.sh K picobob`) runs:
 
-| # | Script | What | Result in `build/K/picobob/` |
+| # | Script | What | Result in `build/K/picobob/latest/` |
 | --- | --- | --- | --- |
 | 1 | `scripts/hls.sh K picobob` | Vitis HLS: csim, csynth, export | `export.zip` (the IP and its driver) |
 | 2 | `scripts/opu.sh K picobob`, through opu-system's `vivado/run_tcl_script.sh` (or its steps with the Vivado on PATH, below) | Vivado: `boards/opu/project.tcl`, the same as opu-system's own project scripts: `picozed_project.tcl` (`zedboard_project.tcl`), `opu_base.tcl`, then `boards/opu/add_hls_kernel.tcl`, then `finish_design.tcl` | `sdk/`: `system.xsa`, `bitstream.bit`, the bitstream hash, `utilization.rpt`, `timing.rpt` |
@@ -21,7 +21,7 @@ Which script is opu-system's and which is ours, step by step: [opu_flow.md](opu_
 | 5 | ... | the tarball | `K_opu.tar.gz` |
 
 Step 1 can be someone else's: put their `export.zip` in `build/K/BOARD/` and run
-`fpga_bitstream K BOARD` (`scripts/opu.sh K BOARD`).
+`fpga_bitstream K BOARD` (`scripts/opu.sh K BOARD`); it starts a run of its own.
 
 The tarball unpacks in `/media/sd-pl` on the board:
 
@@ -60,7 +60,7 @@ must be idle while cnn_accelerator runs. The overlay also says which value the k
 
 | File | Compared with cnn-1d-picobob's |
 | --- | --- |
-| `src/uio_memory_device.{h,cpp}`, `cmake/*.cmake`, `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh` | the same, byte for byte |
+| `src/uio_memory_device.{h,cpp}`, `cmake/*.cmake`, `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh`, `show_result.py` | the same, byte for byte |
 | `CMakeLists.txt` | the driver's files are found by name (`xcnn_driver/x*.c`), as each kernel's are named after it |
 | `src/cnn_config.{h,cpp}` | without `--cnn-config` and the rad matrix (`CnnConfig`, `readCnnConfig`, `configIsValid`): these kernels take only the cube |
 | `src/xcnn_device.{h,cpp}` | the kernel's driver through `kernel.h` instead of `XCnn_1d_top_*`; the cube on every input port; `cycles()` |
@@ -137,7 +137,7 @@ the chip: `_zynq7030` kernels for PicoBoB, `_zynq7020` for the ZedBoard.
 As cnn-1d-picobob's README:
 
 ```sh
-(hypso-cli) opu upload ./build/sp_unet_small_opt_u8_zynq7030/picobob/sp_unet_small_opt_u8_zynq7030_opu.tar.gz /media/sd-pl/sp_unet_small_opt_u8_zynq7030_opu.tar.gz
+(hypso-cli) opu upload ./build/sp_unet_small_opt_u8_zynq7030/picobob/latest/sp_unet_small_opt_u8_zynq7030_opu.tar.gz /media/sd-pl/sp_unet_small_opt_u8_zynq7030_opu.tar.gz
 (hypso-cli) shell remote oneshot 12 5 tar -xzf /media/sd-pl/sp_unet_small_opt_u8_zynq7030_opu.tar.gz -C /media/sd-pl/
 (hypso-cli) obip fpga reload sp_unet_small_opt_u8_zynq7030.bit.bin -o sp_unet_small_opt_u8_zynq7030.dtbo
 (hypso-cli) shell remote oneshot 12 1 /media/sd-pl/sp_unet_small_opt_u8_zynq7030/process-capture.sh hsi0 &
@@ -170,6 +170,25 @@ it as on a capture. The accuracy is counted on the PC, against the folder's `lab
 `tools/image.py score`. An image made before `prepare` wrote `binned_cube.bip`: run `prepare`
 again.
 
+### The labels as a picture
+
+`software/opu/scripts/show_result.py` (cnn-1d-picobob's, on the PC, needs Pillow) colours a labels
+file: sea blue, land green, cloud grey. It takes the capture's size from its `-meta.json`
+(`lines`, `samples`). With `--scaled` and the capture's scaled-radiance RGB picture
+(`CAPTURE-scaled-radiance.png`, from the HYPSO data server), it stretches, turns and flips the labels
+to lie as that picture does, which corrects for HYPSO's pixels being much longer along the track
+than across it. For example, corpuschristi (598 x 1092, the whole capture), with
+the scaled picture downloaded into the repository's folder:
+
+```bash
+K=sp_unet_small_opt_zynq7020
+D=~/Downloads/datasets/raw/HYPSO-2_Cloud-Land-Sea_Nikolai/corpuschristi_2026-02-25T17-09-00Z-l1a.nc
+python3 software/opu/scripts/show_result.py $K-labels.bin corpuschristi_labels.png $D/corpuschristi_2026-02-25T17-09-00Z-meta.json --scaled corpuschristi_2026-02-25T17-09-00Z-scaled-radiance.png
+```
+
+Only for a whole capture: a cropped image (`prepare --crop`) has another size than the
+`-meta.json` says, and the scaled picture shows all of the capture.
+
 ### Every kernel on every image
 
 `software/opu/scripts/benchmark.sh`: copy it and each kernel's tarball to `/media/sd-pl/`, with
@@ -199,7 +218,7 @@ the tarball, from the firmware already built.
 | `docker: Error response ... permission denied` on `/home/hypso/petalinux` | SELinux (Fedora) keeps Docker out of the folder | `scripts/get-petalinux.sh` again (it relabels the folder) |
 | `the input device is not a TTY` | `run-petalinux-docker.sh` runs `docker run -it` | run the build in a terminal, not through a pipe or `nohup` |
 | `no Docker image petalinux:2023.1` | opu-system's PetaLinux is not set up | `scripts/get-petalinux.sh fpgaws` |
-| `the routed design fails timing` | the kernel does not meet the clock it was built for | `build/K/BOARD/sdk/timing.rpt`; build the kernel for a slower clock (`--clock-ns`) |
+| `the routed design fails timing` | the kernel does not meet the clock it was built for | `build/K/BOARD/latest/sdk/timing.rpt`; build the kernel for a slower clock (`--clock-ns`) |
 | `no Docker image cnn-dev-image` | cnn-1d's image is not on the machine | `software/opu/scripts/setup_docker`, then `fpga_package K BOARD` |
 | `Could not resolve host: github.com` while building cnn_accelerator | Docker's default network has no DNS on this machine | fix Docker's DNS (e.g. `"dns"` in `/etc/docker/daemon.json`), or build where it works |
 | `K initialize failed: Device not found` | the design is not loaded (a reboot, or another design) | `load.sh` / `obip fpga reload` again |

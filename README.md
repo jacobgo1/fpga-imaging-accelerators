@@ -36,7 +36,7 @@ PicoBoB and the ZedBoard: unpack the tarball in `/media/sd-pl`, load it
 `fpga.sh` only shortens commands. Underneath, each step is a script, with the kernel and
 the board (`zcu104`, `pynqz2`, `picobob`, `zedboard`: `boards/BOARD/board.conf`):
 
-| Script | What it does | Leaves in `build/KERNEL/BOARD/` |
+| Script | What it does | Leaves in the run, `build/KERNEL/BOARD/latest/` |
 | --- | --- | --- |
 | `scripts/test.sh KERNEL` | the kernel and its testbench with g++, run. No AMD tools | (`build/KERNEL/native/`) |
 | `scripts/hls.sh KERNEL BOARD [STAGE]` | Vitis HLS. `csim`: the testbench in HLS; `csynth`: ... then C++ → Verilog; `cosim`: ... then the Verilog against the testbench; `ip` (the default): ... then the IP. `--cosim` adds cosim to `ip`, `--clock-ns NS` overrides the board's clock | `hls/`, `hls.log`, `export.zip` |
@@ -47,7 +47,8 @@ the board (`zcu104`, `pynqz2`, `picobob`, `zedboard`: `boards/BOARD/board.conf`)
 | `scripts/get-petalinux.sh [HOST]` | once, for the OPU boards: the PetaLinux Docker image from the FPGA workstation (`fpgaws`) | |
 
 `export.zip` is all the board steps need: with one built by someone else, put it in
-`build/KERNEL/BOARD/` and run `pynq.sh` or `opu.sh` alone (`fpga_bitstream KERNEL BOARD`).
+`build/KERNEL/BOARD/` and run `pynq.sh` or `opu.sh` alone (`fpga_bitstream KERNEL BOARD`); it
+starts a run of its own.
 The scripts need bash, and Python 3 for the PYNQ zip; nothing to install.
 
 ## Add a kernel
@@ -64,11 +65,16 @@ board, add its model to `tools/models.py` (see docs/framework.md, section 5).
 
 ## Where a build's output goes
 
-Everything for a kernel on a board is in one folder, `build/KERNEL/BOARD/`, which the next
-build of the same overwrites:
+Every build of a kernel on a board is a run of its own, `build/KERNEL/BOARD/DATE_TIME/`, kept
+so builds can be compared; `build/KERNEL/BOARD/latest` links to the last one written to.
+`hls.sh` (every `fpga_build`, `fpga_ip`, `fpga_cosim`) starts a run; `pynq.sh` and `opu.sh`
+build in the newest run with an `export.zip`, so a later cosim-only run leaves the bitstream
+where its IP is. One board's runs never move another board's `latest`. Every ZCU104
+optimized kernel's package, for software/pynq/benchmark.ipynb:
+`scp -r build/*_opt*/zcu104/latest/*_pynq xilinx@BOARD:~/jupyter_notebooks/`.
 
 ```text
-build/KERNEL/BOARD/
+build/KERNEL/BOARD/latest/
   build.txt                                   kernel, board, part, clock, git commit, date
   hls.log                                     what Vitis HLS printed
   hls/solution/syn/report/TOP_csynth.rpt      HLS estimate: latency, resources
@@ -81,7 +87,7 @@ build/KERNEL/BOARD/
                 opu-system's vivado/projects/KERNEL_BOARD/
 ```
 
-`build/` is not in git, so write conclusions worth keeping in `docs/experiments/` or
+Old runs are not removed: delete them by hand. `build/` is not in git, so write conclusions worth keeping in `docs/experiments/` or
 `optimizations_implemented/`.
 
 ## Settings

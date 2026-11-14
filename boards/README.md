@@ -22,7 +22,8 @@ fits on the chip, and that is a property of the kernel (see below).
 | `picobob` | `opu` | `xc7z030sbg485-1` | Zynq-7030, HYPSO-2's OPU, with the OPU system's PetaLinux. The part is opu-system's `picozed_project.tcl`'s |
 
 Pick the board when building: `fpga_build K picobob`, or `scripts/build.sh K picobob`.
-Everything for a kernel on a board goes to `build/K/BOARD/`. A board's `CLOCK_NS` is its
+Everything for a kernel on a board goes to a run of its own, `build/K/BOARD/DATE_TIME/`
+(`build/K/BOARD/latest` links to the last). A board's `CLOCK_NS` is its
 default HLS clock (5 ns on the ZCU104, 12.8 on the Zynq-7020s, 10 on PicoBoB; `--clock-ns`
 overrides it).
 
@@ -126,7 +127,7 @@ added the exported HLS IP to its catalog before sourcing the script. Populate
 | Variable | Meaning |
 | --- | --- |
 | `cfg(root)` | Absolute repository path |
-| `cfg(run_dir)` | The build folder, `build/KERNEL/BOARD/` — keep generated files here |
+| `cfg(run_dir)` | The build folder, the run `build/KERNEL/BOARD/DATE_TIME/` — keep generated files here |
 | `cfg(board)` / `cfg(part)` / `cfg(clock_ns)` | Board name, device and HLS clock target |
 | `cfg(top)` | HLS kernel top name (not the board-level top) |
 | `ip_repo` | Exported HLS IP catalog directory |

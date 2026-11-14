@@ -148,12 +148,15 @@ Then on the laptop (598 1092: the capture's height and width, from step 5):
 
 ```sh
 scp ws2:/home/hypso/MartinOgJacob/labels.bin .
-python -c "import numpy as np, matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; from matplotlib.colors import ListedColormap; c = np.fromfile('labels.bin', dtype=np.uint8).reshape(598, 1092); plt.imshow(c, cmap=ListedColormap(['blue', 'green', 'white']), vmin=0, vmax=2, interpolation='nearest'); plt.title('sea (blue) / land (green) / cloud (white)'); plt.savefig('labels.png', dpi=120, bbox_inches='tight')"
+echo '{"lines": 598, "samples": 1092}' > labels-meta.json
+python software/opu/scripts/show_result.py labels.bin labels.png labels-meta.json
 start labels.png
 ```
 
-It writes `labels.png` rather than opening a window: from Git Bash, `plt.show()`'s window can
-open behind the terminal, which then seems to hang until the window is closed.
+`show_result.py` (cnn-1d-picobob's) colours sea blue, land green, cloud grey. A fresh capture has
+no `-meta.json`, so `labels-meta.json` gives it the size. For a capture from the data server, its
+own `-meta.json` and `--scaled` with its scaled-radiance picture lay the labels as that picture
+(`docs/opu.md`, "The labels as a picture").
 
 ## 8. Switch the OPU off
 

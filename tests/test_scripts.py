@@ -201,8 +201,17 @@ class ScriptTests(unittest.TestCase):
     def script(self, name):
         return self.root / 'scripts' / name
 
+    def runs(self, kernel='k_opt', board='zcu104'):
+        # Every run of the kernel on the board, oldest first.
+        base = self.root / 'build' / kernel / board
+        return sorted(p for p in base.iterdir() if p.name != 'latest') if base.is_dir() else []
+
     def out(self, kernel='k_opt', board='zcu104'):
-        return self.root / 'build' / kernel / board
+        # The run latest links to: the newest unless an older one was built on.
+        base = self.root / 'build' / kernel / board
+        if (base / 'latest').is_symlink():
+            return base / os.readlink(base / 'latest')
+        return self.runs(kernel, board)[-1]
 
     # ---------------------------------------------------------------- finding things
 
@@ -279,6 +288,38 @@ class ScriptTests(unittest.TestCase):
         result = self.run_script(self.script('hls.sh'), 'k_opt', 'zcu104', 'bitstream')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('usage', result.stderr)
+
+    def test_every_build_is_a_run_of_its_own(self):
+        for board in ('zcu104', 'zcu104', 'pynqz2'):
+            self.assertEqual(self.run_script(self.script('hls.sh'), 'k_opt', board).returncode, 0)
+        runs = self.runs()
+        self.assertEqual(len(runs), 2, 'two builds in the same second are still two runs')
+        self.assertTrue(all(re.fullmatch(r'\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d(-\d+)?', r.name) for r in runs), runs)
+        self.assertTrue(all((r / 'export.zip').is_file() for r in runs))
+        self.assertEqual(len(self.runs(board='pynqz2')), 1, "one board's runs are its own")
+        if os.name != 'nt':                         # Git Bash copies instead of linking
+            self.assertEqual(os.readlink(self.root / 'build/k_opt/zcu104/latest'), runs[-1].name)
+
+    def test_a_cosim_run_leaves_the_bitstream_to_the_last_export(self):
+        self.assertEqual(self.run_script(self.script('hls.sh'), 'k_opt', 'zcu104').returncode, 0)
+        with_export = self.runs()[-1]
+        self.assertEqual(self.run_script(self.script('hls.sh'), 'k_opt', 'zcu104', 'cosim').returncode, 0)
+        result = self.run_script(self.script('pynq.sh'), 'k_opt', 'zcu104')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((with_export / 'k_opt_pynq.zip').is_file())
+        if os.name != 'nt':
+            self.assertEqual(os.readlink(self.root / 'build/k_opt/zcu104/latest'), with_export.name)
+
+    def test_someone_elses_export_starts_a_run(self):
+        self.assertEqual(self.run_script(self.script('hls.sh'), 'k_opt', 'zcu104').returncode, 0)
+        export = self.runs()[-1] / 'export.zip'
+        shutil.copy(export, self.root / 'build/k_opt/zcu104/export.zip')
+        export.unlink()
+        result = self.run_script(self.script('pynq.sh'), 'k_opt', 'zcu104')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.root / 'build/k_opt/zcu104/export.zip').exists())
+        self.assertEqual(len(self.runs()), 2)
+        self.assertTrue((self.runs()[-1] / 'k_opt_pynq.zip').is_file())
 
     # ---------------------------------------------------------------- pynq.sh
 

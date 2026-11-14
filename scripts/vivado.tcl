@@ -1,9 +1,9 @@
 # Vivado for the PYNQ boards: the block design around the HLS IP, synthesis, place and
-# route, .bit. scripts/pynq.sh runs this in build/KERNEL/BOARD/ after writing vivado-settings.tcl
-# and unpacking export.zip in ip/. (The OPU boards are built by opu-system's scripts
+# route, .bit. scripts/pynq.sh runs this in the run folder, build/KERNEL/BOARD/DATE_TIME/,
+# after writing vivado-settings.tcl and unpacking export.zip in ip/. (The OPU boards are built by opu-system's scripts
 # instead: scripts/opu.sh.)
 #
-# Results, all inside build/KERNEL/BOARD/:
+# Results, all inside the run folder:
 #   vivado/system.xpr                         the project; open it in Vivado to look around
 #   vivado/system.runs/impl_1/*.bit           the bitstream
 #   reports/synth/, reports/impl/             utilization, timing, DRC, power

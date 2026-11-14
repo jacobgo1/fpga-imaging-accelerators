@@ -10,7 +10,7 @@ on the ZCU104, but every kernel goes the same way; the OPU boards are in [opu.md
 
 That runs `scripts/build.sh justounetsimple_opt zcu104`, which does four things in order:
 
-| # | Who | What | Result in `build/K/zcu104/` |
+| # | Who | What | Result in `build/K/zcu104/latest/` |
 | --- | --- | --- | --- |
 | 1 | `scripts/hls.sh` | Finds the folder in `src/models/` with `K.cpp`, its `*.cpp`, and `tb/K/*.cpp`; reads `boards/zcu104/board.conf` (part, clock); writes `settings.tcl` | the settings |
 | 2 | Vitis HLS runs [`scripts/hls.tcl`](../scripts/hls.tcl) | C simulation (your testbench) → C synthesis (C++ → Verilog) → `export_design` | the **IP block**, `export.zip` |
@@ -21,14 +21,15 @@ Then upload the zip to Jupyter on the board, unzip it there, and run the noteboo
 For PicoBoB and the ZedBoard, steps 3 and 4 are `scripts/opu.sh` instead: opu-system's
 Vivado and PetaLinux scripts, and `cnn_accelerator` ([opu.md](opu.md)).
 
-Everything stays in that one folder. Where to look afterwards:
+Everything stays in that build's own folder, a run `build/K/zcu104/DATE_TIME/` that
+`build/K/zcu104/latest` links to (README.md, "Where a build's output goes"). Where to look afterwards:
 
 ```text
-build/K/zcu104/hls/solution/syn/report/K_csynth.rpt   HLS estimate: latency, resources
-build/K/zcu104/reports/impl/                          real utilization and timing
-build/K/zcu104/vivado/system.xpr                      the Vivado project: open it to see the design
-build/K/zcu104/K_pynq.zip                             what goes to the board
-build/K/zcu104/build.txt                              what was built: git commit, part, clock
+build/K/zcu104/latest/hls/solution/syn/report/K_csynth.rpt   HLS estimate: latency, resources
+build/K/zcu104/latest/reports/impl/                          real utilization and timing
+build/K/zcu104/latest/vivado/system.xpr                      the Vivado project: open it to see the design
+build/K/zcu104/latest/K_pynq.zip                             what goes to the board
+build/K/zcu104/latest/build.txt                              what was built: git commit, part, clock
 ```
 
 `export.zip` is where the two halves of the build meet: steps 3 and 4 need nothing else,
@@ -36,7 +37,7 @@ so one built by someone else works (`fpga_bitstream K BOARD`).
 
 `fpga_build` leaves out C/RTL co-simulation, which is slow; `fpga_build K BOARD --cosim`
 runs it in step 2. Run `fpga_cosim K` (`scripts/hls.sh K zcu104 cosim`) separately when the
-RTL needs checking; its report, `build/K/zcu104/hls/solution/sim/report/K_cosim.rpt`, has
+RTL needs checking; its report, `build/K/zcu104/latest/hls/solution/sim/report/K_cosim.rpt`, has
 the measured cycle count. `fpga_cosim K BOARD --dataflow-profile` also records, for every
 process of a DATAFLOW kernel, when it worked and when it waited on which stream: open the
 build's `hls/` project in the Vitis HLS GUI and the Dataflow Viewer of the top function
@@ -82,7 +83,7 @@ A kernel with no `m_axi` ports gets only the control path.
 
 ### Changing it
 
-- **Looking:** after a build, open `build/K/zcu104/vivado/system.xpr` in Vivado
+- **Looking:** after a build, open `build/K/zcu104/latest/vivado/system.xpr` in Vivado
   (on the lab server) and open the block design. That's exactly what was built.
 - **Changing:** edit `system.tcl`. Each block is a `create_bd_cell`, each wire
   a `connect_bd_net` (single pins: clock, reset) or `connect_bd_intf_net`

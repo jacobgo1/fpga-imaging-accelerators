@@ -13,7 +13,8 @@ fpga_help() {
     cat <<'EOF'
 FPGA commands. KERNEL is a kernel's .cpp name in src/models/ (e.g. justounetsimple_opt),
 BOARD one of boards/: zcu104 (default), pynqz2 (PYNQ), picobob, zedboard (OPU system).
-Tab completes both. Everything for KERNEL on BOARD goes to build/KERNEL/BOARD/.
+Tab completes both. Each build of KERNEL on BOARD is a run, build/KERNEL/BOARD/DATE_TIME/;
+build/KERNEL/BOARD/latest links to the last.
 
   fpga_kernels                  the kernels and boards there are       scripts/kernels.sh
   fpga_env [settings64.sh]      put Vivado and Vitis HLS on PATH (sources settings64.sh)
@@ -21,7 +22,7 @@ Tab completes both. Everything for KERNEL on BOARD goes to build/KERNEL/BOARD/.
                                 with g++ (no AMD tools)
   fpga_build KERNEL [BOARD]     C++ -> IP -> bitstream -> the board's   scripts/build.sh KERNEL BOARD
                                 package (PYNQ zip or OPU tarball)
-  fpga_ip KERNEL [BOARD]        C++ -> IP (build/KERNEL/BOARD/export.zip) and stop
+  fpga_ip KERNEL [BOARD]        C++ -> IP (build/KERNEL/BOARD/latest/export.zip), stop
                                                                        scripts/hls.sh KERNEL BOARD ip
   fpga_bitstream KERNEL [BOARD] from an existing export.zip: bitstream and package
                                                                        scripts/pynq.sh / opu.sh KERNEL BOARD

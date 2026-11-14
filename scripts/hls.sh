@@ -1,13 +1,14 @@
 #!/bin/bash
 # hls.sh KERNEL BOARD [STAGE] [--cosim] [--dataflow-profile] [--clock-ns NS]
 #
-# Vitis HLS on KERNEL for BOARD's part and clock (boards/BOARD/board.conf), in
-# build/KERNEL/BOARD/. Each stage includes the ones above it:
+# Vitis HLS on KERNEL for BOARD's part and clock (boards/BOARD/board.conf), in a new run,
+# build/KERNEL/BOARD/DATE_TIME/, which build/KERNEL/BOARD/latest then links to. Each stage
+# includes the ones above it:
 #
 #   csim     the testbench, compiled by HLS
 #   csynth   ... then C++ -> Verilog, with the latency and resource report
 #   cosim    ... then the testbench driving that Verilog (the real cycle count)
-#   ip       ... then the IP, as build/KERNEL/BOARD/export.zip (the default)
+#   ip       ... then the IP, as export.zip in the run (the default)
 #
 # export.zip is all the later steps need (pynq.sh, opu.sh): one built by someone else
 # works as well. --cosim: ip also runs cosim first (slow). --dataflow-profile: cosim also
@@ -33,9 +34,8 @@ while [ $# -gt 0 ]; do
 done
 [ "$stage" = cosim ] && cosim=1
 
+new_build
 out="$(build_dir)"
-mkdir -p "$out"
-rm -f "$out/export.zip"
 # What hls.tcl needs, as the Tcl array cfg(...).
 {
     echo "set cfg(run_dir) $(tcl_word "$out")"

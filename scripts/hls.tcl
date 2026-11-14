@@ -1,5 +1,6 @@
 # Vitis HLS: C simulation, C++ -> Verilog, co-simulation, IP export.
-# scripts/hls.sh runs this in build/KERNEL/BOARD/, after writing settings.tcl there.
+# scripts/hls.sh runs this in its run folder, build/KERNEL/BOARD/DATE_TIME/, after writing
+# settings.tcl there.
 # Each stage does what the ones before it do, then its own step:
 #   csim     csim_design     the testbench, compiled by HLS
 #   csynth   csynth_design   C++ -> Verilog, with the latency/resource report
