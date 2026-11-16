@@ -24,7 +24,7 @@ the ZCU104** (the 1D model is compute-bound).
 |---|---|---|---|
 | `justounetsimple` | ZCU104 | 5 ns | golden baseline: float, one patch per start; **measured 194.4 s** for a whole capture (292.4 ms a patch), 202.3 s wall clock, 96.20 % |
 | `justounetsimple_opt` | ZCU104 | 214 MHz | **measured 18.26 ms** for a whole capture, FPGA alone (5 882 cycles a patch; memory-bound); 19.2 ms wall clock |
-| `justounetsimple_opt_tiled` | ZCU104 | 4 ns target | conv1 in raster order, no patch buffer (below); **predicted** about as fast as `justounetsimple_opt` (memory-bound, conv1 5 285 cycles a patch), 648 DSPs on conv1 instead of 864; built in C++, bit-exact; not built |
+| `justounetsimple_opt_tiled` | ZCU104 | 4 ns target (run at 250 MHz) | conv1 in raster order, no patch buffer (below); **measured 19.31 ms** at 250 MHz, five images (7 259 cycles a patch, held by its reads; conv1 5 285), 3.5 % faster than `justounetsimple_opt` (20.02 ms); 948 DSPs routed instead of 1 160, no UltraRAM; 92.11 %, the same labels |
 | `justounetsimple_opt_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | built in C++, bit-exact; cycle estimates only (the 7020 design, wider); since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** 10 570 cycles a patch (+3 %), ~60 BRAM36 fewer; not built |
 | `justounetsimple_opt_zynq7020` | PYNQ-Z2 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | **measured 143.8 ms** on the ZedBoard, FPGA alone (~16 480 cycles a patch), with the patch buffer; since 2026-11-06 conv1 chunked, no patch buffer (below): **predicted** the same pace (the reads), ~60 of its 84.5 BRAM36 fewer; not built |
 
@@ -160,7 +160,11 @@ Routed, kernel alone (without the interconnects); by process in
 
 | Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
 |---|---|---|---|---|---|---|
-| (no report yet) | | | | | | |
+| `justounetsimple` | ZCU104 | 48 307 (21.0 %) | 43 372 (9.4 %) | 120 (38.5 %) | 2 (2.1 %) | 313 (18.1 %) |
+| `justounetsimple_opt` | ZCU104 | 37 757 (16.4 %) | 48 930 (10.6 %) | 25.5 (8.2 %) | 16 (16.7 %) | 1 160 (67.1 %) |
+| `justounetsimple_opt_tiled` | ZCU104 | 42 719 (18.5 %) | 53 983 (11.7 %) | 39.5 (12.7 %) | 0 | 948 (54.9 %) |
+| `justounetsimple_opt_zynq7020` | Zynq-7020 | 40 588 (76.3 %) | 47 895 (45.0 %) | 26.5 (18.9 %) | – | 216 (98.2 %) |
+| `justounetsimple_opt_zynq7030` | Zynq-7030 | 51 194 (65.1 %) | 46 403 (29.5 %) | 43 (16.2 %) | – | 382 (95.5 %) |
 <!-- /utilization.py -->
 
 ## Changes
@@ -317,3 +321,6 @@ Routed, kernel alone (without the interconnects); by process in
   `pixel_buffer`, instead of `conv3x3_2mul` behind `patch_buffer`; readers' FIFOs 512 deep in BRAM.
   **Predicted** 7030 10 570 cycles a patch (+3 %), 7020 unchanged (the reads); ~60 BRAM36 fewer on each;
   same DSPs. Bit-exact (native). Not built.
+- 2026-11-09: `justounetsimple_opt_tiled` measured on the ZCU104 at 250 MHz, five images (`benchmark.ipynb`,
+  speed_zcu104.md): 19.31 ms, 7 259 cycles a patch, the same labels as `_opt` (92.11 %); `_opt` 20.02 ms
+  (7 524). Both held by their reads (8.5 and 8.2 GB/s); `_tiled` with 212 fewer DSPs and no UltraRAM.

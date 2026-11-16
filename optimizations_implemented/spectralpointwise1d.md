@@ -139,7 +139,10 @@ Routed, kernel alone (without the interconnects); by process in
 
 | Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
 |---|---|---|---|---|---|---|
-| (no report yet) | | | | | | |
+| `spectralpointwise1d` | ZCU104 | 10 074 (4.4 %) | 16 967 (3.7 %) | 2.5 (0.8 %) | 0 | 129 (7.5 %) |
+| `spectralpointwise1d_opt` | ZCU104 | 32 634 (14.2 %) | 31 304 (6.8 %) | 18 (5.8 %) | 0 | 1 003 (58.0 %) |
+| `spectralpointwise1d_opt_zynq7020` | Zynq-7020 | 21 644 (40.7 %) | 15 740 (14.8 %) | 11 (7.9 %) | – | 196 (89.1 %) |
+| `spectralpointwise1d_opt_zynq7030` | Zynq-7030 | 46 877 (59.6 %) | 37 288 (23.7 %) | 20 (7.5 %) | – | 372 (93.0 %) |
 <!-- /utilization.py -->
 
 ## Changes

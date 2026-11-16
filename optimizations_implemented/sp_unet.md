@@ -43,16 +43,16 @@ MACs per patch, 92 % of it its first conv.
 | `sp_unet_small_opt` | ZCU104 | 250 MHz | whole raw capture per start, integer fixed point, direct 3x3 convs; **measured 26.23 ms** for a whole capture, FPGA alone: 9 859 cycles a patch (model 9 839), 97.48 %; 30.6 ms at 214 MHz |
 | `sp_unet_medium_opt` | ZCU104 | 250 MHz | the same; measured 93.12 ms (35 006 cycles a patch), 97.32 %; 108.64 ms at 214 MHz |
 | `sp_unet_large_opt` | ZCU104 | 250 MHz | the same; measured 186.22 ms (70 007 cycles a patch), 97.55 %; 217.25 ms at 214 MHz |
-| `sp_unet_small_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | uint8 activations, every 3x3 conv two multiplies per DSP; **predicted** ~6 700 cycles a patch (DDR-bound; the convs 6 552), ~17.9 ms at 250 MHz, 1 347 DSPs; not built yet |
-| `sp_unet_medium_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 17 472 cycles a patch, 46.5 ms at 250 MHz, 1 297 DSPs; not built yet |
-| `sp_unet_large_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **predicted** 34 944 cycles a patch, 93.1 ms at 250 MHz, 1 184 DSPs; not built yet |
+| `sp_unet_small_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | uint8 activations, every 3x3 conv two multiplies per DSP; **measured 19.31 ms** at 250 MHz, five images (7 258 cycles a patch; predicted ~6 700, DDR-bound: the reads), 1.36x `_opt`; 1 387 DSPs routed; 93.68 % on the five images |
+| `sp_unet_medium_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **measured 46.56 ms** (17 503 cycles a patch; model 17 472), 2.00x `_opt`; 1 310 DSPs routed; 93.78 % |
+| `sp_unet_large_opt_u8` | ZCU104 | 5 ns (run at 250 MHz) | the same; **measured 93.08 ms** (34 993 cycles a patch; model 34 944), 2.00x `_opt`; 1 213 DSPs routed; 93.87 % |
 | `sp_unet_small_opt_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns (PLL: 76.189 MHz) | the direct kernel sized for the 7020, 195 DSPs designed (205 routed); **measured 665.7 ms** on the ZedBoard (76 270 cycles a patch; model 76 176), 97.48 % |
 | `sp_unet_medium_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~59 k LUTs of 53.2 k, see below); removed 2026-10-29 |
 | `sp_unet_large_opt_zynq7020` | Zynq-7020 / ZedBoard | 12.8 ns | **does not fit the 7020** (csynth: ~69 k LUTs, 117-129 % of the BRAM); removed 2026-10-29 |
 | `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 / ZedBoard (board `pynqz2` / `zedboard`) | 12.8 ns | uint8 activations, every 3x3 conv two multiplies per DSP48E1; 198 DSPs designed (208 routed); **measured 437.8 ms** on the ZedBoard at 76.189 MHz (50 156 cycles a patch; predicted 39 456, +27 %), 93.68 % on the five images |
 | `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 (board `picobob`) | 10 ns | the same for the 7030, two read ports; 364 DSPs designed; **measured 180.7 ms** on the HYPSO-2 flatsat (PicoBoB) at 100.0 MHz, a 598 x 1092 capture (27 168 cycles a patch; predicted 22 194, +22 %) |
-| `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 78 912 cycles a patch, ~526 ms, 287 DSPs; not built yet |
-| `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 152 352 cycles a patch, ~1.01 s, 303 DSPs; not built yet (LUTs the likeliest limit) |
+| `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 78 912 cycles a patch, ~526 ms, 287 DSPs; built (routed: 291 DSPs, 60 % of the LUTs, see Utilization); not measured |
+| `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 10 ns | the same; **predicted** 152 352 cycles a patch, ~1.01 s, 303 DSPs; built (routed: 303 DSPs, 64 % of the LUTs, see Utilization); not measured |
 
 The optimized kernels give the bit-exact model's answers, bit for bit: `classify_fixed` in
 `tools/specpw_unet_model.py`, the same as the plain C++ loops in
@@ -357,6 +357,7 @@ at equal DSPs, PI with 9 x PI a multiple of 4, so the groups come out whole):
 | DSPs (convs + convsp1 + convsp2/3) | 891 + 384 + 72 = **1 347** | 1 161 + 96 + 40 = **1 297** | 1 008 + 128 + 48 = **1 184** |
 | **predicted**, 666 x T at 250 MHz | **~17.9 ms** (DDR: ~6 700 cycles a patch) | **46.5 ms** | **93.1 ms** |
 | measured today (`_opt`, 250 MHz) | 26.23 ms | 93.12 ms | 186.22 ms |
+| **measured** (`_opt_u8`, 250 MHz, five images, 2026-11-09) | **19.31 ms** (7 258 cycles a patch) | **46.56 ms** (17 503) | **93.08 ms** (34 993) |
 
 - **medium, large:** the same DSPs as `_opt` at half the cycles: about 2x. Large is `_opt`'s
   table with PO 1 → 2; its next faster table (33 824) would need 1 652 DSPs.
@@ -367,7 +368,13 @@ at equal DSPs, PI with 9 x PI a multiple of 4, so the groups come out whole):
   word is ~1.7x wider. Estimated (not from a report): large ~176 BRAM36 (today ~52), small and
   medium ~24 k and ~31 k LUTs as LUTRAM (today ~10 k and ~5 k + 60 BRAM36). Within the ZU7EV
   (312 BRAM36, 230 k LUTs); to check in the csynth/route reports.
-- Every prediction is the performance model above; none is built. On the build, check: the
+- **Measured (2026-11-09, `benchmark.ipynb`, five images):** medium and large within 0.18 % and 0.14 %
+  of T, exactly 2.00x `_opt`. Small 7 258 cycles a patch, 8 % over the ~6 700 predicted: DDR-bound as
+  predicted, but its four ports got 8.5 GB/s (245 760 bytes ÷ 29.0 us), not the 9.2 assumed (that was
+  the read-ahead reader's; `read_patch_rows_simple` gets less). `justounetsimple_opt_tiled`, with the
+  same reads, takes the same 7 259. So 1.36x, not 1.47x. Accuracy 0.02-0.03 points under `_opt`
+  (93.68 / 93.78 / 93.87 %).
+- The predictions were the performance model above, made before the build. On the build, check: the
   DSP count (convs as the table: 891 / 1 161 / 1 008, and the Bind Op Report's `mul` on DSPs,
   one per packed product), Final II = 1 on every conv, and the cycles a patch with cosim.
 
@@ -483,7 +490,20 @@ Routed, kernel alone (without the interconnects); by process in
 
 | Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
 |---|---|---|---|---|---|---|
-| (no report yet) | | | | | | |
+| `sp_unet_small` | ZCU104 | 16 617 (7.2 %) | 23 692 (5.1 %) | 32 (10.3 %) | 88 (91.7 %) | 129 (7.5 %) |
+| `sp_unet_small_opt` | ZCU104 | 76 415 (33.2 %) | 98 967 (21.5 %) | 34 (10.9 %) | 3 (3.1 %) | 1 550 (89.7 %) |
+| `sp_unet_small_opt_u8` | ZCU104 | 98 303 (42.7 %) | 73 440 (15.9 %) | 42 (13.5 %) | 2 (2.1 %) | 1 387 (80.3 %) |
+| `sp_unet_small_opt_u8_zynq7020` | Zynq-7020 | 39 422 (74.1 %) | 36 188 (34.0 %) | 72 (51.4 %) | – | 207 (94.1 %) |
+| `sp_unet_small_opt_u8_zynq7030` | Zynq-7030 | 48 570 (61.8 %) | 47 957 (30.5 %) | 93.5 (35.3 %) | – | 374 (93.5 %) |
+| `sp_unet_small_opt_zynq7020` | Zynq-7020 | 41 819 (78.6 %) | 45 350 (42.6 %) | 82.5 (58.9 %) | – | 199 (90.5 %) |
+| `sp_unet_medium` | ZCU104 | 18 270 (7.9 %) | 24 413 (5.3 %) | 153 (49.0 %) | 96 (100.0 %) | 129 (7.5 %) |
+| `sp_unet_medium_opt` | ZCU104 | 93 034 (40.4 %) | 129 403 (28.1 %) | 89 (28.5 %) | 6 (6.2 %) | 1 372 (79.4 %) |
+| `sp_unet_medium_opt_u8` | ZCU104 | 127 411 (55.3 %) | 95 444 (20.7 %) | 34 (10.9 %) | 3 (3.1 %) | 1 310 (75.8 %) |
+| `sp_unet_medium_opt_u8_zynq7030` | Zynq-7030 | 47 133 (60.0 %) | 50 943 (32.4 %) | 123.5 (46.6 %) | – | 291 (72.8 %) |
+| `sp_unet_large` | ZCU104 | 20 548 (8.9 %) | 28 967 (6.3 %) | 264.5 (84.8 %) | 96 (100.0 %) | 169 (9.8 %) |
+| `sp_unet_large_opt` | ZCU104 | 109 789 (47.7 %) | 149 914 (32.5 %) | 85 (27.2 %) | 8 (8.3 %) | 1 273 (73.7 %) |
+| `sp_unet_large_opt_u8` | ZCU104 | 118 755 (51.5 %) | 103 467 (22.5 %) | 132.5 (42.5 %) | 4 (4.2 %) | 1 213 (70.2 %) |
+| `sp_unet_large_opt_u8_zynq7030` | Zynq-7030 | 50 432 (64.2 %) | 57 730 (36.7 %) | 116.5 (44.0 %) | – | 303 (75.8 %) |
 <!-- /utilization.py -->
 
 ## Changes
@@ -719,6 +739,10 @@ Routed, kernel alone (without the interconnects); by process in
   (native, and on a real crop in the tests); not built. `sp_unet_opt_zynq7020.hpp` is now
   `sp_unet_opt_zynq7000.hpp`, shared, with `READ_PORTS` in each kernel's header;
   `sp_unet_small_opt_zynq7020` is bit-exact as before (native). `input_max` moved to `dsp_pack.hpp`.
+- 2026-11-09: the three ZCU104 `_opt_u8` kernels measured at 250 MHz on five images (`benchmark.ipynb`,
+  builds of 2026-11-08, speed_zcu104.md): 19.31 / 46.56 / 93.08 ms, 7 258 / 17 503 / 34 993 cycles a patch
+  (predicted ~6 700 / 17 472 / 34 944): medium and large 2.00x `_opt`, small 1.36x, held by its reads
+  (8.5 GB/s). 93.68 / 93.78 / 93.87 %, 0.02-0.03 points under `_opt`. `_opt` the same as on 2026-11-06.
 - 2026-11-10: measured. `sp_unet_small_opt_u8_zynq7020` on the ZedBoard (benchmark.sh, five images):
   437.8 ms, 50 156 cycles a patch at 76.189 MHz (predicted 39 456), 93.68 %, as the ZCU104's
   `_u8` kernel. `sp_unet_small_opt_u8_zynq7030` on the HYPSO-2 flatsat, loaded with `obip fpga reload`

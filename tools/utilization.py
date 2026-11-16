@@ -34,7 +34,7 @@ DEVICES = {
     'xc7z020': ('Zynq-7020 (ZedBoard, PYNQ-Z2)', {'LUTs': 53200, 'FFs': 106400, 'BRAM36': 140, 'URAM': 0, 'DSPs': 220}),
 }
 # Kernels whose source is gone but whose build is worth keeping.
-REMOVED = {'sp_unet_small_opt': 'Winograd, removed 2026-10-31: see sp_unet.md'}
+REMOVED = {}
 # Modules renamed or merged since the reports were made: old name -> today's.
 RENAMED = {
     'conv3x3_grouped': 'conv3x3_tiled', 'conv3x3_grouped_patch': 'conv3x3_tiled_patch',

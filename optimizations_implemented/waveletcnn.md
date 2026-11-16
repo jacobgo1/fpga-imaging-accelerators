@@ -107,7 +107,10 @@ Routed, kernel alone (without the interconnects); by process in
 
 | Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
 |---|---|---|---|---|---|---|
-| (no report yet) | | | | | | |
+| `waveletcnn` | ZCU104 | 9 528 (4.1 %) | 12 411 (2.7 %) | 155 (49.7 %) | 58 (60.4 %) | 85 (4.9 %) |
+| `waveletcnn_opt` | ZCU104 | 28 493 (12.4 %) | 35 221 (7.6 %) | 26 (8.3 %) | 0 | 687 (39.8 %) |
+| `waveletcnn_opt_zynq7020` | Zynq-7020 | 16 658 (31.3 %) | 18 434 (17.3 %) | 18 (12.9 %) | – | 185 (84.1 %) |
+| `waveletcnn_opt_zynq7030` | Zynq-7030 | 26 272 (33.4 %) | 29 475 (18.8 %) | 26.5 (10.0 %) | – | 334 (83.5 %) |
 <!-- /utilization.py -->
 
 ## Changes

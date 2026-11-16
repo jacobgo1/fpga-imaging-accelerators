@@ -33,7 +33,10 @@ Routed, kernel alone (without the interconnects); by process in
 
 | Kernel | Board | LUTs | FFs | BRAM36 | URAM | DSPs |
 |---|---|---|---|---|---|---|
-| (no report yet) | | | | | | |
+| `justoliunet_bn` | ZCU104 | 25 207 (10.9 %) | 32 998 (7.2 %) | 9.5 (3.0 %) | 0 | 259 (15.0 %) |
+| `justoliunet_bn_opt` | ZCU104 | 98 868 (42.9 %) | 87 688 (19.0 %) | 10 (3.2 %) | 0 | 1 309 (75.8 %) |
+| `justoliunet_bn_opt_zynq7020` | Zynq-7020 | 34 594 (65.0 %) | 33 071 (31.1 %) | 8 (5.7 %) | – | 216 (98.2 %) |
+| `justoliunet_bn_opt_zynq7030` | Zynq-7030 | 43 774 (55.7 %) | 45 368 (28.9 %) | 8 (3.0 %) | – | 377 (94.2 %) |
 <!-- /utilization.py -->
 
 ## Changes

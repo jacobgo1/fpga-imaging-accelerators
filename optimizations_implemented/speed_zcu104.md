@@ -1,11 +1,10 @@
 # Measured speed on the ZCU104
 
-Every optimized ZCU104 kernel on the board, one 598 × 1092 capture (653 016 pixels, 665 patches
-of 32 × 32 for the 2D models), one start for the whole image, from `software/pynq/classify.ipynb`.
-The design of each kernel is in its model's file; this one only collects the runs, so the
-clocks can be compared.
+Every optimized ZCU104 kernel on the board at 250 MHz, one start for a whole 598 × 1092 capture
+(653 016 pixels, 665 patches of 32 × 32 for the 2D models). The design of each kernel is in its
+model's file; this one only collects the runs, so the kernels and the clocks can be compared.
 
-What the three times are:
+What the times are:
 - **FPGA, own count:** the kernel's `cycles` register ÷ clock: the hardware alone.
 - **FPGA, host timer:** the ARM's time from start to done. If the cube does not fit in CMA (512 MB,
   shared by every running notebook), the notebook falls back to strips of 128 rows, the ARM copying
@@ -14,7 +13,210 @@ What the three times are:
   copies share DDR with it. Shut down the other notebooks before a run.
 - **Wall clock:** the whole path on the board, Python included.
 
-## 214 MHz
+## Every optimized kernel (250 MHz, 2026-11-09)
+
+`software/pynq/benchmark.ipynb` on five captures (trondheim, hawkebay, lakealexandria, saldanha,
+maputo), builds of 2026-11-08; the mean over the images. Fastest first. The cycle model is each
+kernel's T from its model's file; "held by" says what sets the time: the logic (within 1 % of the
+model) or the reads from DDR (bytes read ÷ time).
+
+| Kernel | Cycles (own count) | FPGA, own count | Wall clock | Cycle model | Over the model | Held by |
+|---|---|---|---|---|---|---|
+| `spectralpointwise1d_opt` | 4.64 a pixel | **12.11 ms** | 12.49 ms | 3.75 | +23.7 % | DDR, 12.9 GB/s |
+| `sp_unet_small_opt_u8` | 7 258 a patch | **19.31 ms** | 19.71 ms | 6 552 | +10.8 % | its reads, 8.5 GB/s |
+| `justounetsimple_opt_tiled` | 7 259 a patch | **19.31 ms** | 19.70 ms | 5 285 | +37.4 % | its reads, 8.5 GB/s |
+| `justounetsimple_opt` | 7 524 a patch | **20.02 ms** | 20.41 ms | 4 129 | +82.2 % | its reads, 8.2 GB/s |
+| `waveletcnn_opt` | 8 218 a patch | **21.86 ms** | 22.25 ms | 8 192 | +0.3 % | logic |
+| `sp_unet_small_opt` | 9 857 a patch | **26.22 ms** | 26.61 ms | 9 839 | +0.2 % | logic |
+| `sp_unet_medium_opt_u8` | 17 503 a patch | **46.56 ms** | 46.96 ms | 17 472 | +0.2 % | logic |
+| `justoliunet_opt` | 18.00 a pixel | **47.02 ms** | 47.38 ms | 18.00 | as the model | logic |
+| `justoliunet_bn_opt` | 18.00 a pixel | **47.02 ms** | 47.40 ms | 18.00 | as the model | logic |
+| `sp_unet_large_opt_u8` | 34 993 a patch | **93.08 ms** | 93.54 ms | 34 944 | +0.1 % | logic |
+| `sp_unet_medium_opt` | 34 996 a patch | **93.09 ms** | 93.55 ms | 34 960 | +0.1 % | logic |
+| `sp_unet_large_opt` | 69 977 a patch | **186.14 ms** | 186.62 ms | 69 900 | +0.1 % | logic |
+
+- **Every logic-bound kernel is within 0.32 % of its model.** The four held by their reads get
+  8.2-8.5 GB/s with four 2D read ports (`read_patch_rows_simple`), 12.9 GB/s reading rows end to
+  end (spectralpointwise1d_opt): reading less would help them, more logic would not.
+- **uint8 halves sp_unet medium and large** (exactly 2.00x `_opt`). `sp_unet_small_opt_u8` gains
+  1.36x, not the 1.47x predicted: its reads give 8.5 GB/s, not the 9.2 assumed, the same as
+  `justounetsimple_opt_tiled`, which reads the same way and takes the same 7 259 cycles.
+- **`justounetsimple_opt_tiled` is 3.5 % faster than `justounetsimple_opt`**, with 212 fewer DSPs and
+  no UltraRAM.
+- **The wall clock is 0.35-0.5 ms over the kernel's count:** the notebook's register writes, polling
+  and cache invalidation.
+
+### Accuracy on the five images
+
+The board's classes against the images' labels (5 × 653 016 pixels), most accurate first. The
+board's count of correct pixels was the PC's `classify_fixed` count exactly on every run checked
+(2026-11-06).
+
+| Kernel | Accuracy | IoU cloud | IoU land | IoU sea | mIoU | trondheim / hawkebay / lakealexandria / saldanha / maputo |
+|---|---|---|---|---|---|---|
+| `spectralpointwise1d_opt` | 93.93 % | 0.845 | 0.918 | 0.889 | 0.884 | 93.69 / 95.89 / 96.45 / 89.59 / 94.01 |
+| `sp_unet_large_opt` | 93.89 % | 0.844 | 0.922 | 0.884 | 0.883 | 95.89 / 96.23 / 95.25 / 87.52 / 94.55 |
+| `sp_unet_large_opt_u8` | 93.87 % | 0.843 | 0.922 | 0.883 | 0.883 | 95.88 / 96.21 / 95.25 / 87.46 / 94.54 |
+| `sp_unet_medium_opt` | 93.81 % | 0.845 | 0.918 | 0.883 | 0.882 | 94.92 / 96.02 / 96.12 / 87.73 / 94.28 |
+| `sp_unet_medium_opt_u8` | 93.78 % | 0.844 | 0.918 | 0.882 | 0.881 | 94.90 / 96.01 / 96.11 / 87.62 / 94.27 |
+| `waveletcnn_opt` | 93.72 % | 0.832 | 0.915 | 0.892 | 0.880 | 94.32 / 95.77 / 95.20 / 88.66 / 94.63 |
+| `sp_unet_small_opt` | 93.70 % | 0.840 | 0.917 | 0.882 | 0.880 | 95.32 / 95.93 / 95.45 / 87.51 / 94.30 |
+| `sp_unet_small_opt_u8` | 93.68 % | 0.840 | 0.917 | 0.881 | 0.880 | 95.31 / 95.92 / 95.44 / 87.42 / 94.29 |
+| `justoliunet_bn_opt` | 92.90 % | 0.818 | 0.909 | 0.871 | 0.866 | 92.92 / 95.88 / 95.99 / 86.11 / 93.63 |
+| `justounetsimple_opt` | 92.11 % | 0.811 | 0.881 | 0.866 | 0.853 | 93.94 / 91.92 / 95.33 / 89.07 / 90.32 |
+| `justounetsimple_opt_tiled` | 92.11 % | 0.811 | 0.881 | 0.866 | 0.853 | 93.94 / 91.92 / 95.33 / 89.07 / 90.32 |
+| `justoliunet_opt` | 90.82 % | 0.766 | 0.890 | 0.833 | 0.830 | 92.79 / 94.84 / 93.60 / 79.50 / 93.39 |
+
+- **uint8 costs 0.02-0.03 points** against the same sp_unet with int8 activations; `_tiled` gives
+  `justounetsimple_opt`'s labels exactly.
+- **spectralpointwise1d_opt is the most accurate and the fastest**; sp_unet_large_opt needs 15x the
+  time for 0.04 points less. saldanha is the hardest image for every model (79.4-89.6 %).
+- **justoliunet_opt falls the most** from the aegean capture (97.00 → 90.82 %); its BatchNorm version
+  holds better (92.90 %).
+
+## Golden baselines
+
+The plain-loop float kernels (int8 weights), from `software/pynq/classify_golden.ipynb`:
+the ARM drops the bands, z-scores and cuts the patches; the FPGA computes the network
+(justounetsimple and waveletcnn: one patch a start; sp_unet: the whole image or a row of 35
+patches a start; the 1D kernels: the whole image or a band of 128 rows a start). They show what
+the optimizations buy. FPGA time is the host timer over every start.
+
+| Kernel | FPGA, host timer | Wall clock | Optimized kernel's FPGA / wall clock | Speed-up, FPGA / wall clock |
+|---|---|---|---|---|
+| `justounetsimple` | **194.4 s** (292.4 ms a patch, ~62.6 M cycles at 214 MHz) | 202.3 s | 17.87 ms / 18.84 ms (250 MHz) | **~10 900×** / ~10 700× |
+| `justoliunet` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 066.9 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~22 000× |
+| `justoliunet_bn` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 049.1 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~21 800× |
+| `sp_unet_small` | **416.5 s** (626.4 ms a patch, ~134 M cycles at 214 MHz) | 424.5 s | 26.23 ms / 27.28 ms (250 MHz) | **~15 900×** / ~15 600× |
+| `sp_unet_medium` | **1 239.3 s** (1 863.6 ms a patch, ~399 M cycles at 214 MHz) | 1 247.3 s | 93.12 ms / 94.22 ms (250 MHz) | **~13 300×** / ~13 200× |
+| `sp_unet_large` | **2 164.5 s** (3 254.9 ms a patch, ~697 M cycles at 214 MHz) | 2 172.4 s | 186.22 ms / 187.33 ms (250 MHz) | **~11 600×** / ~11 600× |
+| `spectralpointwise1d` | **82.18 s** (0.126 ms a pixel, ~26 900 cycles at 214 MHz) | 89.55 s | 12.02 ms / 12.95 ms (250 MHz) | **~6 800×** / ~6 900× |
+| `waveletcnn` | **128.67 s** (193.5 ms a patch, ~41.4 M cycles at 214 MHz) | 136.55 s | 21.91 ms / 23.04 ms (250 MHz) | **~5 900×** / ~5 900× |
+
+The ARM's part (the wall clock less the FPGA's) is the float z-score (and patch cutting) in numpy,
+which the optimized kernels do in hardware:
+- 7.4-8.0 s for every other golden kernel, in one start or in bands: justounetsimple and sp_unet_large
+  7.9 s (19 bands), waveletcnn 7.9 s (one patch a start), sp_unet_small and _medium 8.0 s (one
+  start), justoliunet_bn 7.4 s (5 bands),
+  spectralpointwise1d 7.4 s (one start).
+- 25.2 s for justoliunet (one start): the same work as justoliunet_bn, so the extra ~18 s is not
+  explained; a rerun would tell.
+
+The rows marked 250 MHz use those runs, in one start. justoliunet's 214 MHz
+runs went in strips, which halved its speed-up on the wall clock.
+
+## Earlier runs
+
+Kept for the comparisons they show (the clock, the readers, strips against one start). The
+kernels were older builds; the tables above are the current ones.
+
+### 250 MHz, five images (2026-11-06)
+
+Every kernel on five other captures (trondheim, hawkebay, lakealexandria, saldanha, maputo, each
+598 × 1092 and labelled throughout), from `software/pynq/benchmark.ipynb`, one start an image.
+Builds of 2026-11-04 (the `simple-reader` branch: every 2D kernel reads with
+`read_patch_rows_simple`, the 1D convs are `conv1d`). The board's count of correct pixels is the
+PC's `classify_fixed` count exactly on the 13 runs checked (every kernel on trondheim, five on
+hawkebay; the check of the rest stopped, the laptop short of memory). Times are the mean over the images.
+
+| Kernel | Cycles (own count) | FPGA, own count | Wall clock | Before (aegean, 2026-11-01) |
+|---|---|---|---|---|
+| `justounetsimple_opt` | 7 563 a patch (7 535-7 601) | **20.12 ms** | 20.52 ms | 6 718 a patch, 17.87 ms: **+12.6 %, the simple reader** |
+| `justoliunet_opt` | 18.00 a pixel | **47.02 ms** | 47.42 ms | the same: `conv1d` costs nothing |
+| `justoliunet_bn_opt` | 18.00 a pixel | **47.02 ms** | 47.34 ms | the same |
+| `sp_unet_small_opt` | 9 856 a patch | **26.22 ms** | 26.57 ms | 9 859: the simple reader costs nothing |
+| `sp_unet_medium_opt` | 34 994 a patch | **93.09 ms** | 93.55 ms | 35 006 |
+| `sp_unet_large_opt` | 69 976 a patch | **186.14 ms** | 186.63 ms | 70 007 |
+| `spectralpointwise1d_opt` | 4.66 a pixel (4.62-4.69) | **12.16 ms** | 12.54 ms | 4.60-4.68: DDR-bound, as before |
+| `waveletcnn_opt` | 8 219 a patch (8 213-8 227) | **21.86 ms** | 22.26 ms | 8 238: 19 cycles fewer |
+
+- **The simple reader costs only `justounetsimple_opt`:** 12.6 % (8.1 GB/s for its four ports, from
+  9.1), as predicted on 2026-11-03 (~20 ms). It is the one kernel held by its reads, and its time
+  varies with the image (7 535-7 601 cycles a patch), as DDR's does. The logic-bound kernels read
+  the same way at no cost: sp_unet and waveletcnn_opt take a few cycles fewer than with the
+  read-ahead reader.
+- **`conv1d` keeps the ZCU104 at 18.00 cycles a pixel**, the same as `conv1d_map`.
+- **The wall clock is 0.3-0.5 ms over the kernel's count:** the notebook's own path (register
+  writes, polling, invalidating the scores) without the float conversion `classify.ipynb` does.
+
+### 250 MHz, the aegean capture (2026-11-01)
+
+Every kernel closed timing at 250 MHz. Expected from the cycles at 214 MHz:
+
+| Kernel | Expected | Why | Measured |
+|---|---|---|---|
+| `justounetsimple_opt` | ~17.8 ms | memory-bound: about the same microseconds a patch; 17.8 ms measured 2026-10-27 | **17.87 ms** (6 718 a patch, 26.87 us), host timer 18.10 ms, wall clock 18.84 ms, one start; 96.20 % |
+| `justoliunet_opt` | 47.0 ms | logic-bound: 18 cycles a pixel, × 214 / 250 | **47.02 ms** (18.00 a pixel), host timer 47.19 ms, wall clock 48.10 ms, one start; 97.00 % |
+| `justoliunet_bn_opt` | 47.0 ms | the same | **47.02 ms** (18.00 a pixel), host timer 47.22 ms, wall clock 48.10 ms, one start; 96.46 % |
+| `sp_unet_small_opt` | 26.2 ms | logic-bound: 9 858 cycles a patch (reads 6.2 GB/s, well under DDR's 13) | **26.23 ms** (9 859 a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms, one start; 97.48 % |
+| `sp_unet_medium_opt` | 93.1 ms | logic-bound: 35 006 cycles a patch | **93.12 ms** (35 006 a patch, 140.0 us), host timer 93.37 ms, wall clock 94.22 ms, one start; 97.32 % |
+| `sp_unet_large_opt` | 186.2 ms | logic-bound: 70 004 cycles a patch | **186.22 ms** (70 007 a patch, 280.0 us), host timer 186.45 ms, wall clock 187.33 ms, one start; 97.55 % |
+| `spectralpointwise1d_opt` | 10.5-12 ms | 10.5 ms if DDR gives the 16.0 GB/s T needs at 250 MHz; it gave 13.0 at 214, so likely ~12 | **12.02-12.21 ms** (4.60-4.68 a pixel), host timer 12.23-12.43 ms, wall clock 12.95-13.16 ms, one start, two runs; 97.32 % |
+| `waveletcnn_opt` | 21.8 ms | logic-bound: 8 195 cycles a patch (reads 7.5 GB/s, under DDR's 13) | **21.91 ms** (8 238 a patch, 32.95 us), host timer 22.15 ms, wall clock 23.04 ms, one start; 97.22 % |
+
+A logic-bound kernel must show the same cycle count as at 214 MHz; a memory-bound one shows more
+cycles and about the same time.
+
+- **justoliunet_opt / _bn_opt at 250 MHz:** 18.00 cycles a pixel, as at 187.5 and 214 MHz, so 47.02 ms,
+  the predicted 47.0, both. In one start the host timer is 0.2 ms over the kernel's count and the
+  wall clock 1.1 ms over: 48.1 ms, against 127.6 / 115.3 ms in strips at 214 MHz. The ~56 ms guessed
+  for one start at 214 MHz holds; the ARM's 60-70 ms then was the strips, and the 12 ms between the
+  two wall clocks is gone. Same classes as at 214 MHz: 97.00 % and 96.46 %.
+- **justounetsimple_opt at 250 MHz:** 6 718 cycles a patch, 26.87 us, against 5 882 cycles and
+  27.45 us at 214 MHz: more cycles, about the same time, as a memory-bound kernel should. Its ports
+  get ~9.1 GB/s (245 760 bytes a patch ÷ 26.87 us), as before; the clock buys 2 %. The same classes:
+  96.20 %.
+- **The sp_unet direct kernels at 250 MHz:** 9 859 / 35 006 / 70 007 cycles a patch (small / medium /
+  large), the same as at 214 MHz to a few cycles, so 26.23 / 93.12 / 186.22 ms, the predicted 26.2 /
+  93.1 / 186.2: logic-bound. The wall clock is ~1.1 ms over the kernel's count. The same classes:
+  97.48 / 97.32 / 97.55 %.
+- **spectralpointwise1d_opt at 250 MHz:** 4.60-4.68 cycles a pixel (two runs) against 3.95-3.99 at
+  214 MHz, so 12.02-12.21 ms, no faster than 12.05-12.17: memory-bound, as expected. DDR gives the
+  four ports 12.8-13.0 GB/s (156.7 MB ÷ 12.02-12.21 ms), the 13.0 of 214 MHz, of the 16.0 T needs now. So ~13 GB/s
+  is what this board's DDR gives four HP ports; only reading less (the kept words) would help.
+  The same classes: 97.32 %.
+- **waveletcnn_opt at 250 MHz:** 8 238 cycles a patch, 43 (0.5 %) more than at 214 MHz, so 21.91 ms
+  against the predicted 21.8: logic-bound, with a few cycles of waiting, likely on its reads (~7.5
+  GB/s now, still well under DDR's 13). The same classes: 97.22 %.
+- **Fastest whole path at 250 MHz:** spectralpointwise1d_opt (12.95 ms), justounetsimple_opt
+  (18.84 ms), waveletcnn_opt (23.04 ms), sp_unet_small_opt (27.28 ms), justoliunet_opt /
+  _bn_opt (48.1 ms). Each wall clock is 0.9-1.1 ms over the kernel's count.
+
+### Accuracy on the aegean capture (2026-10-30/31)
+
+| Kernel | Accuracy (653 016 labelled pixels) | IoU cloud | IoU land | IoU sea |
+|---|---|---|---|---|
+| `justounetsimple_opt` | 96.20 % | 0.927 | 0.880 | 0.952 |
+| `justoliunet_opt` | 97.00 % | 0.926 | 0.904 | 0.975 |
+| `justoliunet_bn_opt` | 96.46 % | 0.912 | 0.900 | 0.965 |
+| `sp_unet_small_opt` | 97.48 % | 0.944 | 0.914 | 0.976 |
+| `sp_unet_medium_opt` | 97.32 % | 0.939 | 0.919 | 0.970 |
+| `sp_unet_large_opt` | 97.55 % | 0.945 | 0.923 | 0.973 |
+| `spectralpointwise1d_opt` | 97.32 % | 0.939 | 0.915 | 0.972 |
+| `waveletcnn_opt` | 97.22 % | 0.933 | 0.911 | 0.975 |
+| `justounetsimple` (golden, float) | 96.20 % | 0.927 | 0.880 | 0.952 |
+| `justoliunet` (golden, float) | 97.04 % | 0.927 | 0.905 | 0.975 |
+| `justoliunet_bn` (golden, float) | 96.52 % | 0.913 | 0.902 | 0.965 |
+| `waveletcnn` (golden, float) | 97.23 % | 0.933 | 0.911 | 0.975 |
+| `spectralpointwise1d` (golden, float) | 97.32 % | 0.939 | 0.915 | 0.972 |
+| `sp_unet_small` (golden, float) | 97.48 % | 0.944 | 0.914 | 0.976 |
+| `sp_unet_medium` (golden, float) | 97.33 % | 0.939 | 0.919 | 0.970 |
+| `sp_unet_large` (golden, float) | 97.55 % | 0.945 | 0.923 | 0.973 |
+
+The first three are the same to the last digit as the ZedBoard's (`speed_zedboard.md`): the two
+boards' kernels give the same answers bit for bit, as their testbenches say.
+
+- **The newer models are close together:** sp_unet small / medium / large, waveletcnn and
+  spectralpointwise1d all score 97.22-97.55 %. sp_unet_large is the most accurate, but small is
+  only 0.07 points behind at a seventh of the time. justounetsimple (96.20 %) and justoliunet_bn
+  (96.46 %) are the lowest.
+- **The fixed point costs at most 0.06 points:** the float golden kernels of justounetsimple,
+  sp_unet_small, sp_unet_large and spectralpointwise1d score the same as their integer kernels to
+  every digit shown (justounetsimple's two give the same class on 99.96 % of the aegean pixels).
+  sp_unet_medium and waveletcnn lose 0.01 points (97.33 against 97.32 %, 97.23 against 97.22 %),
+  justoliunet 0.04 (97.04 against 97.00 %) and justoliunet_bn 0.06 (96.52 against 96.46 %).
+
+### 214 MHz, the aegean capture (2026-10-30/31)
 
 | Kernel | Cycles | FPGA, own count | FPGA, host timer | Wall clock | Pixels a second (own count) |
 |---|---|---|---|---|---|
@@ -27,7 +229,7 @@ What the three times are:
 | `spectralpointwise1d_opt` | 3.95-3.99 a pixel | **12.05-12.17 ms** (0.019 us a pixel) | 12.33-12.40 ms | 12.99-13.10 ms | 53.6 M |
 | `waveletcnn_opt` | 8 195 a patch | **25.43 ms** (38.25 us a patch) | 25.66 ms | 26.52 ms | 25.7 M |
 
-### Expected and measured
+#### Expected and measured
 
 Expected: each kernel's cycle model (T, from its model's file) at 214 MHz, assuming DDR keeps up.
 
@@ -78,192 +280,15 @@ What the runs show:
 - **Fastest whole path:** spectralpointwise1d_opt (13.0 ms), then justounetsimple_opt (19.2 ms),
   waveletcnn_opt (26.5 ms) and sp_unet_small_opt (32.1 ms).
 
-## Golden baselines
-
-The plain-loop float kernels (int8 weights), from `software/pynq/classify_golden.ipynb`:
-the ARM drops the bands, z-scores and cuts the patches; the FPGA computes the network
-(justounetsimple and waveletcnn: one patch a start; sp_unet: the whole image or a row of 35
-patches a start; the 1D kernels: the whole image or a band of 128 rows a start). They show what
-the optimizations buy. FPGA time is the host timer over every start.
-
-| Kernel | FPGA, host timer | Wall clock | Optimized kernel's FPGA / wall clock | Speed-up, FPGA / wall clock |
-|---|---|---|---|---|
-| `justounetsimple` | **194.4 s** (292.4 ms a patch, ~62.6 M cycles at 214 MHz) | 202.3 s | 17.87 ms / 18.84 ms (250 MHz) | **~10 900×** / ~10 700× |
-| `justoliunet` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 066.9 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~22 000× |
-| `justoliunet_bn` | **1 041.7 s** (1.595 ms a pixel, ~341 400 cycles at 214 MHz) | 1 049.1 s | 47.02 ms / 48.10 ms (250 MHz) | **~22 000×** / ~21 800× |
-| `sp_unet_small` | **416.5 s** (626.4 ms a patch, ~134 M cycles at 214 MHz) | 424.5 s | 26.23 ms / 27.28 ms (250 MHz) | **~15 900×** / ~15 600× |
-| `sp_unet_medium` | **1 239.3 s** (1 863.6 ms a patch, ~399 M cycles at 214 MHz) | 1 247.3 s | 93.12 ms / 94.22 ms (250 MHz) | **~13 300×** / ~13 200× |
-| `sp_unet_large` | **2 164.5 s** (3 254.9 ms a patch, ~697 M cycles at 214 MHz) | 2 172.4 s | 186.22 ms / 187.33 ms (250 MHz) | **~11 600×** / ~11 600× |
-| `spectralpointwise1d` | **82.18 s** (0.126 ms a pixel, ~26 900 cycles at 214 MHz) | 89.55 s | 12.02 ms / 12.95 ms (250 MHz) | **~6 800×** / ~6 900× |
-| `waveletcnn` | **128.67 s** (193.5 ms a patch, ~41.4 M cycles at 214 MHz) | 136.55 s | 21.91 ms / 23.04 ms (250 MHz) | **~5 900×** / ~5 900× |
-
-The ARM's part (the wall clock less the FPGA's) is the float z-score (and patch cutting) in numpy,
-which the optimized kernels do in hardware:
-- 7.4-8.0 s for every other golden kernel, in one start or in bands: justounetsimple and sp_unet_large
-  7.9 s (19 bands), waveletcnn 7.9 s (one patch a start), sp_unet_small and _medium 8.0 s (one
-  start), justoliunet_bn 7.4 s (5 bands),
-  spectralpointwise1d 7.4 s (one start).
-- 25.2 s for justoliunet (one start): the same work as justoliunet_bn, so the extra ~18 s is not
-  explained; a rerun would tell.
-
-The rows marked 250 MHz use those runs, in one start. justoliunet's 214 MHz
-runs went in strips, which halved its speed-up on the wall clock.
-
-## Accuracy (the board's classes against the image's labels)
-
-| Kernel | Accuracy (653 016 labelled pixels) | IoU cloud | IoU land | IoU sea |
-|---|---|---|---|---|
-| `justounetsimple_opt` | 96.20 % | 0.927 | 0.880 | 0.952 |
-| `justoliunet_opt` | 97.00 % | 0.926 | 0.904 | 0.975 |
-| `justoliunet_bn_opt` | 96.46 % | 0.912 | 0.900 | 0.965 |
-| `sp_unet_small_opt` | 97.48 % | 0.944 | 0.914 | 0.976 |
-| `sp_unet_medium_opt` | 97.32 % | 0.939 | 0.919 | 0.970 |
-| `sp_unet_large_opt` | 97.55 % | 0.945 | 0.923 | 0.973 |
-| `spectralpointwise1d_opt` | 97.32 % | 0.939 | 0.915 | 0.972 |
-| `waveletcnn_opt` | 97.22 % | 0.933 | 0.911 | 0.975 |
-| `justounetsimple` (golden, float) | 96.20 % | 0.927 | 0.880 | 0.952 |
-| `justoliunet` (golden, float) | 97.04 % | 0.927 | 0.905 | 0.975 |
-| `justoliunet_bn` (golden, float) | 96.52 % | 0.913 | 0.902 | 0.965 |
-| `waveletcnn` (golden, float) | 97.23 % | 0.933 | 0.911 | 0.975 |
-| `spectralpointwise1d` (golden, float) | 97.32 % | 0.939 | 0.915 | 0.972 |
-| `sp_unet_small` (golden, float) | 97.48 % | 0.944 | 0.914 | 0.976 |
-| `sp_unet_medium` (golden, float) | 97.33 % | 0.939 | 0.919 | 0.970 |
-| `sp_unet_large` (golden, float) | 97.55 % | 0.945 | 0.923 | 0.973 |
-
-The first three are the same to the last digit as the ZedBoard's (`speed_zedboard.md`): the two
-boards' kernels give the same answers bit for bit, as their testbenches say.
-
-- **The newer models are close together:** sp_unet small / medium / large, waveletcnn and
-  spectralpointwise1d all score 97.22-97.55 %. sp_unet_large is the most accurate, but small is
-  only 0.07 points behind at a seventh of the time. justounetsimple (96.20 %) and justoliunet_bn
-  (96.46 %) are the lowest.
-- **The fixed point costs at most 0.06 points:** the float golden kernels of justounetsimple,
-  sp_unet_small, sp_unet_large and spectralpointwise1d score the same as their integer kernels to
-  every digit shown (justounetsimple's two give the same class on 99.96 % of the aegean pixels).
-  sp_unet_medium and waveletcnn lose 0.01 points (97.33 against 97.32 %, 97.23 against 97.22 %),
-  justoliunet 0.04 (97.04 against 97.00 %) and justoliunet_bn 0.06 (96.52 against 96.46 %).
-
-## Utilization (routed, 214 MHz builds)
-
-Every kernel, from its newest build and by process: [utilization.md](utilization.md).
-
-From `reports/impl/utilization.rpt` of each bitstream (2026-10-30), the whole design (kernel plus
-the block design's interconnects, ~1.8-2.5 k LUTs). The ZU7EV has 230 400 LUTs, 460 800 FFs,
-312 BRAM36, 96 UltraRAM and 1 728 DSPs.
-
-| Kernel | LUTs | FFs | BRAM36 | URAM | DSPs | Limit |
-|---|---|---|---|---|---|---|
-| `justounetsimple_opt` | 45 761 (19.9 %) | 55 668 (12.1 %) | 25.5 (8.2 %) | 16 (16.7 %) | 1 116 (64.6 %) | its reads, not the chip |
-| `justoliunet_opt` | 91 683 (39.8 %) | 77 599 (16.8 %) | 10 (3.2 %) | 0 | 1 313 (76.0 %) | DSPs, by design |
-| `justoliunet_bn_opt` | 96 420 (41.8 %) | 78 579 (17.1 %) | 10 (3.2 %) | 0 | 1 299 (75.2 %) | DSPs, by design |
-
-Where it goes:
-- **justounetsimple_opt:** conv1 864 DSPs (the 2-multiplies-per-DSP packing mapped: 3 pairs x 32
-  bands x 9 taps), conv2 / conv3 / conv4 56 / 110 / 54, the patch buffer 32 and its 16 UltraRAMs;
-  1 116 against ~1 112 predicted. The four readers take ~3.1 k LUTs each. Being held by its reads, the
-  room left (612 DSPs, 185 k LUTs) would not make it faster.
-- **justoliunet_opt / _bn_opt:** conv2 and conv3 656 + 649 DSPs (bn: 645 + 646), the z-score 8;
-  ~1 304 predicted. conv4's 648 multipliers in LUTs are the largest block (33 k LUTs; bn 38 k),
-  conv1's 216 next (11 k; bn 8 k). The 2-deep FIFOs that carry whole maps between the layers
-  (pool1_out 2 448 bits wide, and so on) take ~10 k LUTs. The two differ only in the weights'
-  values, which is why HLS's per-weight multipliers come out a few thousand LUTs apart.
-  Left: ~415 DSPs and ~135 k LUTs, room for the "rebalance to 16 cycles" idea
-  (docs/justoliunet_opt_design.md).
-
-## 250 MHz
-
-Every kernel closed timing at 250 MHz. Expected from the cycles at 214 MHz:
-
-| Kernel | Expected | Why | Measured |
-|---|---|---|---|
-| `justounetsimple_opt` | ~17.8 ms | memory-bound: about the same microseconds a patch; 17.8 ms measured 2026-10-27 | **17.87 ms** (6 718 a patch, 26.87 us), host timer 18.10 ms, wall clock 18.84 ms, one start; 96.20 % |
-| `justoliunet_opt` | 47.0 ms | logic-bound: 18 cycles a pixel, × 214 / 250 | **47.02 ms** (18.00 a pixel), host timer 47.19 ms, wall clock 48.10 ms, one start; 97.00 % |
-| `justoliunet_bn_opt` | 47.0 ms | the same | **47.02 ms** (18.00 a pixel), host timer 47.22 ms, wall clock 48.10 ms, one start; 96.46 % |
-| `sp_unet_small_opt` | 26.2 ms | logic-bound: 9 858 cycles a patch (reads 6.2 GB/s, well under DDR's 13) | **26.23 ms** (9 859 a patch, 39.4 us), host timer 26.44 ms, wall clock 27.28 ms, one start; 97.48 % |
-| `sp_unet_medium_opt` | 93.1 ms | logic-bound: 35 006 cycles a patch | **93.12 ms** (35 006 a patch, 140.0 us), host timer 93.37 ms, wall clock 94.22 ms, one start; 97.32 % |
-| `sp_unet_large_opt` | 186.2 ms | logic-bound: 70 004 cycles a patch | **186.22 ms** (70 007 a patch, 280.0 us), host timer 186.45 ms, wall clock 187.33 ms, one start; 97.55 % |
-| `spectralpointwise1d_opt` | 10.5-12 ms | 10.5 ms if DDR gives the 16.0 GB/s T needs at 250 MHz; it gave 13.0 at 214, so likely ~12 | **12.02-12.21 ms** (4.60-4.68 a pixel), host timer 12.23-12.43 ms, wall clock 12.95-13.16 ms, one start, two runs; 97.32 % |
-| `waveletcnn_opt` | 21.8 ms | logic-bound: 8 195 cycles a patch (reads 7.5 GB/s, under DDR's 13) | **21.91 ms** (8 238 a patch, 32.95 us), host timer 22.15 ms, wall clock 23.04 ms, one start; 97.22 % |
-
-A logic-bound kernel must show the same cycle count as at 214 MHz; a memory-bound one shows more
-cycles and about the same time.
-
-- **justoliunet_opt / _bn_opt at 250 MHz:** 18.00 cycles a pixel, as at 187.5 and 214 MHz, so 47.02 ms,
-  the predicted 47.0, both. In one start the host timer is 0.2 ms over the kernel's count and the
-  wall clock 1.1 ms over: 48.1 ms, against 127.6 / 115.3 ms in strips at 214 MHz. The ~56 ms guessed
-  for one start at 214 MHz holds; the ARM's 60-70 ms then was the strips, and the 12 ms between the
-  two wall clocks is gone. Same classes as at 214 MHz: 97.00 % and 96.46 %.
-- **justounetsimple_opt at 250 MHz:** 6 718 cycles a patch, 26.87 us, against 5 882 cycles and
-  27.45 us at 214 MHz: more cycles, about the same time, as a memory-bound kernel should. Its ports
-  get ~9.1 GB/s (245 760 bytes a patch ÷ 26.87 us), as before; the clock buys 2 %. The same classes:
-  96.20 %.
-- **The sp_unet direct kernels at 250 MHz:** 9 859 / 35 006 / 70 007 cycles a patch (small / medium /
-  large), the same as at 214 MHz to a few cycles, so 26.23 / 93.12 / 186.22 ms, the predicted 26.2 /
-  93.1 / 186.2: logic-bound. The wall clock is ~1.1 ms over the kernel's count. The same classes:
-  97.48 / 97.32 / 97.55 %.
-- **spectralpointwise1d_opt at 250 MHz:** 4.60-4.68 cycles a pixel (two runs) against 3.95-3.99 at
-  214 MHz, so 12.02-12.21 ms, no faster than 12.05-12.17: memory-bound, as expected. DDR gives the
-  four ports 12.8-13.0 GB/s (156.7 MB ÷ 12.02-12.21 ms), the 13.0 of 214 MHz, of the 16.0 T needs now. So ~13 GB/s
-  is what this board's DDR gives four HP ports; only reading less (the kept words) would help.
-  The same classes: 97.32 %.
-- **waveletcnn_opt at 250 MHz:** 8 238 cycles a patch, 43 (0.5 %) more than at 214 MHz, so 21.91 ms
-  against the predicted 21.8: logic-bound, with a few cycles of waiting, likely on its reads (~7.5
-  GB/s now, still well under DDR's 13). The same classes: 97.22 %.
-- **Fastest whole path at 250 MHz:** spectralpointwise1d_opt (12.95 ms), justounetsimple_opt
-  (18.84 ms), waveletcnn_opt (23.04 ms), sp_unet_small_opt (27.28 ms), justoliunet_opt /
-  _bn_opt (48.1 ms). Each wall clock is 0.9-1.1 ms over the kernel's count.
-
-## Five images, 250 MHz (2026-11-06)
-
-Every kernel on five other captures (trondheim, hawkebay, lakealexandria, saldanha, maputo, each
-598 × 1092 and labelled throughout), from `software/pynq/benchmark.ipynb`, one start an image.
-Builds of 2026-11-04 (the `simple-reader` branch: every 2D kernel reads with
-`read_patch_rows_simple`, the 1D convs are `conv1d`). The board's count of correct pixels is the
-PC's `classify_fixed` count exactly on the 13 runs checked (every kernel on trondheim, five on
-hawkebay; the check of the rest stopped, the laptop short of memory). Times are the mean over the images.
-
-| Kernel | Cycles (own count) | FPGA, own count | Wall clock | Before (aegean, 2026-11-01) |
-|---|---|---|---|---|
-| `justounetsimple_opt` | 7 563 a patch (7 535-7 601) | **20.12 ms** | 20.52 ms | 6 718 a patch, 17.87 ms: **+12.6 %, the simple reader** |
-| `justoliunet_opt` | 18.00 a pixel | **47.02 ms** | 47.42 ms | the same: `conv1d` costs nothing |
-| `justoliunet_bn_opt` | 18.00 a pixel | **47.02 ms** | 47.34 ms | the same |
-| `sp_unet_small_opt` | 9 856 a patch | **26.22 ms** | 26.57 ms | 9 859: the simple reader costs nothing |
-| `sp_unet_medium_opt` | 34 994 a patch | **93.09 ms** | 93.55 ms | 35 006 |
-| `sp_unet_large_opt` | 69 976 a patch | **186.14 ms** | 186.63 ms | 70 007 |
-| `spectralpointwise1d_opt` | 4.66 a pixel (4.62-4.69) | **12.16 ms** | 12.54 ms | 4.60-4.68: DDR-bound, as before |
-| `waveletcnn_opt` | 8 219 a patch (8 213-8 227) | **21.86 ms** | 22.26 ms | 8 238: 19 cycles fewer |
-
-- **The simple reader costs only `justounetsimple_opt`:** 12.6 % (8.1 GB/s for its four ports, from
-  9.1), as predicted on 2026-11-03 (~20 ms). It is the one kernel held by its reads, and its time
-  varies with the image (7 535-7 601 cycles a patch), as DDR's does. The logic-bound kernels read
-  the same way at no cost: sp_unet and waveletcnn_opt take a few cycles fewer than with the
-  read-ahead reader.
-- **`conv1d` keeps the ZCU104 at 18.00 cycles a pixel**, the same as `conv1d_map`.
-- **The wall clock is 0.3-0.5 ms over the kernel's count:** the notebook's own path (register
-  writes, polling, invalidating the scores) without the float conversion `classify.ipynb` does.
-
-| Kernel | Accuracy (5 × 653 016 pixels) | IoU cloud | IoU land | IoU sea | mIoU | trondheim / hawkebay / lakealexandria / saldanha / maputo | aegean |
-|---|---|---|---|---|---|---|---|
-| `spectralpointwise1d_opt` | **93.93 %** | 0.845 | 0.918 | 0.889 | **0.884** | 93.69 / 95.89 / 96.45 / 89.59 / 94.01 | 97.32 % |
-| `sp_unet_large_opt` | 93.89 % | 0.844 | 0.922 | 0.884 | 0.883 | 95.89 / 96.23 / 95.25 / 87.52 / 94.55 | 97.55 % |
-| `sp_unet_medium_opt` | 93.81 % | 0.845 | 0.918 | 0.883 | 0.882 | 94.92 / 96.02 / 96.12 / 87.73 / 94.28 | 97.32 % |
-| `waveletcnn_opt` | 93.72 % | 0.832 | 0.915 | 0.892 | 0.880 | 94.32 / 95.77 / 95.20 / 88.66 / 94.63 | 97.22 % |
-| `sp_unet_small_opt` | 93.70 % | 0.840 | 0.917 | 0.882 | 0.880 | 95.32 / 95.93 / 95.45 / 87.51 / 94.30 | 97.48 % |
-| `justoliunet_bn_opt` | 92.90 % | 0.818 | 0.909 | 0.871 | 0.866 | 92.92 / 95.88 / 95.99 / 86.11 / 93.63 | 96.46 % |
-| `justounetsimple_opt` | 92.11 % | 0.811 | 0.881 | 0.866 | 0.853 | 93.94 / 91.92 / 95.33 / 89.07 / 90.32 | 96.20 % |
-| `justoliunet_opt` | 90.82 % | 0.766 | 0.890 | 0.833 | 0.830 | 92.79 / 94.84 / 93.60 / 79.50 / 93.39 | 97.00 % |
-
-- **Every model is 3.3-6.2 points below its aegean score**, and saldanha is the hardest image for
-  all of them (79.5-89.6 %). The five newer models stay within 0.23 points of each other.
-- **spectralpointwise1d_opt is the most accurate here and the fastest:** 93.93 % in 12.2 ms, where
-  sp_unet_large_opt needs 186 ms for 93.89 %. On aegean it was 0.23 points behind sp_unet_large.
-- **justoliunet_opt falls the most** (97.00 → 90.82 %, 79.50 % on saldanha). Its BatchNorm version
-  holds better (92.90 %): on aegean the order of the two was the other way round.
-- The two accuracy columns of the notebook's report agree, as every image is the same size and
-  labelled throughout.
-
 ## Changes
 
+- 2026-11-16: the page reordered: one table of every kernel's newest run (with the cycle model and
+  what holds it) and one of their accuracy at the top; the older runs under "Earlier runs". The
+  214 MHz utilization section removed: `utilization.md` has every kernel's newest build.
+- 2026-11-09: every kernel on five images at 250 MHz (`benchmark.ipynb`), builds of 2026-11-08, with the
+  new `sp_unet_SIZE_opt_u8` (19.31 / 46.56 / 93.08 ms; medium and large 2.00x `_opt`, small 1.36x, held
+  by its reads at 8.5 GB/s) and `justounetsimple_opt_tiled` (19.31 ms, 3.5 % faster than `_opt`). The
+  rest as on 2026-11-06.
 - 2026-11-06: every kernel on five images at 250 MHz (`benchmark.ipynb`), builds of 2026-11-04:
   the simple reader costs `justounetsimple_opt` 12.6 % (20.12 ms) and no other kernel anything;
   `conv1d` keeps justoliunet at 18.00 cycles a pixel. Accuracy 90.82-93.93 % on these images,
