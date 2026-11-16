@@ -95,7 +95,8 @@ Only cnn_accelerator changed: `fpga_package sp_unet_small_opt_u8_zynq7030 picobo
 `sp_unet_small_opt_u8_zynq7030` picobob build of 2026-11-11 is not: its files, `export.zip`
 among them, are straight in `picobob/`, and `fpga_package` would move `export.zip` into a new,
 empty run and stop for want of the firmware. Its package was remade by hand on 2026-11-14,
-with the band fix (tarball md5 `782545f1...`), and is on ws2 already: for it, start at step 3.
+with the band fix and built with `-O3` (tarball md5 `37b336ba...`), and is on ws2 already: for
+it, start at step 3.
 
 ## 2. Copy it to ws2, from the lab server
 
@@ -334,7 +335,11 @@ What a good log has, in order:
 Check the clock once per design, in the log: the kernel's own count of cycles over the ARM's
 FPGA time should be the clock it was built for. On 2026-11-14, on balticAlgae (598 x 1092):
 loaded in 6 794 ms, the kernel 180.7 ms, 18 066 698 cycles, so 100.0 MHz; 7.30 s in all
-(before the band fix). `obip fpga reload` has no fallback when the overlay cannot set the
+(before the band fix). With the band fix but built without optimization (`-O0`, as cnn-1d's
+build was): `Bands reversed in 19737 ms`, loaded in 22 502 ms, 23.0 s in all; the kernel the
+same, 18 066 734 cycles. Built with `-O3`: `Bands reversed in 663 ms`, loaded in 3 355 ms, labels
+written in 292 ms, 3.66 s in all, the kernel 18 066 900 cycles (the third run in a row on the
+capture, so the cube was likely still in Linux's file cache: cold, the read alone took 6.8 s). `obip fpga reload` has no fallback when the overlay cannot set the
 clock, unlike `load.sh`.
 
 ### cnn-1d on the same capture, to compare

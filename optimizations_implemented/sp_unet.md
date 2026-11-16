@@ -755,4 +755,7 @@ Routed, kernel alone (without the interconnects); by process in
   stores each pixel's bands in the reverse order to the `.nc` cubes every model was trained and
   tested on. The bit-exact model on the raw cube gives the board's labels 100 %; with the bands
   reversed, 24.8 % sea and 94.4 % the same as the OPU's cnn-1d. cnn_accelerator now reverses the
-  bands on load (every kernel, no rebuild of the bitstream); not yet measured on the flatsat.
+  bands on load (every kernel, no rebuild of the bitstream). Measured on the flatsat the same day:
+  the reversal 19.7 s (cnn_accelerator was built with no -O, as cnn-1d's), 23.0 s in all; now built
+  with -O3 (Release, software/opu/CMakeLists.txt): the reversal 663 ms, the cube loaded in 3.36 s,
+  3.66 s in all (the file likely cached: the third run in a row), the kernel 18 066 900 cycles.

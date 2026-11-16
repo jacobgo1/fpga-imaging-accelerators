@@ -144,7 +144,7 @@ after them):
 | `cmake/*.cmake` | the same | Fetch spdlog, libconfig, argparse; the ARM toolchain. |
 | `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh` | the same | The image `cnn-dev-image` (Ubuntu 20.04's ARM compiler), and the build in it into `build-cross/`. |
 | `scripts/show_result.py` | the same | On the PC: a labels file as a picture, optionally laid as the capture's scaled-radiance RGB picture (`docs/opu.md`). |
-| `CMakeLists.txt` | changed: the driver's files by pattern | The build. |
+| `CMakeLists.txt` | changed: the driver's files by pattern; Release (`-O3`) by default | The build. |
 | `src/cnn_config.{h,cpp}` | changed: no `--cnn-config`, no rad matrix | The options, the capture config. |
 | `src/xcnn_device.{h,cpp}` | changed: the driver through `kernel.h`; `cycles()` | Starts the kernel; the class values from the devicetree. |
 | `src/main.cpp` | changed: no rad matrix; each pixel's bands reversed on the way in (a capture stores them in the reverse order to the .nc cubes the networks were trained on); the class out of the kernel's scores; the kernel's cycle count logged | Cube into `cube_map`, kernel, labels file. |

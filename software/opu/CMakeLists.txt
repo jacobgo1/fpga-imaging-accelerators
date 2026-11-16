@@ -2,6 +2,12 @@ cmake_minimum_required(VERSION 3.13)
 project(cnn_accelerator_app LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
+# Optimized unless asked otherwise: cnn-1d's build had no -O at all, and reversing a
+# capture's bands alone took 19.7 s on the OPU
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
 # Add external libraries
 include(cmake/spdlog.cmake)
 include(cmake/libconfig.cmake)

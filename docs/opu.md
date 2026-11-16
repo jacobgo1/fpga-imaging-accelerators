@@ -61,7 +61,7 @@ must be idle while cnn_accelerator runs. The overlay also says which value the k
 | File | Compared with cnn-1d-picobob's |
 | --- | --- |
 | `src/uio_memory_device.{h,cpp}`, `cmake/*.cmake`, `scripts/Dockerfile`, `setup_docker`, `start_docker`, `cross-compile.sh`, `show_result.py` | the same, byte for byte |
-| `CMakeLists.txt` | the driver's files are found by name (`xcnn_driver/x*.c`), as each kernel's are named after it |
+| `CMakeLists.txt` | the driver's files are found by name (`xcnn_driver/x*.c`), as each kernel's are named after it; built optimized (Release, `-O3`) unless told otherwise: cnn-1d's had no `-O`, and the band reversal alone took 19.7 s on the OPU |
 | `src/cnn_config.{h,cpp}` | without `--cnn-config` and the rad matrix (`CnnConfig`, `readCnnConfig`, `configIsValid`): these kernels take only the cube |
 | `src/xcnn_device.{h,cpp}` | the kernel's driver through `kernel.h` instead of `XCnn_1d_top_*`; the cube on every input port; `cycles()` |
 | `src/main.cpp` | no rad matrix; each pixel's 120 bands reversed while the cube is loaded (see below); the kernel writes 4 int32 a pixel (3 scores, then the class), and the class is what goes to the labels file; logs the kernel's own cycle count |
