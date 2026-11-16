@@ -45,6 +45,8 @@ src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cp
                      (tb/golden/batchnorm.hpp: the BatchNorm only those references have)
 src/golden/          layers.hpp: the plain-loop layers the golden kernels are built from (what is
                      computed), one template each for float and quantized weights
+src/simple/layers.hpp  the _simple kernels' layers: golden-style plain loops in integers with
+                     pragmas only (conv, conv_concat, maxpool2, duplicate, the reads and writes)
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file, for every board; each kernel sets
                      its chip's facts in its .hpp ("Chip variables for
@@ -142,6 +144,15 @@ src/models/1D-SpectralPointwise/spectralpointwise1d_opt/spectralpointwise1d_opt.
 a 1x1 projection, a 3x3 conv block and a 1x1 head) and `waveletcnn_opt`, `_zynq7030`,
 `_zynq7020` (the raw cube in, bit for bit classify_fixed in tools/waveletcnn_model.py; see
 optimizations_implemented/waveletcnn.md).
+
+The simple kernels, for the paper against the DPU: `spectralpointwise1d_simple`,
+`justounetsimple_simple`, `sp_unet_small_simple`, `_medium_simple`, `_large_simple` (ZCU104):
+the same answers as `_opt` bit for bit, but the golden kernels' shape: one function a layer on
+whole-patch maps of pixel words (`hls::vector`), a DATAFLOW loop over the patches, each conv one
+pipelined loop with UI x UO multipliers unrolled (taps not unrolled), from src/simple/layers.hpp
+only; no src/optimized/ modules, no DSP packing, no `mul<DSP>`. One read port, no cycle counter.
+Their tests are the `_opt` check headers. Predicted ~39 / 49 / 49 / 110 / 196 ms an image; see
+optimizations_implemented/simple.md.
 
 The z-score every model starts with (keep raw bands 8-117, mu_sd.txt) is in one place,
 tools/preprocessing.py. tools/models.py lists every model (scripts/pynq.sh packs its entry with the

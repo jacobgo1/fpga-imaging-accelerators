@@ -535,7 +535,8 @@ class FpgaShellTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.complete(command, 'justounetsimple'),
                                  ['justounetsimple', 'justounetsimple_opt', 'justounetsimple_opt_tiled',
-                                  'justounetsimple_opt_zynq7020', 'justounetsimple_opt_zynq7030'])
+                                  'justounetsimple_opt_zynq7020', 'justounetsimple_opt_zynq7030',
+                                  'justounetsimple_simple'])
         self.assertEqual(self.complete('fpga_build', 'justounetsimple', ''), ['picobob', 'pynqz2', 'zcu104', 'zedboard'])
         self.assertEqual(self.complete('fpga_ip', 'justounetsimple', 'z'), ['zcu104', 'zedboard'])
         self.assertEqual(self.complete('fpga_build', 'justounetsimple', 'picobob', '--'), ['--clock-ns', '--cosim'])

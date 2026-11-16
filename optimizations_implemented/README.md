@@ -11,6 +11,7 @@ and utilization of each stage are calculated, the inference time, and each board
 | 1D-Justo-LiuNet with BatchNorm | [justoliunet_bn.md](justoliunet_bn.md) |
 | SpecPW-UNet (small, medium, large) | [sp_unet.md](sp_unet.md) |
 | 1D-SpectralPointwise | [spectralpointwise1d.md](spectralpointwise1d.md) |
+| The simple kernels (`_simple`, ZCU104, five models) | [simple.md](simple.md) |
 
 Measured speed of every kernel on the board, by clock: [speed_zcu104.md](speed_zcu104.md),
 [speed_zedboard.md](speed_zedboard.md). Routed utilization of every kernel, by board and by process:
