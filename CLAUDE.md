@@ -46,7 +46,8 @@ src/models/MODEL/    one folder per network; in it one folder per kernel K (K.cp
 src/golden/          layers.hpp: the plain-loop layers the golden kernels are built from (what is
                      computed), one template each for float and quantized weights
 src/simple/layers.hpp  the _simple kernels' layers: golden-style plain loops in integers with
-                     pragmas only (conv, conv_concat, maxpool2, duplicate, the reads and writes)
+                     pragmas only (conv, conv_concat, conv1d, dense, maxpool2, maxpool1d, duplicate,
+                     dwt, the reads and writes)
 src/optimized/       streaming, integer fixed-point building blocks (how it is done fast),
                      one module per file, for every board; each kernel sets
                      its chip's facts in its .hpp ("Chip variables for
@@ -145,13 +146,16 @@ a 1x1 projection, a 3x3 conv block and a 1x1 head) and `waveletcnn_opt`, `_zynq7
 `_zynq7020` (the raw cube in, bit for bit classify_fixed in tools/waveletcnn_model.py; see
 optimizations_implemented/waveletcnn.md).
 
-The simple kernels, for the paper against the DPU: `spectralpointwise1d_simple`,
-`justounetsimple_simple`, `sp_unet_small_simple`, `_medium_simple`, `_large_simple` (ZCU104):
-the same answers as `_opt` bit for bit, but the golden kernels' shape: one function a layer on
-whole-patch maps of pixel words (`hls::vector`), a DATAFLOW loop over the patches, each conv one
-pipelined loop with UI x UO multipliers unrolled (taps not unrolled), from src/simple/layers.hpp
-only; no src/optimized/ modules, no DSP packing, no `mul<DSP>`. One read port, no cycle counter.
-Their tests are the `_opt` check headers. Predicted ~39 / 49 / 49 / 110 / 196 ms an image; see
+The simple kernels, for the paper against the DPU, one for each of the eight networks:
+`spectralpointwise1d_simple`, `justoliunet_simple`, `justoliunet_bn_simple`,
+`justounetsimple_simple`, `waveletcnn_simple`, `sp_unet_small_simple`, `_medium_simple`,
+`_large_simple` (ZCU104): the same answers as `_opt` bit for bit, but the golden kernels' shape:
+one function a layer, a DATAFLOW loop over the patches (1D: blocks of 256 pixels), pixel words
+(`hls::vector`; the 1D networks' holds the whole spectrum) through streams, a whole-patch map
+(ping-pong, AGGREGATEd) only before a 3x3 conv, each conv one pipelined loop with UI x UO
+multipliers unrolled (2D taps not unrolled), from src/simple/layers.hpp only; no src/optimized/
+modules, no DSP packing, no `mul<DSP>`. One read port, no cycle counter. Their tests are the
+`_opt` check headers. Predicted ~39 / 125 / 125 / 49 / 98 / 49 / 110 / 196 ms an image; see
 optimizations_implemented/simple.md.
 
 The z-score every model starts with (keep raw bands 8-117, mu_sd.txt) is in one place,

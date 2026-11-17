@@ -40,23 +40,23 @@ void spectralpointwise1d_simple(const cube_word_t* din0, score_word_t* dout, int
     #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
 
-    // A DATAFLOW loop: each layer a process, the blocks between them ping-pong buffers.
+    // A DATAFLOW loop: each layer a process, a pixel at a time through streams.
     const int pixels = height * width;
     const int count = simple::block_count<BLOCK>(pixels);
     blocks: for (int b = 0; b < count; b++) {
         #pragma HLS DATAFLOW
-        SIMPLE_MAP simple::word<z_t, MODEL_BANDS> zscores[1][BLOCK];
-        SIMPLE_MAP simple::word<act_t, H1> h1[1][BLOCK];
-        SIMPLE_MAP simple::word<act_t, H2> h2[1][BLOCK];
-        SIMPLE_MAP simple::word<int32_t, CLASSES> scores[1][BLOCK];
+        simple::stream<z_t, MODEL_BANDS> zscores;
+        simple::stream<act_t, H1> h1;
+        simple::stream<act_t, H2> h2;
+        simple::stream<int32_t, CLASSES> scores;
 
         simple::read_block<BLOCK, MODEL_BANDS, WORDS_PER_PIXEL, jf::FIRST_BAND / BANDS_PER_WORD, jf::PREP_FRAC, jf::IN_MAX,
                            int64_t, jf::A, jf::B>(din0, b, pixels, zscores);
-        simple::conv<1, BLOCK, MODEL_BANDS, H1, 1, 22, 8, true, jf::ACT_MAX, F1::BIAS_SHIFT, F1::SHIFT, false,
+        simple::conv<1, BLOCK, MODEL_BANDS, H1, 1, 22, 8, simple::RELU, jf::ACT_MAX, F1::BIAS_SHIFT, F1::SHIFT, false,
                      weights::convsp1_weight, weights::convsp1_bias>(zscores, h1);
-        simple::conv<1, BLOCK, H1, H2, 1, 24, 1, true, jf::ACT_MAX, F2::BIAS_SHIFT, F2::SHIFT, false,
+        simple::conv<1, BLOCK, H1, H2, 1, 24, 1, simple::RELU, jf::ACT_MAX, F2::BIAS_SHIFT, F2::SHIFT, false,
                      weights::convsp2_weight, weights::convsp2_bias>(h1, h2);
-        simple::conv<1, BLOCK, H2, CLASSES, 1, 4, 1, false, 0, F3::BIAS_SHIFT, F3::SHIFT, false,
+        simple::conv<1, BLOCK, H2, CLASSES, 1, 4, 1, simple::NONE, 0, F3::BIAS_SHIFT, F3::SHIFT, false,
                      weights::convsp3_weight, weights::convsp3_bias>(h2, scores);
         simple::write_block<BLOCK, CLASSES>(scores, dout, b, pixels);
     }

@@ -39,29 +39,36 @@ void justounetsimple_simple(const cube_word_t* din0, score_word_t* dout, int hei
     #pragma HLS INTERFACE mode=s_axilite port=width  bundle=control
     #pragma HLS INTERFACE mode=s_axilite port=return bundle=control
 
-    // A DATAFLOW loop: each layer a process, the maps between them ping-pong buffers,
-    // so every layer works on a different patch at the same time.
+    // A DATAFLOW loop: each layer a process, so every layer works on a different patch at
+    // the same time. A 3x3 conv's input is a map (a ping-pong buffer), the rest streams.
     const int count = simple::patch_count<PATCH_SIZE>(height, width);
     patches: for (int p = 0; p < count; p++) {
         #pragma HLS DATAFLOW
         SIMPLE_MAP simple::word<int8_t, MODEL_BANDS> zscores[PATCH_SIZE][PATCH_SIZE];
-        SIMPLE_MAP simple::word<act_t, C> relu1[PATCH_SIZE][PATCH_SIZE], pooled1[HALF_PATCH][HALF_PATCH];
-        SIMPLE_MAP simple::word<act_t, 2 * C> relu2[HALF_PATCH][HALF_PATCH], pooled2[HALF_PATCH / 2][HALF_PATCH / 2];
+        SIMPLE_MAP simple::word<act_t, C> pooled1[HALF_PATCH][HALF_PATCH];
+        SIMPLE_MAP simple::word<act_t, 2 * C> pooled2[HALF_PATCH / 2][HALF_PATCH / 2];
         SIMPLE_MAP simple::word<act_t, C> relu3[HALF_PATCH][HALF_PATCH];
-        SIMPLE_MAP simple::word<int32_t, CLASSES> scores[PATCH_SIZE][PATCH_SIZE];
+        // Each map one memory as wide as its pixel word, not one per channel.
+        #pragma HLS AGGREGATE variable=zscores
+        #pragma HLS AGGREGATE variable=pooled1
+        #pragma HLS AGGREGATE variable=pooled2
+        #pragma HLS AGGREGATE variable=relu3
+        simple::stream<act_t, C> relu1;
+        simple::stream<act_t, 2 * C> relu2;
+        simple::stream<int32_t, CLASSES> scores;
 
         simple::read_zscore<PATCH_SIZE, MODEL_BANDS, WORDS_PER_PIXEL, zs::FIRST_BAND / BANDS_PER_WORD, zs::FRAC, zs::IN_MAX,
                             int32_t, zs::A, zs::B>(din0, p, height, width, zscores);
-        simple::conv<PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, C, 3, 55, 6, true, ACT_MAX, F1::BIAS_SHIFT, F1::SHIFT, false,
-                     weights::conv1_weight, weights::conv1_bias>(zscores, relu1);
+        simple::conv<PATCH_SIZE, PATCH_SIZE, MODEL_BANDS, C, 3, 55, 6, simple::RELU, ACT_MAX, F1::BIAS_SHIFT, F1::SHIFT,
+                     false, weights::conv1_weight, weights::conv1_bias>(zscores, relu1);
         simple::maxpool2<PATCH_SIZE, PATCH_SIZE, C>(relu1, pooled1);
-        simple::conv<HALF_PATCH, HALF_PATCH, C, 2 * C, 3, 6, 2, true, ACT_MAX, F2::BIAS_SHIFT, F2::SHIFT, false,
+        simple::conv<HALF_PATCH, HALF_PATCH, C, 2 * C, 3, 6, 2, simple::RELU, ACT_MAX, F2::BIAS_SHIFT, F2::SHIFT, false,
                      weights::conv2_weight, weights::conv2_bias>(pooled1, relu2);
         simple::maxpool2<HALF_PATCH, HALF_PATCH, 2 * C>(relu2, pooled2);
         // conv3 on pooled2 upsampled to 16 x 16, conv4 on relu3 upsampled to 32 x 32.
-        simple::conv<HALF_PATCH, HALF_PATCH, 2 * C, C, 3, 12, 1, true, ACT_MAX, F3::BIAS_SHIFT, F3::SHIFT, true,
+        simple::conv<HALF_PATCH, HALF_PATCH, 2 * C, C, 3, 12, 1, simple::RELU, ACT_MAX, F3::BIAS_SHIFT, F3::SHIFT, true,
                      weights::conv3_weight, weights::conv3_bias>(pooled2, relu3);
-        simple::conv<PATCH_SIZE, PATCH_SIZE, C, CLASSES, 3, 6, 3, false, ACT_MAX, F4::BIAS_SHIFT, F4::SHIFT, true,
+        simple::conv<PATCH_SIZE, PATCH_SIZE, C, CLASSES, 3, 6, 3, simple::NONE, ACT_MAX, F4::BIAS_SHIFT, F4::SHIFT, true,
                      weights::conv4_weight, weights::conv4_bias>(relu3, scores);
         simple::write_scores<PATCH_SIZE, CLASSES>(scores, dout, p, height, width);
     }
